@@ -4,11 +4,21 @@
   "description": "Agente para análisis TSX con AI Foundry",
   "type": "module",
   "scripts": {
-    "start": "node run-agent975.mjs",
-    "run-agent975": "node run-agent975.mjs"
+    "start": "node src/agents/agent975/run-agent975.mjs",
+    "start-fixed": "node src/agents/agent975/run-agent975-fixed.mjs",
+    "test": "node src/agents/agent975/run-agent975.mjs --test",
+    "test-fixed": "node src/agents/agent975/run-agent975-fixed.mjs --test",
+    "direct": "node src/agents/agent975/run-agent975.mjs --direct",
+    "diagnose": "node src/agents/agent975/diagnose-agent975.mjs",
+    "mlflow-test": "node src/agents/agent975/mlflow-test.mjs"
   },
   "dependencies": {
     "@azure/ai-projects": "^1.0.0-beta.10",
-    "@azure/identity": "^4.10.2"
+    "@azure/identity": "^4.10.2",
+    "dotenv": "^17.2.1",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
   }
 }
