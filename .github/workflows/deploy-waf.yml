@@ -1,11 +1,7 @@
 name: Validate WAF Deployment
 
 on:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -115,7 +111,6 @@ jobs:
               gptModelCapacity=5 \
               virtualMachineConfiguration='{"adminUsername": "adminuser", "adminPassword": "P@ssw0rd1234"}' \
               logAnalyticsWorkspaceConfiguration='{"existingWorkspaceResourceId": ""}'
-
 
       - name: Send Notification on Failure
         if: failure()
