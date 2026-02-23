@@ -18,7 +18,7 @@ COPY . ./
 RUN npm run build
 
 # Stage 2: Python build environment with UV
-FROM mcr.microsoft.com/devcontainers/python:3.11-bullseye AS python-builder
+FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm AS python-builder
 
 # Copy UV from official image
 COPY --from=ghcr.io/astral-sh/uv:0.6.3 /uv /uvx /bin/
@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi
 
 # Stage 3: Final production image
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim-bookworm
 
 # Set production environment
 ENV NODE_ENV=production \

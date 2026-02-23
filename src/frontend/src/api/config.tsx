@@ -16,6 +16,7 @@ export let USER_ID: string | null = null;
 export let USER_INFO: UserInfo | null = null;
 
 export let config = {
+    // Port 8000 inside devcontainer is forwarded to 3001 on host
     API_URL: "http://localhost:8000/api",
     ENABLE_AUTH: false,
 };

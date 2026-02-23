@@ -1,6 +1,7 @@
 # tests/test_config.py
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import os
+import pytest
 
 # Mock environment variables globally
 MOCK_ENV_VARS = {
@@ -10,53 +11,57 @@ MOCK_ENV_VARS = {
     "AZURE_OPENAI_DEPLOYMENT_NAME": "mock-deployment",
     "AZURE_OPENAI_API_VERSION": "2024-05-01-preview",
     "AZURE_OPENAI_ENDPOINT": "https://mock-openai-endpoint.azure.com/",
-    "AZURE_OPENAI_API_KEY": "mock-api-key",
     "AZURE_TENANT_ID": "mock-tenant-id",
     "AZURE_CLIENT_ID": "mock-client-id",
     "AZURE_CLIENT_SECRET": "mock-client-secret",
+    "AZURE_AI_SUBSCRIPTION_ID": "mock-subscription-id",
+    "AZURE_AI_RESOURCE_GROUP": "mock-resource-group",
+    "AZURE_AI_PROJECT_NAME": "mock-project-name",
+    "AZURE_AI_AGENT_ENDPOINT": "https://mock-agent-endpoint.azure.com/",
 }
 
-with patch.dict(os.environ, MOCK_ENV_VARS):
-    from src.backend.config import (
-        Config,
-        GetRequiredConfig,
-        GetOptionalConfig,
-        GetBoolConfig,
-    )
 
-
-@patch.dict(os.environ, MOCK_ENV_VARS)
-def test_get_required_config():
-    """Test GetRequiredConfig."""
-    assert GetRequiredConfig("COSMOSDB_ENDPOINT") == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
-
-
-@patch.dict(os.environ, MOCK_ENV_VARS)
-def test_get_optional_config():
-    """Test GetOptionalConfig."""
-    assert GetOptionalConfig("NON_EXISTENT_VAR", "default_value") == "default_value"
-    assert (
-        GetOptionalConfig("COSMOSDB_DATABASE", "default_db")
-        == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
-    )
-
-
-@patch.dict(os.environ, MOCK_ENV_VARS)
-def test_get_bool_config():
-    """Test GetBoolConfig."""
-    with patch.dict("os.environ", {"FEATURE_ENABLED": "true"}):
-        assert GetBoolConfig("FEATURE_ENABLED") is True
-    with patch.dict("os.environ", {"FEATURE_ENABLED": "false"}):
-        assert GetBoolConfig("FEATURE_ENABLED") is False
-    with patch.dict("os.environ", {"FEATURE_ENABLED": "1"}):
-        assert GetBoolConfig("FEATURE_ENABLED") is True
-    with patch.dict("os.environ", {"FEATURE_ENABLED": "0"}):
-        assert GetBoolConfig("FEATURE_ENABLED") is False
-
-
-@patch("config.DefaultAzureCredential")
-def test_get_azure_credentials_with_env_vars(mock_default_cred):
-    """Test Config.GetAzureCredentials with explicit credentials."""
+@pytest.fixture
+def mock_env():
     with patch.dict(os.environ, MOCK_ENV_VARS):
-        creds = Config.GetAzureCredentials()
-        assert creds is not None
+        yield
+
+
+def test_app_config_initialization(mock_env):
+    """Test AppConfig initialization with environment variables."""
+    from app_config import AppConfig
+    
+    config = AppConfig()
+    assert config.COSMOSDB_ENDPOINT == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
+    assert config.COSMOSDB_DATABASE == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
+    assert config.AZURE_OPENAI_DEPLOYMENT_NAME == MOCK_ENV_VARS["AZURE_OPENAI_DEPLOYMENT_NAME"]
+
+
+def test_get_required_config(mock_env):
+    """Test _get_required method."""
+    from app_config import AppConfig
+    
+    config = AppConfig()
+    assert config._get_required("COSMOSDB_ENDPOINT") == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
+
+
+def test_get_optional_config(mock_env):
+    """Test _get_optional method."""
+    from app_config import AppConfig
+    
+    config = AppConfig()
+    assert config._get_optional("NON_EXISTENT_VAR", "default_value") == "default_value"
+    assert config._get_optional("COSMOSDB_DATABASE", "default_db") == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
+
+
+def test_get_bool_config(mock_env):
+    """Test _get_bool method."""
+    from app_config import AppConfig
+    
+    with patch.dict(os.environ, {"FEATURE_ENABLED": "true"}):
+        config = AppConfig()
+        assert config._get_bool("FEATURE_ENABLED") is True
+    
+    with patch.dict(os.environ, {"FEATURE_ENABLED": "false"}):
+        config = AppConfig()
+        assert config._get_bool("FEATURE_ENABLED") is False

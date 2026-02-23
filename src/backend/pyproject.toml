@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "av<14",  # Requiere FFmpeg 7, pero Debian 12 tiene FFmpeg 5.x - usar version compatible
+    "azure-ai-agents>=1.0.0b10",
     "azure-ai-evaluation>=1.5.0",
     "azure-ai-inference>=1.0.0b9",
     "azure-ai-projects>=1.0.0b9",

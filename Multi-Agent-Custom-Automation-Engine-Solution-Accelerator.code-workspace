@@ -9,5 +9,9 @@
         // {
         //     "path": "./src/backend"
         // }
-    ]
+    ],
+    "settings": {
+        "terminal.integrated.suggest.suggestOnTriggerCharacters": true,
+        "terminal.integrated.suggest.selectionMode": "always"
+    }
 }

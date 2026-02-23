@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 
 # Semantic Kernel imports
 from app_config import config
@@ -18,12 +18,15 @@ from event_utils import track_event_if_configured
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from kernel_agents.agent_factory import AgentFactory
+from kernel_agents.group_chat_manager import GroupChatManager
+from kernel_agents.human_agent import HumanAgent
 
 # Local imports
 from middleware.health_check import HealthCheckMiddleware
 from models.messages_kernel import (
     AgentMessage,
     AgentType,
+    BaseDataModel,
     HumanClarification,
     HumanFeedback,
     InputTask,
@@ -56,6 +59,10 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
     logging.WARNING
 )
 logging.getLogger("azure.identity.aio._internal").setLevel(logging.WARNING)
+
+# Suppress verbose Cosmos DB logging
+logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
+logging.getLogger("azure.cosmos._cosmos_http_logging_policy").setLevel(logging.WARNING)
 
 # # Suppress info logs from OpenTelemetry exporter
 logging.getLogger("azure.monitor.opentelemetry.exporter.export._base").setLevel(
@@ -134,7 +141,9 @@ async def input_task_endpoint(input_task: InputTask, request: Request):
             client=client,
         )
 
-        group_chat_manager = agents[AgentType.GROUP_CHAT_MANAGER.value]
+        group_chat_manager = cast(
+            GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER]
+        )
 
         # Convert input task to JSON for the kernel function, add user_id here
 
@@ -164,11 +173,6 @@ async def input_task_endpoint(input_task: InputTask, request: Request):
                 "description": input_task.description,
             },
         )
-        if client:
-            try:
-                client.close()
-            except Exception as e:
-                logging.error(f"Error sending to AIProjectClient: {e}")
         return {
             "status": f"Plan created with ID: {plan.id}",
             "session_id": input_task.session_id,
@@ -262,12 +266,15 @@ async def human_feedback_endpoint(human_feedback: HumanFeedback, request: Reques
     except Exception as client_exc:
         logging.error(f"Error creating AIProjectClient: {client_exc}")
 
-    human_agent = await AgentFactory.create_agent(
+    human_agent = cast(
+        HumanAgent,
+        await AgentFactory.create_agent(
         agent_type=AgentType.HUMAN,
         session_id=human_feedback.session_id,
         user_id=user_id,
         memory_store=memory_store,
         client=client,
+        ),
     )
 
     if human_agent is None:
@@ -292,11 +299,6 @@ async def human_feedback_endpoint(human_feedback: HumanFeedback, request: Reques
             "step_id": human_feedback.step_id,
         },
     )
-    if client:
-        try:
-            client.close()
-        except Exception as e:
-            logging.error(f"Error sending to AIProjectClient: {e}")
     return {
         "status": "Feedback received",
         "session_id": human_feedback.session_id,
@@ -368,12 +370,15 @@ async def human_clarification_endpoint(
     except Exception as client_exc:
         logging.error(f"Error creating AIProjectClient: {client_exc}")
 
-    human_agent = await AgentFactory.create_agent(
+    human_agent = cast(
+        HumanAgent,
+        await AgentFactory.create_agent(
         agent_type=AgentType.HUMAN,
         session_id=human_clarification.session_id,
         user_id=user_id,
         memory_store=memory_store,
         client=client,
+        ),
     )
 
     if human_agent is None:
@@ -382,7 +387,7 @@ async def human_clarification_endpoint(
             {
                 "status": "Agent not found",
                 "session_id": human_clarification.session_id,
-                "step_id": human_clarification.step_id,
+                "plan_id": human_clarification.plan_id,
             },
         )
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -399,11 +404,6 @@ async def human_clarification_endpoint(
             "session_id": human_clarification.session_id,
         },
     )
-    if client:
-        try:
-            client.close()
-        except Exception as e:
-            logging.error(f"Error sending to AIProjectClient: {e}")
     return {
         "status": "Clarification received",
         "session_id": human_clarification.session_id,
@@ -489,15 +489,12 @@ async def approve_step_endpoint(
     )
 
     # Send the approval to the group chat manager
-    group_chat_manager = agents[AgentType.GROUP_CHAT_MANAGER.value]
+    group_chat_manager = cast(
+        GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER]
+    )
 
     await group_chat_manager.handle_human_feedback(human_feedback)
 
-    if client:
-        try:
-            client.close()
-        except Exception as e:
-            logging.error(f"Error sending to AIProjectClient: {e}")
     # Return a status message
     if human_feedback.step_id:
         track_event_if_configured(
@@ -772,8 +769,10 @@ async def get_agent_messages(session_id: str, request: Request) -> List[AgentMes
     kernel, memory_store = await initialize_runtime_and_context(
         session_id or "", user_id
     )
-    agent_messages = await memory_store.get_data_by_type("agent_message")
-    return agent_messages
+    data_items: List[BaseDataModel] = await memory_store.get_data_by_type(
+        "agent_message"
+    )
+    return [item for item in data_items if isinstance(item, AgentMessage)]
 
 
 @app.get("/api/agent_messages_by_plan/{plan_id}", response_model=List[AgentMessage])
@@ -840,8 +839,14 @@ async def get_agent_messages_by_plan(
 
     # Initialize memory context
     kernel, memory_store = await initialize_runtime_and_context("", user_id)
-    agent_messages = await memory_store.get_data_by_type_and_plan_id("agent_message")
-    return agent_messages
+    data_items: List[BaseDataModel] = await memory_store.get_data_by_type(
+        "agent_message"
+    )
+    return [
+        item
+        for item in data_items
+        if isinstance(item, AgentMessage) and item.plan_id == plan_id
+    ]
 
 
 @app.delete("/api/messages")

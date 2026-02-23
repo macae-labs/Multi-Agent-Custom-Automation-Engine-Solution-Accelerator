@@ -4,6 +4,7 @@ import json
 
 from semantic_kernel.functions import kernel_function
 from models.messages_kernel import AgentType
+from connectors import get_graph_connector
 
 
 class TechSupportTools:
@@ -16,10 +17,18 @@ class TechSupportTools:
         description="Send a welcome email to a new employee as part of onboarding."
     )
     async def send_welcome_email(employee_name: str, email_address: str) -> str:
+        graph = get_graph_connector()
+        
+        result = await graph.send_welcome_email(employee_name, email_address)
+        
+        demo_tag = "[DEMO] " if result.get("demo_mode") else ""
+        status = "Delivered ✓" if result.get("success") else f"Failed: {result.get('error', 'Unknown error')}"
+        
         return (
-            f"##### Welcome Email Sent\n"
+            f"##### {demo_tag}Welcome Email Sent\n"
             f"**Employee Name:** {employee_name}\n"
-            f"**Email Address:** {email_address}\n\n"
+            f"**Email Address:** {email_address}\n"
+            f"**Status:** {status}\n\n"
             f"A welcome email has been successfully sent to {employee_name} at {email_address}.\n"
             f"{TechSupportTools.formatting_instructions}"
         )

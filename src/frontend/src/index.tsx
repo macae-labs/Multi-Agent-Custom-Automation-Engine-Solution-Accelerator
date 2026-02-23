@@ -19,32 +19,21 @@ const AppWrapper = () => {
   const [config, setConfig] = useState<ConfigType>(defaultConfig);
   useEffect(() => {
     const initConfig = async () => {
+      // Use default config directly for development
+      let config = defaultConfig;
+      config.ENABLE_AUTH = toBoolean(config.ENABLE_AUTH);
+
       window.appConfig = config;
       setEnvData(config);
       setApiUrl(config.API_URL);
-
-      try {
-        const response = await fetch('/config');
-        let config = defaultConfig;
-        if (response.ok) {
-          config = await response.json();
-          config.ENABLE_AUTH = toBoolean(config.ENABLE_AUTH);
-        }
-
-        window.appConfig = config;
-        setEnvData(config);
-        setApiUrl(config.API_URL);
-        setConfig(config);
-        let defaultUserInfo = config.ENABLE_AUTH ? await getUserInfo() : ({} as UserInfo);
-        window.userInfo = defaultUserInfo;
-        setUserInfoGlobal(defaultUserInfo);
-
-      } catch (error) {
-        console.info("frontend config did not load from python", error);
-      } finally {
-        setIsConfigLoaded(true);
-        setIsUserInfoLoaded(true);
-      }
+      setConfig(config);
+      
+      let defaultUserInfo = config.ENABLE_AUTH ? await getUserInfo() : ({} as UserInfo);
+      window.userInfo = defaultUserInfo;
+      setUserInfoGlobal(defaultUserInfo);
+      
+      setIsConfigLoaded(true);
+      setIsUserInfoLoaded(true);
     };
 
     initConfig(); // Call the async function inside useEffect

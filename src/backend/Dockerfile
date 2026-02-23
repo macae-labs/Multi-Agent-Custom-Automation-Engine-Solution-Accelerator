@@ -1,5 +1,5 @@
 # Base Python image
-FROM mcr.microsoft.com/devcontainers/python:3.11-bullseye AS base
+FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm AS base
 WORKDIR /app
 
 FROM base AS builder

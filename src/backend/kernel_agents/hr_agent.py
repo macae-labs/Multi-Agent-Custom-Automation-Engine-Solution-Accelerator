@@ -81,8 +81,14 @@ class HrAgent(BaseAgent):
         memory_store = kwargs.get("memory_store")
         tools = kwargs.get("tools", None)
         system_message = kwargs.get("system_message", None)
-        agent_name = kwargs.get("agent_name")
+        agent_name = kwargs.get("agent_name", AgentType.HR.value)
         client = kwargs.get("client")
+
+        # Load tools if not provided - MUST happen before _create_azure_ai_agent_definition
+        if not tools:
+            tools_dict = HrTools.get_all_kernel_functions()
+            tools = [KernelFunction.from_method(func) for func in tools_dict.values()]
+            logging.info(f"Loaded {len(tools)} tools for HrAgent")
 
         try:
             logging.info("Initializing HRAgent from async init azure AI Agent")
@@ -90,7 +96,8 @@ class HrAgent(BaseAgent):
             # Create the Azure AI Agent using AppConfig with string instructions
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
-                instructions=system_message,  # Pass the formatted string, not an object
+                instructions=system_message,
+                tools=tools,  # Now tools is populated!
                 temperature=0.0,
                 response_format=None,
             )

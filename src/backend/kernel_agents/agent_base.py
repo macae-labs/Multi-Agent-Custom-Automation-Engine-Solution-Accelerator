@@ -1,18 +1,76 @@
 import logging
 from abc import abstractmethod
-from typing import (Any, List, Mapping, Optional)
+from typing import Any, List, Mapping, Optional, cast
 
 # Import the new AppConfig instance
 from app_config import config
+from azure.ai.agents.models import FunctionToolDefinition
+from azure.ai.agents.models import (
+    ResponseFormatJsonSchema,
+    ResponseFormatJsonSchemaType,
+)
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
 from models.messages_kernel import (ActionRequest, ActionResponse,
-                                    AgentMessage, Step, StepStatus)
+                                    AgentMessage, StepStatus)
+from semantic_kernel.agents.azure_ai.agent_thread_actions import AgentThreadActions
+from semantic_kernel.exceptions.agent_exceptions import AgentInvokeException
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
 from semantic_kernel.functions import KernelFunction
+from semantic_kernel.functions.kernel_function_metadata import KernelFunctionMetadata
 
 # Default formatting instructions used across agents
 DEFAULT_FORMATTING_INSTRUCTIONS = "Instructions: returning the output of this function call verbatim to the user in markdown. Then write AGENT SUMMARY: and then include a summary of what you did."
+
+
+def _patch_tool_validation_for_prefixed_kernel_names() -> None:
+    """Patch SK validation to accept unqualified tool names against qualified kernel names."""
+    if getattr(AgentThreadActions, "_macae_tool_validation_patched", False):
+        return
+
+    def _normalize_name(name: Optional[str]) -> set[str]:
+        if not name:
+            return set()
+        normalized = {name}
+        for sep in ("-", ".", "::"):
+            if sep in name:
+                normalized.add(name.split(sep)[-1])
+        return normalized
+
+    def _validate_function_tools_registered(tools: list[Any], funcs: list[Any]) -> None:
+        function_tool_names: set[str] = set()
+        for tool in tools:
+            if isinstance(tool, FunctionToolDefinition):
+                tool_name = getattr(tool.function, "name", None)
+                if tool_name:
+                    function_tool_names.add(tool_name)
+
+        kernel_function_names: set[str] = set()
+        for f in funcs:
+            if isinstance(f, KernelFunctionMetadata):
+                kernel_function_names |= _normalize_name(f.fully_qualified_name)
+                kernel_function_names |= _normalize_name(f.name)
+            else:
+                kernel_function_names |= _normalize_name(
+                    getattr(f, "full_qualified_name", None)
+                )
+                kernel_function_names |= _normalize_name(getattr(f, "name", None))
+
+        missing = function_tool_names - kernel_function_names
+        if missing:
+            raise AgentInvokeException(
+                "The following function tool(s) are defined on the agent but missing "
+                f"from the kernel: {sorted(missing)}. "
+                "Please ensure all required tools are registered with the kernel."
+            )
+
+    AgentThreadActions._validate_function_tools_registered = staticmethod(  # type: ignore[attr-defined]
+        _validate_function_tools_registered
+    )
+    AgentThreadActions._macae_tool_validation_patched = True  # type: ignore[attr-defined]
+
+
+_patch_tool_validation_for_prefixed_kernel_names()
 
 
 class BaseAgent(AzureAIAgent):
@@ -49,15 +107,15 @@ class BaseAgent(AzureAIAgent):
         # Call AzureAIAgent constructor with required client and definition
         super().__init__(
             deployment_name=None,  # Set as needed
-            plugins=tools,  # Use the loaded plugins,
+            plugins=cast(Any, tools),  # SK expects plugin objects; runtime accepts current list.
             endpoint=None,  # Set as needed
             api_version=None,  # Set as needed
             token=None,  # Set as needed
             model=config.AZURE_OPENAI_DEPLOYMENT_NAME,
             agent_name=agent_name,
             system_prompt=system_message,
-            client=client,
-            definition=definition,
+            client=cast(Any, client),
+            definition=cast(Any, definition),
         )
 
         # Store instance variables
@@ -72,6 +130,17 @@ class BaseAgent(AzureAIAgent):
 
         # Required properties for AgentGroupChat compatibility
         self.name = agent_name  # This is crucial for AgentGroupChat to identify agents
+
+        # Register functions in kernel metadata for SK tool validation at invoke-time.
+        if tools and getattr(self, "kernel", None) is not None:
+            try:
+                self.kernel.add_functions(plugin_name=self._agent_name, functions=tools)
+            except Exception as exc:
+                logging.warning(
+                    "Failed to register tools into kernel for %s: %s",
+                    self._agent_name,
+                    exc,
+                )
 
     # @property
     # def plugins(self) -> Optional[dict[str, Callable]]:
@@ -97,7 +166,7 @@ class BaseAgent(AzureAIAgent):
         """
 
         # Get the step from memory
-        step: Step = await self._memory_store.get_step(
+        step = await self._memory_store.get_step(
             action_request.step_id, action_request.session_id
         )
 
@@ -105,10 +174,12 @@ class BaseAgent(AzureAIAgent):
             # Create error response if step not found
             response = ActionResponse(
                 step_id=action_request.step_id,
+                plan_id=action_request.plan_id,
+                session_id=action_request.session_id,
+                result="Step not found in memory.",
                 status=StepStatus.failed,
-                message="Step not found in memory.",
             )
-            return response.json()
+            return response.model_dump_json()
 
         # Add messages to chat history for context
         # This gives the agent visibility of the conversation history
@@ -149,6 +220,7 @@ class BaseAgent(AzureAIAgent):
             # Store agent message in cosmos memory
             await self._memory_store.add_item(
                 AgentMessage(
+                    data_type="agent_message",
                     session_id=action_request.session_id,
                     user_id=self._user_id,
                     plan_id=action_request.plan_id,
@@ -195,7 +267,7 @@ class BaseAgent(AzureAIAgent):
                 result=f"Error: {str(e)}",
                 status=StepStatus.failed,
             )
-            return response.json()
+            return response.model_dump_json()
 
         # Update step status
         step.status = StepStatus.completed
@@ -226,15 +298,16 @@ class BaseAgent(AzureAIAgent):
             status=StepStatus.completed,
         )
 
-        return response.json()
+        return response.model_dump_json()
 
     def save_state(self) -> Mapping[str, Any]:
         """Save the state of this agent."""
-        return {"memory": self._memory_store.save_state()}
+        # CosmosMemoryContext does not implement save_state/load_state.
+        return {"session_id": self._session_id, "user_id": self._user_id}
 
     def load_state(self, state: Mapping[str, Any]) -> None:
         """Load the state of this agent."""
-        self._memory_store.load_state(state["memory"])
+        _ = state
 
     @classmethod
     @abstractmethod
@@ -248,7 +321,7 @@ class BaseAgent(AzureAIAgent):
         instructions: str,
         tools: Optional[List[KernelFunction]] = None,
         client=None,
-        response_format=None,
+        response_format: Optional[Any] = None,
         temperature: float = 0.0,
     ):
         """
@@ -272,6 +345,27 @@ class BaseAgent(AzureAIAgent):
             # Get the AIProjectClient
             if client is None:
                 client = config.get_ai_project_client()
+            client = cast(Any, client)
+
+            # Validate and convert response_format if it's a dict
+            if response_format is not None and isinstance(response_format, dict):
+                logging.info(
+                    "Converting dict response_format to Azure Agents models type."
+                )
+                try:
+                    # Extract data from the dict sent by Semantic Kernel
+                    js_data = response_format.get("json_schema", {})
+                    
+                    # Re-package as strong objects from Azure SDK
+                    response_format = ResponseFormatJsonSchemaType(
+                        json_schema=ResponseFormatJsonSchema(
+                            name=js_data.get("name", "PlannerSchema"),
+                            description=js_data.get("description", "Structured response"),
+                            schema=js_data.get("schema", {})
+                        )
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to convert response_format: {e}. Keeping original.")
 
             # # First try to get an existing agent with this name as assistant_id
             try:
@@ -285,10 +379,27 @@ class BaseAgent(AzureAIAgent):
                 # Get the existing agent definition
                 if agent_id is not None:
                     logging.info(f"Agent with ID {agent_id} exists.")
-
                     existing_definition = await client.agents.get_agent(agent_id)
+                    existing_response_format = getattr(
+                        existing_definition, "response_format", None
+                    )
 
-                    return existing_definition
+                    # Telemetry workaround:
+                    # if an existing agent stores response_format incorrectly (not ResponseFormatJsonSchemaType)
+                    # and we need structured output, reuse will fail at run creation.
+                    if response_format is not None:
+                        if not isinstance(existing_response_format, ResponseFormatJsonSchemaType):
+                            logging.info(
+                                "Agent %s (ID: %s) has incompatible response_format type %s; deleting and recreating.",
+                                agent_name,
+                                agent_id,
+                                type(existing_response_format).__name__,
+                            )
+                            await client.agents.delete_agent(agent_id)
+                        else:
+                            return existing_definition
+                    else:
+                        return existing_definition
             except Exception as e:
                 # The Azure AI Projects SDK throws an exception when the agent doesn't exist
                 # (not returning None), so we catch it and proceed to create a new agent
@@ -308,7 +419,7 @@ class BaseAgent(AzureAIAgent):
                 name=agent_name,
                 instructions=instructions,
                 temperature=temperature,
-                response_format=response_format,
+                response_format=cast(Any, response_format),
             )
 
             return agent_definition

@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
@@ -28,7 +28,7 @@ class GroupChatManager(BaseAgent):
         tools: Optional[List[KernelFunction]] = None,
         system_message: Optional[str] = None,
         agent_name: str = AgentType.GROUP_CHAT_MANAGER.value,
-        agent_tools_list: List[str] = None,
+        agent_tools_list: Optional[List[str]] = None,
         agent_instances: Optional[Dict[str, BaseAgent]] = None,
         client=None,
         definition=None,
@@ -84,25 +84,31 @@ class GroupChatManager(BaseAgent):
     @classmethod
     async def create(
         cls,
-        **kwargs: Dict[str, str],
-    ) -> None:
+        **kwargs: Any,
+    ) -> "GroupChatManager":
         """Asynchronously create the PlannerAgent.
 
         Creates the Azure AI Agent for planning operations.
 
         Returns:
-            None
+            GroupChatManager instance
         """
 
-        session_id = kwargs.get("session_id")
-        user_id = kwargs.get("user_id")
-        memory_store = kwargs.get("memory_store")
-        tools = kwargs.get("tools", None)
-        system_message = kwargs.get("system_message", None)
-        agent_name = kwargs.get("agent_name")
+        session_id: str = kwargs.get("session_id", "")
+        user_id: str = kwargs.get("user_id", "")
+        memory_store_value = kwargs.get("memory_store")
+        if memory_store_value is None:
+            raise ValueError("memory_store is required and cannot be None")
+        memory_store: CosmosMemoryContext = memory_store_value
+        tools: Optional[List[KernelFunction]] = kwargs.get("tools", None)
+        system_message: Optional[str] = kwargs.get("system_message", None)
+        agent_name: str = kwargs.get("agent_name", AgentType.GROUP_CHAT_MANAGER.value)
         agent_tools_list = kwargs.get("agent_tools_list", None)
         agent_instances = kwargs.get("agent_instances", None)
         client = kwargs.get("client")
+
+        # Use default system message if not provided
+        instructions = system_message or cls.default_system_message(agent_name)
 
         try:
             logging.info("Initializing GroupChatAgent from async init azure AI Agent")
@@ -110,7 +116,8 @@ class GroupChatManager(BaseAgent):
             # Create the Azure AI Agent using AppConfig with string instructions
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
-                instructions=system_message,  # Pass the formatted string, not an object
+                instructions=instructions,  # Pass the formatted string, not an object
+                tools=tools,  # Pass the tools to the agent definition
                 temperature=0.0,
                 response_format=None,
             )
@@ -150,6 +157,7 @@ class GroupChatManager(BaseAgent):
         logging.info(f"Received input task: {message}")
         await self._memory_store.add_item(
             AgentMessage(
+                data_type="agent_message",
                 session_id=message.session_id,
                 user_id=self._user_id,
                 plan_id="",
@@ -170,7 +178,7 @@ class GroupChatManager(BaseAgent):
         )
 
         # Send the InputTask to the PlannerAgent
-        planner_agent = self._agent_instances[AgentType.PLANNER.value]
+        planner_agent = cast(Any, self._agent_instances[AgentType.PLANNER.value])
         result = await planner_agent.handle_input_task(message)
         logging.info(f"Plan created: {result}")
         return result
@@ -195,7 +203,7 @@ class GroupChatManager(BaseAgent):
             action: str
             agent: BAgentType
             status: StepStatus = StepStatus.planned
-            agent_reply: Optional[str] = None
+            agent_reply: Optional[str] =None
             human_feedback: Optional[str] = None
             human_approval_status: Optional[HumanFeedbackStatus] = HumanFeedbackStatus.requested
             updated_action: Optional[str] = None
@@ -211,7 +219,7 @@ class GroupChatManager(BaseAgent):
         # Filter for steps that are planned or awaiting feedback
 
         # Get the first step assigned to HumanAgent for feedback
-        human_feedback_step: Step = next(
+        human_feedback_step: Optional[Step] = next(
             (s for s in steps if s.agent == AgentType.HUMAN), None
         )
 
@@ -231,7 +239,7 @@ class GroupChatManager(BaseAgent):
         plan = await self._memory_store.get_plan_by_session(
             session_id=message.session_id
         )
-        if plan.human_clarification_response:
+        if plan and plan.human_clarification_response:
             received_human_feedback_on_plan = (
                 f"{plan.human_clarification_request}: {plan.human_clarification_response}"
                 + " This information may or may not be relevant to the step you are executing - it was feedback provided by the human user on the overall plan, which includes multiple steps, not just the one you are actioning now."
@@ -261,7 +269,7 @@ class GroupChatManager(BaseAgent):
                     # TODO: Implement this logic later
                     step.status = StepStatus.rejected
                     step.human_approval_status = HumanFeedbackStatus.rejected
-                    self._memory_store.update_step(step)
+                    await self._memory_store.update_step(step)
                     track_event_if_configured(
                         "Group Chat Manager - Steps has been rejected and updated into the cosmos",
                         {
@@ -285,7 +293,7 @@ class GroupChatManager(BaseAgent):
                     # TODO: Implement this logic later
                     step.status = StepStatus.rejected
                     step.human_approval_status = HumanFeedbackStatus.rejected
-                    self._memory_store.update_step(step)
+                    await self._memory_store.update_step(step)
                     track_event_if_configured(
                         f"{AgentType.GROUP_CHAT_MANAGER.value} - Step has been rejected and updated into the cosmos",
                         {
@@ -341,6 +349,8 @@ class GroupChatManager(BaseAgent):
 
         # generate conversation history for the invoked agent
         plan = await self._memory_store.get_plan_by_session(session_id=session_id)
+        if plan is None:
+            raise ValueError(f"No plan found for session {session_id}")
         steps: List[Step] = await self._memory_store.get_steps_by_plan(plan.id)
 
         current_step_id = step.id
@@ -359,12 +369,16 @@ class GroupChatManager(BaseAgent):
         )
 
         # Iterate over the steps until the current_step_id
-        for i, step in enumerate(steps):
-            if step.id == current_step_id:
+        for i, prior_step in enumerate(steps):
+            if prior_step.id == current_step_id:
                 break
             formatted_string += f"Step {i}\n"
-            formatted_string += f"{AgentType.GROUP_CHAT_MANAGER.value}: {step.action}\n"
-            formatted_string += f"{step.agent.value}: {step.agent_reply}\n"
+            formatted_string += (
+                f"{AgentType.GROUP_CHAT_MANAGER.value}: {prior_step.action}\n"
+            )
+            formatted_string += (
+                f"{prior_step.agent.value}: {prior_step.agent_reply}\n"
+            )
         formatted_string += "<conversation_history \\>"
 
         logging.info(f"Formatted string: {formatted_string}")
@@ -381,14 +395,12 @@ class GroupChatManager(BaseAgent):
         )
         logging.info(f"Sending ActionRequest to {step.agent.value}")
 
-        if step.agent != "":
-            agent_name = step.agent.value
-            formatted_agent = agent_name.replace("_", " ")
-        else:
-            raise ValueError(f"Check {step.agent} is missing")
+        agent_name = step.agent.value
+        formatted_agent = agent_name.replace("_", " ")
 
         await self._memory_store.add_item(
             AgentMessage(
+                data_type="agent_message",
                 session_id=session_id,
                 user_id=self._user_id,
                 plan_id=step.plan_id,
@@ -410,7 +422,7 @@ class GroupChatManager(BaseAgent):
             },
         )
 
-        if step.agent == AgentType.HUMAN.value:
+        if step.agent == AgentType.HUMAN:
             # we mark the step as complete since we have received the human feedback
             # Update step status to 'completed'
             step.status = StepStatus.completed

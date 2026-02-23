@@ -15,7 +15,7 @@ param frontendDefinition object
 @description('Id of the user or app to assign application roles')
 param principalId string
 
-var abbrs = loadJsonContent('./abbreviations.json')
+var abbrs = loadJsonContent('../abbreviations.json')
 var resourceToken = uniqueString(subscription().id, resourceGroup().id, location)
 
 // Monitor application with Azure Monitor

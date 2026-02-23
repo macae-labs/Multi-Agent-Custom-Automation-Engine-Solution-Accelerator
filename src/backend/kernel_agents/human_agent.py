@@ -87,6 +87,7 @@ class HumanAgent(BaseAgent):
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
                 instructions=system_message,  # Pass the formatted string, not an object
+                tools=tools,  # Pass the tools to the agent definition
                 temperature=0.0,
                 response_format=None,
             )

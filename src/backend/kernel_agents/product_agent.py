@@ -87,13 +87,20 @@ class ProductAgent(BaseAgent):
         agent_name = kwargs.get("agent_name")
         client = kwargs.get("client")
 
+        # Load tools if not provided - MUST happen before _create_azure_ai_agent_definition
+        if not tools:
+            tools_dict = ProductTools.get_all_kernel_functions()
+            tools = [KernelFunction.from_method(func) for func in tools_dict.values()]
+            logging.info(f"Loaded {len(tools)} tools for ProductAgent")
+
         try:
             logging.info("Initializing ProductAgent from async init azure AI Agent")
 
             # Create the Azure AI Agent using AppConfig with string instructions
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
-                instructions=system_message,  # Pass the formatted string, not an object
+                instructions=system_message,
+                tools=tools,  # Now tools is populated!
                 temperature=0.0,
                 response_format=None,
             )

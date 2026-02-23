@@ -1,7 +1,6 @@
-import datetime
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from azure.ai.agents.models import (ResponseFormatJsonSchema,
                                     ResponseFormatJsonSchemaType)
@@ -25,6 +24,7 @@ from models.messages_kernel import (
     Step,
     StepStatus,
 )
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.functions import KernelFunction
 from semantic_kernel.functions.kernel_arguments import KernelArguments
 
@@ -44,7 +44,7 @@ class PlannerAgent(BaseAgent):
         tools: Optional[List[KernelFunction]] = None,
         system_message: Optional[str] = None,
         agent_name: str = AgentType.PLANNER.value,
-        available_agents: List[str] = None,
+        available_agents: Optional[List[str]] = None,
         agent_instances: Optional[Dict[str, BaseAgent]] = None,
         client=None,
         definition=None,
@@ -115,8 +115,8 @@ class PlannerAgent(BaseAgent):
     @classmethod
     async def create(
         cls,
-        **kwargs: Dict[str, Any],
-    ) -> None:
+        **kwargs: Any,
+    ) -> "PlannerAgent":
         """Asynchronously create the PlannerAgent.
 
         Creates the Azure AI Agent for planning operations.
@@ -125,15 +125,18 @@ class PlannerAgent(BaseAgent):
             None
         """
 
-        session_id = kwargs.get("session_id")
-        user_id = kwargs.get("user_id")
-        memory_store = kwargs.get("memory_store")
-        tools = kwargs.get("tools", None)
-        system_message = kwargs.get("system_message", None)
-        agent_name = kwargs.get("agent_name")
-        available_agents = kwargs.get("available_agents", None)
-        agent_instances = kwargs.get("agent_instances", None)
+        session_id = cast(Optional[str], kwargs.get("session_id"))
+        user_id = cast(Optional[str], kwargs.get("user_id"))
+        memory_store = cast(Optional[CosmosMemoryContext], kwargs.get("memory_store"))
+        tools = cast(Optional[List[KernelFunction]], kwargs.get("tools", None))
+        system_message = cast(Optional[str], kwargs.get("system_message", None))
+        agent_name = cast(str, kwargs.get("agent_name", AgentType.PLANNER.value))
+        available_agents = cast(Optional[List[str]], kwargs.get("available_agents", None))
+        agent_instances = cast(Optional[Dict[str, BaseAgent]], kwargs.get("agent_instances", None))
         client = kwargs.get("client")
+
+        if not session_id or not user_id or memory_store is None:
+            raise ValueError("session_id, user_id, and memory_store are required")
 
         # Create the instruction template
 
@@ -192,6 +195,7 @@ class PlannerAgent(BaseAgent):
             # Add a message about the created plan
             await self._memory_store.add_item(
                 AgentMessage(
+                    data_type="agent_message",
                     session_id=input_task.session_id,
                     user_id=self._user_id,
                     plan_id=plan.id,
@@ -219,6 +223,7 @@ class PlannerAgent(BaseAgent):
             ):
                 await self._memory_store.add_item(
                     AgentMessage(
+                        data_type="agent_message",
                         session_id=input_task.session_id,
                         user_id=self._user_id,
                         plan_id=plan.id,
@@ -264,6 +269,7 @@ class PlannerAgent(BaseAgent):
         # Add a record of the clarification
         await self._memory_store.add_item(
             AgentMessage(
+                data_type="agent_message",
                 session_id=session_id,
                 user_id=self._user_id,
                 plan_id="",
@@ -286,6 +292,7 @@ class PlannerAgent(BaseAgent):
         # Add a confirmation message
         await self._memory_store.add_item(
             AgentMessage(
+                data_type="agent_message",
                 session_id=session_id,
                 user_id=self._user_id,
                 plan_id="",
@@ -331,10 +338,17 @@ class PlannerAgent(BaseAgent):
             # thread = self.client.agents.create_thread(thread_id=input_task.session_id)
             async_generator = self.invoke(
                 arguments=kernel_args,
-                settings={
-                    "temperature": 0.0,  # Keep temperature low for consistent planning
-                    "max_tokens": 10096,  # Ensure we have enough tokens for the full plan
-                },
+                settings=PromptExecutionSettings(
+                    temperature=0.0,
+                    max_tokens=10096,
+                ),
+                response_format=ResponseFormatJsonSchemaType(
+                    json_schema=ResponseFormatJsonSchema(
+                        name=PlannerResponsePlan.__name__,
+                        description=f"respond with {PlannerResponsePlan.__name__.lower()}",
+                        schema=PlannerResponsePlan.model_json_schema(),
+                    )
+                ),
                 thread=thread,
             )
 
@@ -358,7 +372,7 @@ class PlannerAgent(BaseAgent):
             # Try various parsing approaches in sequence
             try:
                 # 1. First attempt: Try to parse the raw response directly
-                parsed_result = PlannerResponsePlan.parse_raw(response_content)
+                parsed_result = PlannerResponsePlan.model_validate_json(response_content)
                 if parsed_result is None:
                     # If all parsing attempts fail, create a fallback plan from the text content
                     logging.info(
@@ -380,6 +394,7 @@ class PlannerAgent(BaseAgent):
 
             # Create the Plan instance
             plan = Plan(
+                data_type="plan",
                 id=str(uuid.uuid4()),
                 session_id=input_task.session_id,
                 user_id=self._user_id,
@@ -399,14 +414,15 @@ class PlannerAgent(BaseAgent):
                 agent_name = step_data.agent
 
                 # Validate agent name
-                if agent_name not in self._available_agents:
+                if agent_name.value not in self._available_agents:
                     logging.warning(
                         f"Invalid agent name: {agent_name}, defaulting to {AgentType.GENERIC.value}"
                     )
-                    agent_name = AgentType.GENERIC.value
+                    agent_name = AgentType.GENERIC
 
                 # Create the step
                 step = Step(
+                    data_type="step",
                     id=str(uuid.uuid4()),
                     plan_id=plan.id,
                     session_id=input_task.session_id,
@@ -453,6 +469,7 @@ class PlannerAgent(BaseAgent):
 
             # Create a dummy plan with the original task description
             dummy_plan = Plan(
+                data_type="plan",
                 id=str(uuid.uuid4()),
                 session_id=input_task.session_id,
                 user_id=self._user_id,
@@ -460,7 +477,6 @@ class PlannerAgent(BaseAgent):
                 overall_status=PlanStatus.in_progress,
                 summary=f"Plan created for: {input_task.description}",
                 human_clarification_request=None,
-                timestamp=datetime.datetime.utcnow().isoformat(),
             )
 
             # Store the dummy plan
@@ -468,15 +484,15 @@ class PlannerAgent(BaseAgent):
 
             # Create a dummy step for analyzing the task
             dummy_step = Step(
+                data_type="step",
                 id=str(uuid.uuid4()),
                 plan_id=dummy_plan.id,
                 session_id=input_task.session_id,
                 user_id=self._user_id,
                 action="Analyze the task: " + input_task.description,
-                agent=AgentType.GENERIC.value,  # Using the correct value from AgentType enum
+                agent=AgentType.GENERIC,
                 status=StepStatus.planned,
                 human_approval_status=HumanFeedbackStatus.requested,
-                timestamp=datetime.datetime.utcnow().isoformat(),
             )
 
             # Store the dummy step
@@ -484,15 +500,15 @@ class PlannerAgent(BaseAgent):
 
             # Add a second step to request human clarification
             clarification_step = Step(
+                data_type="step",
                 id=str(uuid.uuid4()),
                 plan_id=dummy_plan.id,
                 session_id=input_task.session_id,
                 user_id=self._user_id,
                 action=f"Provide more details about: {input_task.description}",
-                agent=AgentType.HUMAN.value,
+                agent=AgentType.HUMAN,
                 status=StepStatus.planned,
                 human_approval_status=HumanFeedbackStatus.requested,
-                timestamp=datetime.datetime.utcnow().isoformat(),
             )
 
             # Store the clarification step
@@ -517,7 +533,7 @@ class PlannerAgent(BaseAgent):
 
             return dummy_plan, [dummy_step, clarification_step]
 
-    def _generate_args(self, objective: str) -> any:
+    def _generate_args(self, objective: str) -> Dict[str, str]:
         """Generate instruction for the LLM to create a plan.
 
         Args:

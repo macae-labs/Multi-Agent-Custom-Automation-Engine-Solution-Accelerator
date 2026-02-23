@@ -443,7 +443,7 @@ class SKFunctionRegistry:
         self.kernel = kernel
         self.functions = {}
 
-    def register_function(self, name: str, function_obj, description: str = None):
+    def register_function(self, name: str, function_obj, description: Optional[str] = None):
         """Register a function with the kernel."""
         self.functions[name] = {
             "function": function_obj,

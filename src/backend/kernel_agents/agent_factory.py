@@ -162,6 +162,7 @@ class AgentFactory:
                     "memory_store": memory_store,
                     "tools": tools,
                     "system_message": system_message,
+                    "response_format": response_format,
                     "client": client,
                     **kwargs,
                 }.items()
@@ -221,8 +222,11 @@ class AgentFactory:
                 # Create the AIProjectClient instance using the config
                 # This is a placeholder; replace with actual client creation logic
                 client = config.get_ai_project_client()
+            if client is None:
+                raise RuntimeError("AIProjectClient is not available")
         except Exception as client_exc:
             logger.error(f"Error creating AIProjectClient: {client_exc}")
+            raise
         # Initialize cache for this session if it doesn't exist
         if session_id not in cls._agent_cache:
             cls._agent_cache[session_id] = {}

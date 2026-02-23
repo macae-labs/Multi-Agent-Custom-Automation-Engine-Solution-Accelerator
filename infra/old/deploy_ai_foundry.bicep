@@ -10,7 +10,7 @@ param aiServicesKey string
 param aiServicesId string
 
 // Load the abbrevations file required to name the azure resources.
-var abbrs = loadJsonContent('./abbreviations.json')
+var abbrs = loadJsonContent('../abbreviations.json')
 
 var storageName = '${abbrs.storage.storageAccount}${solutionName}hub'
 var storageSkuName = 'Standard_LRS'

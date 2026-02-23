@@ -68,16 +68,16 @@ class CosmosMemoryContext(MemoryStoreBase):
         self._initialized.set()
 
     async def initialize(self):
-        """Initialize the memory context using CosmosDB."""
+        """Initialize the memory context using CosmosDB.
+        
+        Uses the singleton database client from AppConfig to prevent
+        creating multiple CosmosClient instances and causing aiohttp session leaks.
+        """
         try:
             if not self._database:
-                # Create Cosmos client
-                cosmos_client = CosmosClient(
-                    self._cosmos_endpoint, credential=DefaultAzureCredential()
-                )
-                self._database = cosmos_client.get_database_client(
-                    self._cosmos_database
-                )
+                # Use the singleton database client from config instead of creating new client
+                # This prevents aiohttp session leaks from multiple CosmosClient instances
+                self._database = config.get_cosmos_database_client()
 
             # Set up CosmosDB container
             self._container = await self._database.create_container_if_not_exists(
