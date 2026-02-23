@@ -458,3 +458,6 @@ __pycache__/
 *.whl
 .azure
 .github/copilot-instructions.md
+infra/scripts/generar_token_azure.ps1
+infra/scripts/test_ai_foundry_connection.ps1
+infra/scripts/token_helper.ps1
