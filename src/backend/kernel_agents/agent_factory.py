@@ -18,11 +18,19 @@ from kernel_agents.human_agent import HumanAgent
 from kernel_agents.marketing_agent import MarketingAgent
 from kernel_agents.planner_agent import PlannerAgent  # Add PlannerAgent import
 from kernel_agents.procurement_agent import ProcurementAgent
+from kernel_agents.project_context_loader import ProjectContextLoader
 from kernel_agents.product_agent import ProductAgent
 from kernel_agents.tech_support_agent import TechSupportAgent
+from kernel_tools.generic_tools import GenericTools
+from kernel_tools.hr_tools import HrTools
+from kernel_tools.marketing_tools import MarketingTools
+from kernel_tools.procurement_tools import ProcurementTools
+from kernel_tools.product_tools import ProductTools
+from kernel_tools.tech_support_tools import TechSupportTools
 from models.messages_kernel import AgentType, PlannerResponsePlan
 # pylint:disable=E0611
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
+from semantic_kernel.functions import KernelFunction
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +82,67 @@ class AgentFactory:
 
     # Cache of Azure AI Agent instances
     _azure_ai_agent_cache: Dict[str, Dict[str, AzureAIAgent]] = {}
+    _project_tools_cache: Dict[str, list[KernelFunction]] = {}
+
+    @staticmethod
+    def _get_default_tools(agent_type: AgentType) -> list[KernelFunction]:
+        """Load built-in kernel functions for a given agent type."""
+        tool_map = {
+            AgentType.HR: HrTools.get_all_kernel_functions,
+            AgentType.MARKETING: MarketingTools.get_all_kernel_functions,
+            AgentType.PRODUCT: ProductTools.get_all_kernel_functions,
+            AgentType.PROCUREMENT: ProcurementTools.get_all_kernel_functions,
+            AgentType.TECH_SUPPORT: TechSupportTools.get_all_kernel_functions,
+            AgentType.GENERIC: GenericTools.get_all_kernel_functions,
+        }
+        tools_factory = tool_map.get(agent_type)
+        if tools_factory is None:
+            return []
+        return [KernelFunction.from_method(func) for func in tools_factory().values()]
+
+    @classmethod
+    async def _get_project_tools(
+        cls,
+        session_id: str,
+        memory_store: CosmosMemoryContext,
+        agent_type: AgentType,
+    ) -> list[KernelFunction]:
+        """Load project-specific tools from the profile stored in Cosmos."""
+        cache_key = f"{session_id}:{agent_type.value}"
+        if cache_key in cls._project_tools_cache:
+            return cls._project_tools_cache[cache_key]
+
+        try:
+            profile = await ProjectContextLoader.load_project_profile(
+                memory_store=memory_store,
+                session_id=session_id,
+            )
+            tools = (
+                ProjectContextLoader.create_plugins_from_profile(
+                    profile,
+                    session_id=session_id,
+                    user_id=getattr(profile, "user_id", None),
+                    agent_type=agent_type.value,
+                )
+                if profile
+                else ProjectContextLoader.create_fallback_plugins(
+                    session_id=session_id,
+                    user_id=getattr(memory_store, "user_id", ""),
+                    project_id="default",
+                    agent_type=agent_type.value,
+                )
+            )
+            cls._project_tools_cache[cache_key] = tools
+            return tools
+        except Exception as exc:
+            logger.warning(
+                "Unable to load project tools for session %s and agent %s: %s",
+                session_id,
+                agent_type.value,
+                exc,
+            )
+            cls._project_tools_cache[cache_key] = []
+            return []
 
     @classmethod
     async def create_agent(
@@ -142,11 +211,17 @@ class AgentFactory:
                 f"You are a helpful AI assistant specialized in {cls._agent_type_strings.get(agent_type, 'general')} tasks.",
             )
 
-        # For other agent types, use the standard tool loading mechanism
+        # Load built-in tools and append project-specific tools from profile.
         agent_type_str = cls._agent_type_strings.get(
             agent_type, agent_type.value.lower()
         )
-        tools = None
+        default_tools = cls._get_default_tools(agent_type)
+        project_tools = await cls._get_project_tools(
+            session_id, memory_store, agent_type
+        )
+        tools = default_tools + project_tools
+        if not tools:
+            tools = None
 
         # Create the agent instance using the project-based pattern
         try:
@@ -327,7 +402,11 @@ class AgentFactory:
             if session_id in cls._azure_ai_agent_cache:
                 del cls._azure_ai_agent_cache[session_id]
                 logger.info(f"Cleared Azure AI agent cache for session {session_id}")
+            if session_id in cls._project_tools_cache:
+                del cls._project_tools_cache[session_id]
+                logger.info(f"Cleared project tools cache for session {session_id}")
         else:
             cls._agent_cache.clear()
             cls._azure_ai_agent_cache.clear()
+            cls._project_tools_cache.clear()
             logger.info("Cleared all agent caches")

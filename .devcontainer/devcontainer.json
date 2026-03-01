@@ -8,6 +8,9 @@
         "ghcr.io/devcontainers/features/azure-cli:1": {},
         "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}
     },
+    "mounts": [
+      "source=C:/Users/admin/fibroskin-academic-7txy1f,target=/workspaces/projects/fibroskin-academic-7txy1f,type=bind,consistency=cached"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [

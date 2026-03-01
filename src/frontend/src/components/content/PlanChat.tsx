@@ -170,18 +170,14 @@ const PlanChat: React.FC<PlanChatProps> = ({
             value={input}
             onChange={setInput}
             onEnter={() => OnChatSubmit(input)}
-            disabledChat={
-              planData?.enableChat ? submittingChatDisableInput : true
-            }
-            placeholder="Add more info to this task..."
+            disabledChat={false}
+            placeholder="Ask a follow-up or add context..."
           >
             <Button
               appearance="transparent"
               onClick={() => OnChatSubmit(input)}
               icon={<Send />}
-              disabled={
-                planData?.enableChat ? submittingChatDisableInput : true
-              }
+              disabled={false}
             />
           </ChatInput>
         </div>

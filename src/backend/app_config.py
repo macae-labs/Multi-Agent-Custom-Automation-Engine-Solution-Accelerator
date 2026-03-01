@@ -57,6 +57,7 @@ class AppConfig:
         self.AZURE_AI_RESOURCE_GROUP = self._get_required("AZURE_AI_RESOURCE_GROUP")
         self.AZURE_AI_PROJECT_NAME = self._get_required("AZURE_AI_PROJECT_NAME")
         self.AZURE_AI_AGENT_ENDPOINT = self._get_required("AZURE_AI_AGENT_ENDPOINT")
+        self.AZURE_AI_PROJECT_ENDPOINT = self._get_optional("AZURE_AI_PROJECT_ENDPOINT")
 
         # Cached clients and resources
         self._azure_credentials = None
@@ -232,7 +233,18 @@ class AppConfig:
                     "Unable to acquire Azure credentials; ensure DefaultAzureCredential is configured"
                 )
 
-            endpoint = self.AZURE_AI_AGENT_ENDPOINT
+            endpoint = self.AZURE_AI_PROJECT_ENDPOINT or self.AZURE_AI_AGENT_ENDPOINT
+            endpoint = endpoint.strip().strip('"').strip("'")
+            if endpoint.endswith("/"):
+                endpoint = endpoint[:-1]
+
+            # Normalize bare Foundry project endpoint to the API path expected by SDK.
+            if (
+                ".services.ai.azure.com" in endpoint
+                and "/api/projects/" not in endpoint
+                and self.AZURE_AI_PROJECT_NAME
+            ):
+                endpoint = f"{endpoint}/api/projects/{self.AZURE_AI_PROJECT_NAME}"
             
             # Create client with increased timeout for agent operations
             from azure.core.pipeline.transport import AioHttpTransport

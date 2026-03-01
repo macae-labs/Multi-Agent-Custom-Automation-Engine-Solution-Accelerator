@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Any, List, Optional, cast
 
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from kernel_agents.agent_base import BaseAgent
@@ -65,8 +65,8 @@ class ProcurementAgent(BaseAgent):
     @classmethod
     async def create(
         cls,
-        **kwargs: Dict[str, str],
-    ) -> None:
+        **kwargs: Any,
+    ) -> "ProcurementAgent":
         """Asynchronously create the PlannerAgent.
 
         Creates the Azure AI Agent for planning operations.
@@ -75,13 +75,19 @@ class ProcurementAgent(BaseAgent):
             None
         """
 
-        session_id = kwargs.get("session_id")
-        user_id = kwargs.get("user_id")
-        memory_store = kwargs.get("memory_store")
-        tools = kwargs.get("tools", None)
-        system_message = kwargs.get("system_message", None)
-        agent_name = kwargs.get("agent_name")
+        session_id = cast(Optional[str], kwargs.get("session_id"))
+        user_id = cast(Optional[str], kwargs.get("user_id"))
+        memory_store = cast(Optional[CosmosMemoryContext], kwargs.get("memory_store"))
+        tools = cast(Optional[List[KernelFunction]], kwargs.get("tools", None))
+        system_message = cast(Optional[str], kwargs.get("system_message", None))
+        agent_name = cast(Optional[str], kwargs.get("agent_name"))
         client = kwargs.get("client")
+        if not session_id or not user_id or memory_store is None:
+            raise ValueError("session_id, user_id, and memory_store are required")
+        if not agent_name:
+            agent_name = AgentType.PROCUREMENT.value
+        if not system_message:
+            system_message = cls.default_system_message(agent_name)
 
         # Load tools if not provided - MUST happen before _create_azure_ai_agent_definition
         if not tools:
@@ -96,7 +102,7 @@ class ProcurementAgent(BaseAgent):
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
                 instructions=system_message,
-                tools=tools,  # Now tools is populated!
+                tools=cast(List[KernelFunction], tools),  # Now tools is populated!
                 temperature=0.0,
                 response_format=None,
             )
@@ -105,7 +111,7 @@ class ProcurementAgent(BaseAgent):
                 session_id=session_id,
                 user_id=user_id,
                 memory_store=memory_store,
-                tools=tools,
+                tools=cast(List[KernelFunction], tools),
                 system_message=system_message,
                 agent_name=agent_name,
                 client=client,

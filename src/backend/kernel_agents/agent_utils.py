@@ -67,10 +67,12 @@ async def extract_and_update_transition_states(
             parsed_result = json.loads(content)
             structured_plan = FSMStateAndTransition(**parsed_result)
 
-            # Update the step
-            step.identified_target_state = structured_plan.identifiedTargetState
-            step.identified_target_transition = (
-                structured_plan.identifiedTargetTransition
+            # Update without direct attribute writes to satisfy strict static typing
+            step = step.model_copy(
+                update={
+                    "identified_target_state": structured_plan.identifiedTargetState,
+                    "identified_target_transition": structured_plan.identifiedTargetTransition,
+                }
             )
 
             await cosmos.update_step(step)
@@ -83,7 +85,7 @@ async def extract_and_update_transition_states(
 
 # The commented-out functions below would be implemented when needed
 # async def set_next_viable_step_to_runnable(session_id):
-#     pass
+# pass
 
 # async def initiate_replanning(session_id):
-#     pass
+# pass

@@ -1,13 +1,13 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Any, List, Optional, cast
 
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
 from kernel_agents.agent_base import BaseAgent
 from models.messages_kernel import (AgentMessage, AgentType,
-                                    ApprovalRequest, HumanClarification,
-                                    HumanFeedback, StepStatus)
-from semantic_kernel.functions import KernelFunction
+                                    HumanClarification, HumanFeedback,
+                                    StepStatus)
+from semantic_kernel.functions.kernel_function import KernelFunction
 
 
 class HumanAgent(BaseAgent):
@@ -62,8 +62,8 @@ class HumanAgent(BaseAgent):
     @classmethod
     async def create(
         cls,
-        **kwargs: Dict[str, str],
-    ) -> None:
+        **kwargs: Any,
+    ) -> "HumanAgent":
         """Asynchronously create the PlannerAgent.
 
         Creates the Azure AI Agent for planning operations.
@@ -72,13 +72,19 @@ class HumanAgent(BaseAgent):
             None
         """
 
-        session_id = kwargs.get("session_id")
-        user_id = kwargs.get("user_id")
-        memory_store = kwargs.get("memory_store")
-        tools = kwargs.get("tools", None)
-        system_message = kwargs.get("system_message", None)
-        agent_name = kwargs.get("agent_name")
+        session_id = cast(Optional[str], kwargs.get("session_id"))
+        user_id = cast(Optional[str], kwargs.get("user_id"))
+        memory_store = cast(Optional[CosmosMemoryContext], kwargs.get("memory_store"))
+        tools = cast(Optional[List[KernelFunction]], kwargs.get("tools", None))
+        system_message = cast(Optional[str], kwargs.get("system_message", None))
+        agent_name = cast(Optional[str], kwargs.get("agent_name"))
         client = kwargs.get("client")
+        if not session_id or not user_id or memory_store is None:
+            raise ValueError("session_id, user_id, and memory_store are required")
+        if not agent_name:
+            agent_name = AgentType.HUMAN.value
+        if not system_message:
+            system_message = cls.default_system_message(agent_name)
 
         try:
             logging.info("Initializing HumanAgent from async init azure AI Agent")
@@ -133,6 +139,8 @@ class HumanAgent(BaseAgent):
         """
 
         # Get the step
+        if not human_feedback.step_id:
+            return "Missing step_id in human feedback"
         step = await self._memory_store.get_step(
             human_feedback.step_id, human_feedback.session_id
         )
@@ -169,26 +177,15 @@ class HumanAgent(BaseAgent):
             },
         )
 
-        # Notify the GroupChatManager that the step has been completed
-        await self._memory_store.add_item(
-            ApprovalRequest(
-                session_id=human_feedback.session_id,
-                user_id=self._user_id,
-                plan_id=step.plan_id,
-                step_id=human_feedback.step_id,
-                agent_id=AgentType.GROUP_CHAT_MANAGER.value,
-            )
-        )
-
-        # Track the approval request event
+        # Track the follow-up event
         track_event_if_configured(
-            "Human Agent - Approval request sent for step and added into the cosmos",
+            "Human Agent - Feedback processed and ready for GroupChatManager follow-up",
             {
                 "session_id": human_feedback.session_id,
                 "user_id": self._user_id,
                 "plan_id": step.plan_id,
                 "step_id": human_feedback.step_id,
-                "agent_id": "GroupChatManager",
+                "target_agent": AgentType.GROUP_CHAT_MANAGER.value,
             },
         )
 
@@ -218,9 +215,7 @@ class HumanAgent(BaseAgent):
         if not plan:
             return f"No plan found for session {session_id}"
 
-        # Update the plan with the clarification
-        plan.human_clarification_response = clarification_text
-        await self._memory_store.update_plan(plan)
+        # Store the human message first, regardless of whether it resolves the clarification.
         await self._memory_store.add_item(
             AgentMessage(
                 session_id=session_id,
@@ -242,23 +237,4 @@ class HumanAgent(BaseAgent):
                 "source": AgentType.HUMAN.value,
             },
         )
-        await self._memory_store.add_item(
-            AgentMessage(
-                session_id=session_id,
-                user_id=self._user_id,
-                plan_id="",
-                content="Thanks. The plan has been updated.",
-                source=AgentType.PLANNER.value,
-                step_id="",
-            )
-        )
-        track_event_if_configured(
-            "Planner - Updated with HumanClarification and added into the cosmos",
-            {
-                "session_id": session_id,
-                "user_id": self._user_id,
-                "content": "Thanks. The plan has been updated.",
-                "source": AgentType.PLANNER.value,
-            },
-        )
-        return f"Clarification provided for plan {plan.id}"
+        return f"Clarification captured for plan {plan.id}"

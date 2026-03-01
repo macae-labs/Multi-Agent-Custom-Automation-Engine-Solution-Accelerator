@@ -7,6 +7,7 @@ from azure.ai.agents.models import (ResponseFormatJsonSchema,
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
 from kernel_agents.agent_base import BaseAgent
+from kernel_agents.validator_agent import ValidatorAgent
 from kernel_tools.generic_tools import GenericTools
 from kernel_tools.hr_tools import HrTools
 from kernel_tools.marketing_tools import MarketingTools
@@ -24,9 +25,17 @@ from models.messages_kernel import (
     Step,
     StepStatus,
 )
-from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.kernel_pydantic import KernelBaseModel
 from semantic_kernel.functions import KernelFunction
 from semantic_kernel.functions.kernel_arguments import KernelArguments
+
+
+class ClarificationEvaluation(KernelBaseModel):
+    """Structured result for evaluating a human clarification reply."""
+
+    clarification_resolved: bool
+    assistant_message: str
+    refined_clarification_request: Optional[str] = None
 
 
 class PlannerAgent(BaseAgent):
@@ -92,15 +101,44 @@ class PlannerAgent(BaseAgent):
             AgentType.GENERIC.value,
         ]
         self._agent_tools_list = {
-            AgentType.HR: HrTools.generate_tools_json_doc(),
-            AgentType.MARKETING: MarketingTools.generate_tools_json_doc(),
-            AgentType.PRODUCT: ProductTools.generate_tools_json_doc(),
-            AgentType.PROCUREMENT: ProcurementTools.generate_tools_json_doc(),
-            AgentType.TECH_SUPPORT: TechSupportTools.generate_tools_json_doc(),
-            AgentType.GENERIC: GenericTools.generate_tools_json_doc(),
+            AgentType.HR.value: HrTools.generate_tools_json_doc(),
+            AgentType.MARKETING.value: MarketingTools.generate_tools_json_doc(),
+            AgentType.PRODUCT.value: ProductTools.generate_tools_json_doc(),
+            AgentType.PROCUREMENT.value: ProcurementTools.generate_tools_json_doc(),
+            AgentType.TECH_SUPPORT.value: TechSupportTools.generate_tools_json_doc(),
+            AgentType.GENERIC.value: GenericTools.generate_tools_json_doc(),
         }
+        self._merge_runtime_tool_context()
 
         self._agent_instances = agent_instances or {}
+
+    def _merge_runtime_tool_context(self) -> None:
+        """Append runtime (project) tools to planner context for better routing."""
+        runtime_tools = self._tools or []
+        runtime_tool_names: list[str] = []
+        for tool in runtime_tools:
+            metadata = getattr(tool, "metadata", None)
+            name = (
+                getattr(metadata, "name", None)
+                or getattr(tool, "name", None)
+                or getattr(tool, "function_name", None)
+            )
+            if name:
+                runtime_tool_names.append(str(name))
+
+        if not runtime_tool_names:
+            return
+
+        tech_support_tools_context = self._agent_tools_list.get(
+            AgentType.TECH_SUPPORT.value, "[]"
+        )
+        runtime_context = (
+            "\nRuntime project tools available (dynamic): "
+            + ", ".join(sorted(set(runtime_tool_names)))
+        )
+        self._agent_tools_list[AgentType.TECH_SUPPORT.value] = (
+            f"{tech_support_tools_context}{runtime_context}"
+        )
 
     @staticmethod
     def default_system_message(agent_name=None) -> str:
@@ -146,7 +184,7 @@ class PlannerAgent(BaseAgent):
             # Create the Azure AI Agent using AppConfig with string instructions
             agent_definition = await cls._create_azure_ai_agent_definition(
                 agent_name=agent_name,
-                instructions=cls._get_template(),  # Pass the formatted string, not an object
+                instructions=cls._get_template(),
                 temperature=0.0,
                 response_format=ResponseFormatJsonSchemaType(
                     json_schema=ResponseFormatJsonSchema(
@@ -263,56 +301,92 @@ class PlannerAgent(BaseAgent):
         if not plan:
             return f"No plan found for session {session_id}"
 
-        plan.human_clarification_response = human_clarification
+        # Populate template variables required by planner instructions to avoid
+        # unresolved template warnings during invoke.
+        template_args = self._generate_args(plan.initial_goal)
+        for key in ("objective", "agents_str", "tools_str"):
+            value = kernel_arguments.get(key)
+            if isinstance(value, str) and value.strip():
+                template_args[key] = value
+
+        clarification_request = plan.human_clarification_request or ""
+        agents_context = template_args.get("agents_str", "")
+        tools_context = template_args.get("tools_str", "")
+        evaluation_prompt = (
+            "You are the planner in a multi-agent system.\n"
+            "Given the original goal, the clarification request asked to the user, and the user's latest reply:\n"
+            "1) Decide whether the clarification request is resolved.\n"
+            "2) If resolved, provide a concise assistant message with meaningful next guidance.\n"
+            "3) If unresolved, provide a concise contextual follow-up question.\n"
+            "4) Optionally refine the clarification request if needed.\n\n"
+            "Behavior constraints:\n"
+            "- Do not return generic acknowledgements such as 'Thanks. The plan has been updated.'\n"
+            "- Always provide a substantive response tailored to the user's message.\n"
+            "- If no clarification_request exists, treat the user message as a free-form follow-up and respond helpfully using the plan context.\n"
+            "- If the user asks a question, answer it directly and clearly.\n\n"
+            f"Goal: {plan.initial_goal}\n"
+            f"Available agents: {agents_context}\n"
+            f"Available tools by agent: {tools_context}\n"
+            f"Clarification request: {clarification_request}\n"
+            f"User reply: {human_clarification}"
+        )
+
+        response_content = ""
+        async_generator = self.invoke(
+            messages=evaluation_prompt,
+            thread=None,
+            polling_options=self._get_polling_options(),
+            response_format=ResponseFormatJsonSchemaType(
+                json_schema=ResponseFormatJsonSchema(
+                    name=ClarificationEvaluation.__name__,
+                    description="Evaluate if clarification is resolved and produce the next assistant message.",
+                    schema=ClarificationEvaluation.model_json_schema(),
+                )
+            ),
+        )
+        async for chunk in async_generator:
+            if chunk is not None:
+                response_content += str(chunk)
+
+        parsed = ClarificationEvaluation.model_validate_json(response_content)
+
+        if parsed.clarification_resolved:
+            # Exit clarification mode to prevent endpoint/UI loops.
+            if clarification_request:
+                plan.human_clarification_response = human_clarification
+            plan.human_clarification_request = None
+        else:
+            if clarification_request:
+                plan.human_clarification_response = None
+            if parsed.refined_clarification_request:
+                plan.human_clarification_request = parsed.refined_clarification_request
+
         await self._memory_store.update_plan(plan)
 
-        # Add a record of the clarification
         await self._memory_store.add_item(
             AgentMessage(
                 data_type="agent_message",
                 session_id=session_id,
                 user_id=self._user_id,
-                plan_id="",
-                content=f"{human_clarification}",
-                source=AgentType.HUMAN.value,
-                step_id="",
-            )
-        )
-
-        track_event_if_configured(
-            "Planner - Store HumanAgent clarification and added into the cosmos",
-            {
-                "session_id": session_id,
-                "user_id": self._user_id,
-                "content": f"{human_clarification}",
-                "source": AgentType.HUMAN.value,
-            },
-        )
-
-        # Add a confirmation message
-        await self._memory_store.add_item(
-            AgentMessage(
-                data_type="agent_message",
-                session_id=session_id,
-                user_id=self._user_id,
-                plan_id="",
-                content="Thanks. The plan has been updated.",
+                plan_id=plan.id,
+                content=parsed.assistant_message,
                 source=AgentType.PLANNER.value,
                 step_id="",
             )
         )
 
         track_event_if_configured(
-            "Planner - Updated with HumanClarification and added into the cosmos",
+            "Planner - Evaluated human clarification and responded",
             {
                 "session_id": session_id,
                 "user_id": self._user_id,
-                "content": "Thanks. The plan has been updated.",
+                "plan_id": plan.id,
+                "clarification_resolved": parsed.clarification_resolved,
                 "source": AgentType.PLANNER.value,
             },
         )
 
-        return "Plan updated with human clarification"
+        return parsed.assistant_message
 
     async def _create_structured_plan(
         self, input_task: InputTask
@@ -331,17 +405,19 @@ class PlannerAgent(BaseAgent):
             # Get template variables as a dictionary
             args = self._generate_args(input_task.description)
 
-            # Create kernel arguments - make sure we explicitly emphasize the task
-            kernel_args = KernelArguments(**args)
+            run_instructions = self._get_template(
+                objective=args["objective"],
+                agents_str=args["agents_str"],
+                tools_str=args["tools_str"],
+            )
 
             thread = None
             # thread = self.client.agents.create_thread(thread_id=input_task.session_id)
             async_generator = self.invoke(
-                arguments=kernel_args,
-                settings=PromptExecutionSettings(
-                    temperature=0.0,
-                    max_tokens=10096,
-                ),
+                instructions_override=run_instructions,
+                temperature=0.0,
+                max_completion_tokens=10096,
+                polling_options=self._get_polling_options(),
                 response_format=ResponseFormatJsonSchemaType(
                     json_schema=ResponseFormatJsonSchema(
                         name=PlannerResponsePlan.__name__,
@@ -432,26 +508,54 @@ class PlannerAgent(BaseAgent):
                     status=StepStatus.planned,
                     human_approval_status=HumanFeedbackStatus.requested,
                 )
-
-                # Store the step
-                await self._memory_store.add_step(step)
                 steps.append(step)
 
+            # Validate Planner assignments with LLM-based batch validator.
+            # Fail-open behavior is implemented inside ValidatorAgent.
+            try:
+                validator = ValidatorAgent(self, self._available_agents)
+                validation_result = await validator.validate_plan_batch(
+                    steps=steps, agent_tools=self._agent_tools_list
+                )
+                corrections = ValidatorAgent.apply_corrections(
+                    steps=steps, validation_result=validation_result
+                )
+                track_event_if_configured(
+                    "Planner - Validation completed",
+                    {
+                        "plan_id": plan.id,
+                        "total_steps": len(steps),
+                        "corrections_applied": corrections,
+                        "session_id": input_task.session_id,
+                        "user_id": self._user_id,
+                    },
+                )
+            except Exception as validation_exc:
+                logging.warning(
+                    "Validation pass failed for plan %s. Proceeding with planner assignments. Error: %s",
+                    plan.id,
+                    validation_exc,
+                )
+
+            # Store steps (with validator audit and optional corrections applied).
+            for step in steps:
+                await self._memory_store.add_step(step)
                 try:
                     track_event_if_configured(
                         "Planner - Added planned individual step into the cosmos",
                         {
                             "plan_id": plan.id,
-                            "action": action,
-                            "agent": agent_name,
+                            "action": step.action,
+                            "agent": step.agent,
                             "status": StepStatus.planned,
                             "session_id": input_task.session_id,
                             "user_id": self._user_id,
                             "human_approval_status": HumanFeedbackStatus.requested,
+                            "validator_decision": step.validator_decision,
+                            "confidence_score": step.confidence_score,
                         },
                     )
                 except Exception as event_error:
-                    # Don't let event tracking errors break the main flow
                     logging.warning(f"Error in event tracking: {event_error}")
 
             return plan, steps
@@ -562,11 +666,17 @@ class PlannerAgent(BaseAgent):
         }
 
     @staticmethod
-    def _get_template():
+    def _get_template(
+        objective: str = "No objective provided yet.",
+        agents_str: str = (
+            "Human_Agent, Hr_Agent, Marketing_Agent, Product_Agent, "
+            "Procurement_Agent, Tech_Support_Agent, Generic_Agent"
+        ),
+        tools_str: str = "Use the tools available to each assigned agent.",
+    ) -> str:
         """Generate the instruction template for the LLM."""
-        # Build the instruction with proper format placeholders for .format() method
 
-        instruction_template = """
+        instruction_template = f"""
             You are the Planner, an AI orchestrator that manages a group of AI agents to accomplish tasks.
 
             For the given objective, come up with a simple step-by-step plan.
@@ -576,27 +686,30 @@ class PlannerAgent(BaseAgent):
             These actions are passed to the specific agent. Make sure the action contains all the information required for the agent to execute the task.
 
             Your objective is:
-            {{$objective}}
+            {objective}
 
             The agents you have access to are:
-            {{$agents_str}}
+            {agents_str}
 
             These agents have access to the following functions:
-            {{$tools_str}}
+            {tools_str}
 
-            The first step of your plan should be to ask the user for any additional information required to progress the rest of steps planned.
+            If additional information is truly required, the first step of your plan should ask the user for that information.
 
             Only use the functions provided as part of your plan. If the task is not possible with the agents and tools provided, create a step with the agent of type Human and mark the overall status as completed.
 
             Do not add superfluous steps - only take the most direct path to the solution, with the minimum number of steps. Only do the minimum necessary to complete the goal.
 
-            If there is a single function call that can directly solve the task, only generate a plan with a single step. For example, if someone asks to be granted access to a database, generate a plan with only one step involving the grant_database_access function, with no additional steps.
+            If there is a single function call that can directly solve the entire objective, you may generate a single-step plan.
+            However, if the objective asks for multiple explicit deliverables (for example: generate output, validate/verify, report metadata, provide summary, and define failure handling), do not collapse into one step.
+            In that case, create the minimum multi-step plan required so each deliverable is explicitly covered.
 
             When generating the action in the plan, frame the action as an instruction you are passing to the agent to execute. It should be a short, single sentence. Include the function to use. For example, "Set up an Office 365 Account for Jessica Smith. Function: set_up_office_365_account"
 
             Ensure the summary of the plan and the overall steps is less than 50 words.
 
             Identify any additional information that might be required to complete the task. Include this information in the plan in the human_clarification_request field of the plan. If it is not required, leave it as null.
+            Do not request credentials through HumanAgent when provider tools already exist. Assign execution to the appropriate specialist agent and allow tools to return structured credentials_required responses if onboarding is needed.
 
             When identifying required information, consider what input a GenericAgent or fallback LLM model would need to perform the task correctly. This may include:
             - Input data, text, or content to process
@@ -615,7 +728,7 @@ class PlannerAgent(BaseAgent):
 
             Limit the plan to 6 steps or less.
 
-            Choose from {{$agents_str}} ONLY for planning your steps.
+            Choose from {agents_str} ONLY for planning your steps.
 
             """
         return instruction_template

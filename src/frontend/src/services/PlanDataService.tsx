@@ -4,6 +4,7 @@ import {
   AgentType,
   ProcessedPlanData,
   PlanMessage,
+  PlanStatus,
 } from "@/models";
 import { apiService } from "@/api";
 
@@ -63,7 +64,9 @@ export class PlanDataService {
     const hasClarificationResponse =
       plan.human_clarification_response != null &&
       plan.human_clarification_response.trim().length > 0;
-    const enableChat = hasClarificationRequest && !hasClarificationResponse;
+    const enableChat =
+      plan.overall_status !== PlanStatus.COMPLETED &&
+      plan.overall_status !== PlanStatus.FAILED;
     const enableStepButtons =
       (hasClarificationRequest && hasClarificationResponse) ||
       (!hasClarificationRequest && !hasClarificationResponse);

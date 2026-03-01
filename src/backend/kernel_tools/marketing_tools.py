@@ -25,11 +25,19 @@ class MarketingTools:
     async def analyze_market_trends(industry: str) -> str:
         return f"Market trends analyzed for the '{industry}' industry."
 
-    # ToDo: Seems to be a bug in SK when processing functions with list parameters
     @staticmethod
     @kernel_function(description="Generate social media posts for a campaign.")
-    async def generate_social_posts(campaign_name: str, platforms: List[str]) -> str:
-        platforms_str = ", ".join(platforms)
+    async def generate_social_posts(campaign_name: str, platforms: str) -> str:
+        try:
+            parsed_platforms = json.loads(platforms)
+            if isinstance(parsed_platforms, list):
+                platforms_list = [str(platform).strip() for platform in parsed_platforms]
+            else:
+                platforms_list = [part.strip() for part in str(platforms).split(",") if part.strip()]
+        except (TypeError, json.JSONDecodeError):
+            platforms_list = [part.strip() for part in str(platforms).split(",") if part.strip()]
+
+        platforms_str = ", ".join(platforms_list)
         return f"Social media posts for campaign '{campaign_name}' generated for platforms: {platforms_str}."
 
     @staticmethod

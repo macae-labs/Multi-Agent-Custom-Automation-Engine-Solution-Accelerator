@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast
 
@@ -223,9 +224,11 @@ class GroupChatManager(BaseAgent):
             (s for s in steps if s.agent == AgentType.HUMAN), None
         )
 
-        # Determine the feedback to use
-        if human_feedback_step and human_feedback_step.human_feedback:
-            # Use the provided human feedback if available
+        # Determine the feedback to use: prefer the current message feedback first
+        current_feedback = (message.human_feedback or "").strip()
+        if current_feedback:
+            received_human_feedback_on_step = current_feedback
+        elif human_feedback_step and human_feedback_step.human_feedback:
             received_human_feedback_on_step = human_feedback_step.human_feedback
         else:
             received_human_feedback_on_step = ""
@@ -281,7 +284,55 @@ class GroupChatManager(BaseAgent):
                         },
                     )
         else:
-            # Update and execute all steps if no specific step_id is provided
+            # If this is conversational follow-up (text present, no explicit step_id),
+            # route to the most recent non-human execution step to preserve continuity.
+            if (message.human_feedback or "").strip():
+                ordered_steps = sorted(
+                    steps,
+                    key=lambda s: (
+                        getattr(s, "timestamp", None) is None,
+                        str(getattr(s, "timestamp", "")),
+                    ),
+                )
+                target_step = next(
+                    (
+                        s
+                        for s in reversed(ordered_steps)
+                        if s.agent
+                        not in {
+                            AgentType.HUMAN,
+                            AgentType.PLANNER,
+                            AgentType.GROUP_CHAT_MANAGER,
+                        }
+                    ),
+                    None,
+                )
+                if target_step:
+                    # Create a new follow-up step so the latest user request becomes
+                    # the actionable step text (instead of replaying prior action).
+                    follow_up_step = Step(
+                        plan_id=target_step.plan_id,
+                        session_id=target_step.session_id,
+                        user_id=target_step.user_id,
+                        action=(message.updated_action or message.human_feedback or "").strip(),
+                        agent=target_step.agent,
+                        status=StepStatus.planned,
+                        planner_rationale="Follow-up user message routed in active plan context.",
+                    )
+                    await self._memory_store.add_step(follow_up_step)
+
+                    await self._update_step_status(
+                        follow_up_step, message.approved, received_human_feedback
+                    )
+                    if message.approved:
+                        await self._execute_step(message.session_id, follow_up_step)
+                    else:
+                        follow_up_step.status = StepStatus.rejected
+                        follow_up_step.human_approval_status = HumanFeedbackStatus.rejected
+                        await self._memory_store.update_step(follow_up_step)
+                    return
+
+            # Legacy behavior: update/execute all steps when no explicit step_id and no follow-up text.
             for step in steps:
                 await self._update_step_status(
                     step, message.approved, received_human_feedback
@@ -317,12 +368,11 @@ class GroupChatManager(BaseAgent):
             step.human_approval_status = HumanFeedbackStatus.rejected
 
         step.human_feedback = received_human_feedback
-        step.status = StepStatus.completed
         await self._memory_store.update_step(step)
         track_event_if_configured(
             f"{AgentType.GROUP_CHAT_MANAGER.value} - Received human feedback, Updating step and updated into the cosmos",
             {
-                "status": StepStatus.completed,
+                "status": step.status,
                 "session_id": step.session_id,
                 "user_id": self._user_id,
                 "human_feedback": received_human_feedback,
@@ -330,10 +380,113 @@ class GroupChatManager(BaseAgent):
             },
         )
 
+    @staticmethod
+    def _extract_function_name_from_action(action: str) -> Optional[str]:
+        """Extract function name from planner action text: '... Function: function_name'."""
+        match = re.search(r"Function:\s*([a-zA-Z0-9_]+)", action or "")
+        return match.group(1) if match else None
+
+    def _build_function_owner_map(self) -> Dict[str, AgentType]:
+        """Build a map of function_name -> owning agent when ownership is unique."""
+        owner_candidates: Dict[str, set[AgentType]] = {}
+        for agent_key, agent_instance in self._agent_instances.items():
+            if agent_key in {
+                AgentType.PLANNER.value,
+                AgentType.GROUP_CHAT_MANAGER.value,
+                AgentType.HUMAN.value,
+            }:
+                continue
+
+            try:
+                agent_type = AgentType(agent_key)
+            except Exception:
+                continue
+
+            tools = getattr(agent_instance, "_tools", []) or []
+            for tool in tools:
+                metadata = getattr(tool, "metadata", None)
+                tool_name = (
+                    getattr(metadata, "name", None)
+                    or getattr(tool, "name", None)
+                    or getattr(tool, "function_name", None)
+                )
+                if not tool_name:
+                    continue
+                owner_candidates.setdefault(str(tool_name), set()).add(agent_type)
+
+        owner_map: Dict[str, AgentType] = {}
+        for function_name, owners in owner_candidates.items():
+            if len(owners) == 1:
+                owner_map[function_name] = next(iter(owners))
+        return owner_map
+
+    def _extract_function_mentions_from_action(
+        self, action: str, known_functions: set[str]
+    ) -> List[str]:
+        """Extract mentioned function names from free-form planner actions."""
+        candidates: List[str] = []
+
+        explicit = self._extract_function_name_from_action(action)
+        if explicit:
+            candidates.append(explicit)
+
+        # Capture snake_case tokens commonly used as function names.
+        for token in re.findall(r"\b[a-z][a-z0-9_]{2,}\b", action or ""):
+            if token in known_functions:
+                candidates.append(token)
+
+        # Preserve order, remove duplicates.
+        deduped: List[str] = []
+        seen = set()
+        for name in candidates:
+            if name not in seen:
+                deduped.append(name)
+                seen.add(name)
+        return deduped
+
+    def _resolve_agent_by_function(self, function_name: str) -> Optional[AgentType]:
+        """Resolve the best agent by registered tool/function name, without hardcoded intent rules."""
+        owners: List[AgentType] = []
+        for agent_key, agent_instance in self._agent_instances.items():
+            if agent_key in {
+                AgentType.PLANNER.value,
+                AgentType.GROUP_CHAT_MANAGER.value,
+                AgentType.HUMAN.value,
+            }:
+                continue
+            tools = getattr(agent_instance, "_tools", []) or []
+            for tool in tools:
+                metadata = getattr(tool, "metadata", None)
+                name = getattr(metadata, "name", None)
+                if name == function_name:
+                    owners.append(AgentType(agent_key))
+                    break
+
+        if len(owners) == 1:
+            return owners[0]
+        return None
+
     async def _execute_step(self, session_id: str, step: Step):
         """
         Executes the given step by sending an ActionRequest to the appropriate agent.
         """
+        function_owner_map = self._build_function_owner_map()
+        known_functions = set(function_owner_map.keys())
+        mentioned_functions = self._extract_function_mentions_from_action(
+            step.action, known_functions
+        )
+        for function_name in mentioned_functions:
+            resolved_agent = function_owner_map.get(function_name)
+            if resolved_agent and resolved_agent != step.agent:
+                logging.warning(
+                    "Planner assigned %s for function %s; rerouting to %s.",
+                    step.agent.value,
+                    function_name,
+                    resolved_agent.value,
+                )
+                step.agent = resolved_agent
+                break
+
         # Update step status to 'action_requested'
         step.status = StepStatus.action_requested
         await self._memory_store.update_step(step)

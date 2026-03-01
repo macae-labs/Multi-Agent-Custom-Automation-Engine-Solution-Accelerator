@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import uuid
-from typing import Dict, List, Optional, cast
+from typing import Dict, List, Optional, cast, Any
 
 # Semantic Kernel imports
 from app_config import config
@@ -13,6 +13,8 @@ from auth.auth_utils import get_authenticated_user_details
 from azure.monitor.opentelemetry import configure_azure_monitor
 from config_kernel import Config
 from event_utils import track_event_if_configured
+from tool_registry import ConnectToolResponse, ToolRegistry, ToolProvider, ToolDefinition, ConnectToolRequest
+from credential_resolver import credential_resolver
 
 # FastAPI imports
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -33,23 +35,20 @@ from models.messages_kernel import (
     PlanWithSteps,
     Step,
 )
+from models.project_profile import CredentialBinding, ProjectProfile, ProjectProfileUpsert
 
-# Updated import for KernelArguments
 from utils_kernel import initialize_runtime_and_context, rai_success
 
 # Check if the Application Insights Instrumentation Key is set in the environment variables
-connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip().strip('"').strip("'")
 if connection_string:
-    # Configure Application Insights if the Instrumentation Key is found
-    configure_azure_monitor(connection_string=connection_string)
-    logging.info(
-        "Application Insights configured with the provided Instrumentation Key"
-    )
+    try:
+        configure_azure_monitor(connection_string=connection_string)
+        logging.info("Application Insights configured successfully")
+    except Exception as exc:
+        logging.warning(f"Application Insights configuration failed: {exc}")
 else:
-    # Log a warning if the Instrumentation Key is not found
-    logging.warning(
-        "No Application Insights Instrumentation Key found. Skipping configuration"
-    )
+    logging.warning("Application Insights connection string not found. Telemetry disabled.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -64,9 +63,9 @@ logging.getLogger("azure.identity.aio._internal").setLevel(logging.WARNING)
 logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
 logging.getLogger("azure.cosmos._cosmos_http_logging_policy").setLevel(logging.WARNING)
 
-# # Suppress info logs from OpenTelemetry exporter
+# Suppress error logs from OpenTelemetry exporter
 logging.getLogger("azure.monitor.opentelemetry.exporter.export._base").setLevel(
-    logging.WARNING
+    logging.CRITICAL
 )
 
 # Initialize the FastAPI app
@@ -86,6 +85,13 @@ app.add_middleware(
 # Configure health check
 app.add_middleware(HealthCheckMiddleware, password="", checks={})
 logging.info("Added health check middleware")
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    """Close async clients to avoid unclosed aiohttp session warnings."""
+    await credential_resolver.close()
+    await config.close()
 
 
 @app.post("/api/input_task")
@@ -190,6 +196,65 @@ async def input_task_endpoint(input_task: InputTask, request: Request):
             },
         )
         raise HTTPException(status_code=400, detail=f"Error creating plan: {e}")
+
+
+@app.post("/api/project_profile")
+async def upsert_project_profile(
+    profile_input: ProjectProfileUpsert, request: Request
+):
+    """Upsert project profile used for dynamic plugin injection."""
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="no user")
+
+    _, memory_store = await initialize_runtime_and_context(profile_input.session_id, user_id)
+
+    # Add credential_bindings from profile_input if present, else default to None or []
+    profile = ProjectProfile(
+        data_type="project_profile",
+        session_id=profile_input.session_id,
+        user_id=user_id,
+        project_id=profile_input.project_id,
+        project_name=profile_input.project_name,
+        api_base_url=profile_input.api_base_url,
+        aws_s3_bucket=profile_input.aws_s3_bucket,
+        firestore_root=profile_input.firestore_root,
+        enabled_tools=profile_input.enabled_tools,
+        api_key=profile_input.api_key,
+        custom_config=profile_input.custom_config,
+        credential_bindings=getattr(profile_input, "credential_bindings", []),
+    )
+
+    try:
+        await memory_store.update_item(profile)
+        AgentFactory.clear_cache(profile_input.session_id)
+        return {
+            "status": "Project profile saved",
+            "session_id": profile_input.session_id,
+            "project_id": profile_input.project_id,
+            "enabled_tools": profile_input.enabled_tools,
+            "credential_bindings": getattr(profile_input, "credential_bindings", None),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Error saving project profile: {exc}")
+
+
+@app.get("/api/project_profile")
+async def get_project_profile(session_id: str, request: Request):
+    """Return project profile for a session, if it exists."""
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(status_code=400, detail="no user")
+
+    _, memory_store = await initialize_runtime_and_context(session_id, user_id)
+    records = await memory_store.get_data_by_type_and_session_id("project_profile", session_id)
+    if not records:
+        return {"project_profile": None}
+    latest = records[-1]
+    return {"project_profile": latest.model_dump()}
 
 
 @app.post("/api/human_feedback")
@@ -392,20 +457,43 @@ async def human_clarification_endpoint(
         )
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # Use the human agent to handle the feedback
+    # Store the human clarification message
     await human_agent.handle_human_clarification(
         human_clarification=human_clarification
     )
 
+    plan = await memory_store.get_plan_by_session(human_clarification.session_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    agents = await AgentFactory.create_all_agents(
+        session_id=human_clarification.session_id,
+        user_id=user_id,
+        memory_store=memory_store,
+        client=client,
+    )
+    group_chat_manager = cast(
+        GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER]
+    )
+
+    feedback = HumanFeedback(
+        step_id=None,
+        plan_id=plan.id,
+        session_id=human_clarification.session_id,
+        approved=True,
+        human_feedback=human_clarification.human_clarification,
+    )
+    await group_chat_manager.handle_human_feedback(feedback)
+
     track_event_if_configured(
         "Completed Human clarification on the plan",
         {
-            "status": "Clarification received",
+            "status": "Clarification delegated to GroupChatManager",
             "session_id": human_clarification.session_id,
         },
     )
     return {
-        "status": "Clarification received",
+        "status": "Clarification delegated to GroupChatManager",
         "session_id": human_clarification.session_id,
     }
 
@@ -941,10 +1029,107 @@ async def get_all_messages(request: Request):
     kernel, memory_store = await initialize_runtime_and_context("", user_id)
     message_list = await memory_store.get_all_items()
     return message_list
+  
+@app.get("/api/tools/providers")
+async def get_tool_providers() -> List[ToolProvider]:
+    """Get all available tool providers for onboarding."""
+    return ToolRegistry.get_all_providers()
+
+
+@app.get("/api/tools/agent/{agent_type}")
+async def get_tools_for_agent(agent_type: str) -> List[ToolDefinition]:
+    """Get all tools available for a specific agent."""
+    return ToolRegistry.get_tools_for_agent(agent_type)
+
+
+@app.post("/api/tools/connect")
+async def connect_tool(request: ConnectToolRequest, http_request: Request) -> ConnectToolResponse:
+  """Connect a tool by storing credentials in Key Vault."""
+  provider = ToolRegistry.get_provider(request.provider_id)
+  if not provider:
+    raise HTTPException(status_code=404, detail=f"Provider {request.provider_id} not found")
+    
+  required_fields = {field.name for field in provider.credential_fields if field.required}
+  provided_fields = set(request.credentials.keys())
+  missing_fields = required_fields - provided_fields
+    
+  if missing_fields:
+    raise HTTPException(
+      status_code=400,
+      detail=f"Missing required fields: {', '.join(missing_fields)}"
+    )
+    
+  try:
+    secret_uri = await credential_resolver.store_credentials(
+      project_id=request.project_id,
+      provider_id=request.provider_id,
+      credentials=request.credentials
+    )
+        
+    # Store binding in Cosmos
+    binding = CredentialBinding(
+      provider_id=request.provider_id,
+      secret_uri=secret_uri,
+      is_active=True
+    )
+
+    authenticated_user = get_authenticated_user_details(request_headers=http_request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+      raise HTTPException(status_code=400, detail="no user")
+
+    _, memory_store = await initialize_runtime_and_context(request.session_id, user_id)
+    profiles = await memory_store.get_data_by_type_and_session_id(
+      "project_profile", request.session_id
+    )
+    if profiles:
+      profile = cast(ProjectProfile, profiles[-1])
+      existing_binding = next(
+        (b for b in profile.credential_bindings if b.provider_id == request.provider_id),
+        None,
+      )
+      if existing_binding:
+        existing_binding.secret_uri = secret_uri
+        existing_binding.is_active = True
+      else:
+        profile.credential_bindings.append(binding)
+      await memory_store.update_item(profile)
+        
+    return ConnectToolResponse(
+      success=True,
+      secret_uri=secret_uri,
+      message=f"Successfully connected {provider.display_name}"
+    )
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Failed to store credentials: {str(e)}")
+
+
+@app.get("/api/tools/credentials/{project_id}/{provider_id}")
+async def get_credential_status(project_id: str, provider_id: str) -> Dict[str, Any]:
+    """Check if credentials are configured for a project/provider."""
+    credentials = await credential_resolver.resolve_credentials(project_id, provider_id)
+    
+    return {
+        "project_id": project_id,
+        "provider_id": provider_id,
+        "is_configured": credentials is not None,
+        "fields_configured": list(credentials.keys()) if credentials else []
+    }
+
+
+@app.delete("/api/tools/disconnect/{project_id}/{provider_id}")
+async def disconnect_tool(project_id: str, provider_id: str) -> Dict[str, str]:
+    """Disconnect a tool by removing credentials."""
+    # TODO: Delete from Key Vault and Cosmos DB
+    return {
+        "status": "disconnected",
+        "project_id": project_id,
+        "provider_id": provider_id
+    }
 
 
 @app.get("/api/agent-tools")
-async def get_agent_tools():
+async def get_agent_tools() -> List[Dict[str, Any]]:
     """
     Retrieve all available agent tools.
 
@@ -972,7 +1157,19 @@ async def get_agent_tools():
                 type: string
                 description: Arguments required by the tool function
     """
-    return []
+    tools = ToolRegistry.get_all_tools()
+    normalized = [
+        {
+            "agent": tool.agent_type,
+            "function": tool.tool_id,
+            "description": tool.description,
+            "provider_id": tool.provider_id,
+            "requires_credentials": tool.requires_credentials,
+            "arguments": tool.parameters,
+        }
+        for tool in tools
+    ]
+    return sorted(normalized, key=lambda item: (item["agent"], item["function"]))
 
 
 # Run the app

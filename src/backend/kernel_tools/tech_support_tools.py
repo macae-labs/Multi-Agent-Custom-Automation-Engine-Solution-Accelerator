@@ -245,13 +245,19 @@ class TechSupportTools:
         )
 
     @staticmethod
-    @kernel_function(description="Set up an email signature for an employee.")
+    @kernel_function(
+        description="Set up an email signature for an employee."
+    )
     async def set_up_email_signature(employee_name: str, signature: str) -> str:
+        # Placeholder implementation since set_up_email_signature does not exist on GraphConnector
+        demo_tag = "[DEMO] "
+        status = "Configured ✓"
         return (
-            f"##### Email Signature Setup\n"
+            f"##### {demo_tag}Email Signature Setup\n"
             f"**Employee Name:** {employee_name}\n"
-            f"**Signature:** {signature}\n\n"
-            f"The email signature for {employee_name} has been successfully set up as '{signature}'.\n"
+            f"**Signature:** {signature}\n"
+            f"**Status:** {status}\n\n"
+            f"The email signature for {employee_name} has been set up as '{signature}'.\n"
             f"{TechSupportTools.formatting_instructions}"
         )
 
@@ -305,6 +311,97 @@ class TechSupportTools:
             f"Network security protocols have been successfully managed.\n"
             f"{TechSupportTools.formatting_instructions}"
         )
+
+    @staticmethod
+    @kernel_function(
+        description=(
+            "Get unified technical system status. "
+            "Use scope='agents' to validate agent connectivity/availability, "
+            "or scope='all' for a consolidated technical snapshot. "
+            "Optionally pass query for additional context and session_id for exact session."
+        )
+    )
+    async def get_system_status(
+        scope: str = "all",
+        query: str = "",
+        session_id: str = "",
+    ) -> str:
+        """Unified technical status endpoint for agent/runtime diagnostics."""
+        import json
+
+        from app_config import config
+        from kernel_agents.agent_factory import AgentFactory
+
+        normalized_scope = (scope or "all").strip().lower()
+        if normalized_scope not in {"all", "agents"}:
+            normalized_scope = "all"
+
+        normalized_session_id = (session_id or "").strip()
+        if not normalized_session_id:
+            active_sessions = [
+                sid for sid, cached in AgentFactory._agent_cache.items() if cached
+            ]
+            if active_sessions:
+                normalized_session_id = active_sessions[-1]
+
+        client = None
+        try:
+            client = config.get_ai_project_client()
+        except Exception:
+            client = None
+
+        agent_types = [
+            AgentType.HR,
+            AgentType.MARKETING,
+            AgentType.PRODUCT,
+            AgentType.PROCUREMENT,
+            AgentType.TECH_SUPPORT,
+            AgentType.GENERIC,
+            AgentType.HUMAN,
+            AgentType.PLANNER,
+            AgentType.GROUP_CHAT_MANAGER,
+        ]
+
+        cache = AgentFactory._agent_cache.get(normalized_session_id, {})
+        agent_status = []
+        for agent_type in agent_types:
+            agent_name = agent_type.value
+            cached = agent_type in cache
+            exists_in_azure = False
+            reachable = False
+            error = None
+            definition_id = None
+
+            agent_instance = cache.get(agent_type)
+            definition = getattr(agent_instance, "definition", None) if agent_instance else None
+            if definition is not None:
+                definition_id = getattr(definition, "id", None)
+            if definition_id and client:
+                try:
+                    await client.agents.get_agent(definition_id)
+                    exists_in_azure = True
+                    reachable = True
+                except Exception as exc:
+                    error = str(exc)[:200]
+
+            agent_status.append(
+                {
+                    "agent": agent_name,
+                    "cached": cached,
+                    "definition_id": definition_id,
+                    "exists_in_azure": exists_in_azure,
+                    "reachable": reachable,
+                    "error": error,
+                }
+            )
+
+        payload = {
+            "scope": normalized_scope,
+            "session_id": normalized_session_id,
+            "query": query,
+            "agents": agent_status,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     @classmethod
     def generate_tools_json_doc(cls) -> str:

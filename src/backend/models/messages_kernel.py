@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
-
-from semantic_kernel.kernel_pydantic import Field, KernelBaseModel
+from pydantic import Field
+from semantic_kernel.kernel_pydantic import KernelBaseModel
 
 
 # Classes specifically for handling runtime interrupts
@@ -116,7 +116,7 @@ class ChatMessage(KernelBaseModel):
 class StoredMessage(BaseDataModel):
     """Message stored in the database with additional metadata."""
 
-    data_type: Literal["message"] = Field("message", Literal=True)
+    data_type: Literal["message"] = "message"
     session_id: str
     user_id: str
     role: MessageRole
@@ -146,7 +146,7 @@ class StoredMessage(BaseDataModel):
 class AgentMessage(BaseDataModel):
     """Base class for messages sent between agents."""
 
-    data_type: Literal["agent_message"] = Field("agent_message", Literal=True)
+    data_type: Literal["agent_message"] = "agent_message"
     session_id: str
     user_id: str
     plan_id: str
@@ -158,7 +158,7 @@ class AgentMessage(BaseDataModel):
 class Session(BaseDataModel):
     """Represents a user session."""
 
-    data_type: Literal["session"] = Field("session", Literal=True)
+    data_type: Literal["session"] = "session"
     user_id: str
     current_status: str
     message_to_user: Optional[str] = None
@@ -167,7 +167,7 @@ class Session(BaseDataModel):
 class Plan(BaseDataModel):
     """Represents a plan containing multiple steps."""
 
-    data_type: Literal["plan"] = Field("plan", Literal=True)
+    data_type: Literal["plan"] = "plan"
     session_id: str
     user_id: str
     initial_goal: str
@@ -181,7 +181,7 @@ class Plan(BaseDataModel):
 class Step(BaseDataModel):
     """Represents an individual step (task) within a plan."""
 
-    data_type: Literal["step"] = Field("step", Literal=True)
+    data_type: Literal["step"] = "step"
     plan_id: str
     session_id: str  # Partition key
     user_id: str
@@ -192,12 +192,17 @@ class Step(BaseDataModel):
     human_feedback: Optional[str] = None
     human_approval_status: Optional[HumanFeedbackStatus] = HumanFeedbackStatus.requested
     updated_action: Optional[str] = None
+    planner_rationale: Optional[str] = None
+    validator_decision: Optional[str] = None
+    confidence_score: Optional[float] = None
+    identified_target_state: Optional[str] = None
+    identified_target_transition: Optional[str] = None
 
 
 class ThreadIdAgent(BaseDataModel):
     """Represents an individual thread_id."""
 
-    data_type: Literal["thread"] = Field("thread", Literal=True)
+    data_type: Literal["thread"] = "thread"
     session_id: str  # Partition key
     user_id: str
     thread_id: str
@@ -206,7 +211,7 @@ class ThreadIdAgent(BaseDataModel):
 class AzureIdAgent(BaseDataModel):
     """Represents an individual thread_id."""
 
-    data_type: Literal["agent"] = Field("agent", Literal=True)
+    data_type: Literal["agent"] = "agent"
     session_id: str  # Partition key
     user_id: str
     action: str

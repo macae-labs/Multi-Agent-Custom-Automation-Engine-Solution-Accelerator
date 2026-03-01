@@ -104,13 +104,13 @@ const PlanPage: React.FC = () => {
         async (chatInput: string) => {
 
             if (!chatInput.trim()) {
-                showToast("Please enter a clarification", "error");
+                showToast("Please enter a message", "error");
                 return;
             }
             setInput("");
             if (!planData?.plan) return;
             setSubmitting(true);
-            let id = showToast("Submitting clarification", "progress");
+            let id = showToast("Submitting message", "progress");
             try {
                 await PlanDataService.submitClarification(
                     planData.plan.id,
@@ -119,7 +119,7 @@ const PlanPage: React.FC = () => {
                 );
                 setInput("");
                 dismissToast(id);
-                showToast("Clarification submitted successfully", "success");
+                showToast("Message submitted successfully", "success");
                 await loadPlanData(false);
             } catch (error) {
                 dismissToast(id);

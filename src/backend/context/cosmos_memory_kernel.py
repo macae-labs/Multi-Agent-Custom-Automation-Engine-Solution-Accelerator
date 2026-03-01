@@ -18,6 +18,7 @@ from semantic_kernel.contents import ChatMessageContent, ChatHistory, AuthorRole
 # Import the AppConfig instance
 from app_config import config
 from models.messages_kernel import BaseDataModel, Plan, Session, Step, AgentMessage
+from models.project_profile import ProjectProfile
 
 
 # Add custom JSON encoder class for datetime objects
@@ -38,6 +39,7 @@ class CosmosMemoryContext(MemoryStoreBase):
         "plan": Plan,
         "step": Step,
         "agent_message": AgentMessage,
+        "project_profile": ProjectProfile,
         # Messages are handled separately
     }
 
@@ -462,6 +464,31 @@ class CosmosMemoryContext(MemoryStoreBase):
         except Exception as e:
             logging.exception(f"Failed to query data by type from Cosmos DB: {e}")
             return []
+
+    async def get_latest_data_by_type_for_user(
+        self, data_type: str
+    ) -> Optional[BaseDataModel]:
+        """Return latest item by data_type for current user across all sessions."""
+        await self.ensure_initialized()
+        if self._container is None:
+            return None
+
+        model_class = self.MODEL_CLASS_MAPPING.get(data_type, BaseDataModel)
+        try:
+            query = (
+                "SELECT TOP 1 * FROM c "
+                "WHERE c.user_id=@user_id AND c.data_type=@data_type "
+                "ORDER BY c._ts DESC"
+            )
+            parameters = [
+                {"name": "@user_id", "value": self.user_id},
+                {"name": "@data_type", "value": data_type},
+            ]
+            items = await self.query_items(query, parameters, model_class)
+            return items[0] if items else None
+        except Exception as e:
+            logging.exception(f"Failed to query latest data by type from Cosmos DB: {e}")
+            return None
 
     async def delete_item(self, item_id: str, partition_key: str) -> None:
         """Delete an item from Cosmos DB."""

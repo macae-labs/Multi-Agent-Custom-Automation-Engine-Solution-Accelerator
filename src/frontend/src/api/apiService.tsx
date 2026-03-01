@@ -9,7 +9,9 @@ import {
     Step,
     StepStatus,
     AgentType,
-    PlanMessage
+    PlanMessage,
+    ProjectProfileResponse,
+    ProjectProfileUpsert
 } from '../models';
 
 // Constants for endpoints
@@ -21,7 +23,8 @@ const API_ENDPOINTS = {
     APPROVE_STEPS: '/approve_step_or_steps',
     HUMAN_CLARIFICATION: '/human_clarification_on_plan',
     AGENT_MESSAGES: '/agent_messages',
-    MESSAGES: '/messages'
+    MESSAGES: '/messages',
+    PROJECT_PROFILE: '/project_profile'
 };
 
 // Simple cache implementation
@@ -105,6 +108,22 @@ export class APIService {
      */
     async submitInputTask(inputTask: InputTask): Promise<InputTaskResponse> {
         return apiClient.post(API_ENDPOINTS.INPUT_TASK, inputTask);
+    }
+
+    /**
+     * Save or update project profile for dynamic tool injection.
+     */
+    async upsertProjectProfile(projectProfile: ProjectProfileUpsert): Promise<any> {
+        return apiClient.post(API_ENDPOINTS.PROJECT_PROFILE, projectProfile);
+    }
+
+    /**
+     * Get project profile for a session.
+     */
+    async getProjectProfile(sessionId: string): Promise<ProjectProfileResponse> {
+        return apiClient.get(API_ENDPOINTS.PROJECT_PROFILE, {
+            params: { session_id: sessionId }
+        });
     }
 
     /**
