@@ -265,7 +265,7 @@ module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0
   }
 }
 
-var logAnalyticsWorkspaceId = useExistingWorkspace ? existingWorkspaceResourceId : logAnalyticsWorkspace.outputs.resourceId
+var logAnalyticsWorkspaceId = useExistingWorkspace ? existingWorkspaceResourceId : logAnalyticsWorkspace.?outputs.resourceId
 
 // ========== Application Insights ========== //
 // WAF best practices for Application Insights: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/application-insights
@@ -276,7 +276,7 @@ module applicationInsights 'br/public:avm/res/insights/component:0.6.0' = if (ap
   name: take('avm.res.insights.component.${applicationInsightsResourceName}', 64)
   params: {
     name: applicationInsightsResourceName
-    workspaceResourceId: logAnalyticsWorkspaceId
+    workspaceResourceId: logAnalyticsWorkspaceId!
     location: applicationInsightsConfiguration.?location ?? solutionLocation
     enableTelemetry: enableTelemetry
     tags: applicationInsightsConfiguration.?tags ?? tags
@@ -573,19 +573,19 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.6.1' = if (vi
         name: 'backend'
         addressPrefix: '10.0.0.0/27'
         //defaultOutboundAccess: false TODO: check this configuration for a more restricted outbound access
-        networkSecurityGroupResourceId: networkSecurityGroupBackend.outputs.resourceId
+        networkSecurityGroupResourceId: networkSecurityGroupBackend.?outputs.resourceId
       }
       {
         name: 'administration'
         addressPrefix: '10.0.0.32/27'
-        networkSecurityGroupResourceId: networkSecurityGroupAdministration.outputs.resourceId
+        networkSecurityGroupResourceId: networkSecurityGroupAdministration.?outputs.resourceId
       }
       {
         // For Azure Bastion resources deployed on or after November 2, 2021, the minimum AzureBastionSubnet size is /26 or larger (/25, /24, etc.).
         // https://learn.microsoft.com/en-us/azure/bastion/configuration-settings#subnet
         name: 'AzureBastionSubnet' //This exact name is required for Azure Bastion
         addressPrefix: '10.0.0.64/26'
-        networkSecurityGroupResourceId: networkSecurityGroupBastion.outputs.resourceId
+        networkSecurityGroupResourceId: networkSecurityGroupBastion.?outputs.resourceId
       }
       {
         // If you use your own vnw, you need to provide a subnet that is dedicated exclusively to the Container App environment you deploy. This subnet isn't available to other services
@@ -593,7 +593,7 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.6.1' = if (vi
         name: 'containers'
         addressPrefix: '10.0.2.0/23' //subnet of size /23 is required for container app
         delegation: 'Microsoft.App/environments'
-        networkSecurityGroupResourceId: networkSecurityGroupContainers.outputs.resourceId
+        networkSecurityGroupResourceId: networkSecurityGroupContainers.?outputs.resourceId
         privateEndpointNetworkPolicies: 'Disabled'
         privateLinkServiceNetworkPolicies: 'Enabled'
       }
@@ -614,7 +614,7 @@ module bastionHost 'br/public:avm/res/network/bastion-host:0.6.1' = if (virtualN
     skuName: bastionConfiguration.?sku ?? 'Standard'
     enableTelemetry: enableTelemetry
     tags: bastionConfiguration.?tags ?? tags
-    virtualNetworkResourceId: bastionConfiguration.?virtualNetworkResourceId ?? virtualNetwork.?outputs.?resourceId
+    virtualNetworkResourceId: bastionConfiguration.?virtualNetworkResourceId ?? virtualNetwork.?outputs.?resourceId!
     publicIPAddressObject: {
       name: bastionConfiguration.?publicIpResourceName ?? 'pip-bas${solutionPrefix}'
       zones: []
@@ -648,7 +648,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.13.0' = if (v
         ipConfigurations: [
           {
             name: '${virtualMachineResourceName}-nic01-ipconfig01'
-            subnetResourceId: virtualMachineConfiguration.?subnetResourceId ?? virtualNetwork.outputs.subnetResourceIds[1]
+            subnetResourceId: virtualMachineConfiguration.?subnetResourceId ?? virtualNetwork.?outputs.subnetResourceIds[1]
             diagnosticSettings: [{ workspaceResourceId: logAnalyticsWorkspaceId }]
           }
         ]
@@ -701,7 +701,7 @@ module privateDnsZonesAiServices 'br/public:avm/res/network/private-dns-zone:0.7
       virtualNetworkLinks: [
         {
           name: 'vnetlink-${split(zone, '.')[1]}'
-          virtualNetworkResourceId: virtualNetwork.outputs.resourceId
+          virtualNetworkResourceId: virtualNetwork.?outputs.resourceId!
         }
       ]
     }
@@ -757,7 +757,7 @@ module aiFoundryAiServices 'modules/account/main.bicep' = if (aiFoundryAIservice
           {
             name: 'pep-${aiFoundryAiServicesResourceName}'
             customNetworkInterfaceName: 'nic-${aiFoundryAiServicesResourceName}'
-            subnetResourceId: aiFoundryAiServicesConfiguration.?subnetResourceId ?? virtualNetwork.outputs.subnetResourceIds[0]
+            subnetResourceId: aiFoundryAiServicesConfiguration.?subnetResourceId ?? virtualNetwork.?outputs.subnetResourceIds[0]
             privateDnsZoneGroup: {
               privateDnsZoneGroupConfigs: map(objectKeys(openAiPrivateDnsZones), zone => {
                 name: replace(zone, '.', '-')
@@ -794,18 +794,18 @@ var useExistingResourceId = !empty(existingFoundryProjectResourceId)
 
 module cogServiceRoleAssignmentsNew './modules/role.bicep' = if(!useExistingResourceId) {
   params: {
-    name: 'new-${guid(containerApp.name, aiFoundryAiServices.outputs.resourceId)}'
-    principalId: containerApp.outputs.?systemAssignedMIPrincipalId!
-    aiServiceName: aiFoundryAiServices.outputs.name
+    name: 'new-${guid(containerApp.name, aiFoundryAiServices.?outputs.resourceId!)}'
+    principalId: containerApp.?outputs.?systemAssignedMIPrincipalId!
+    aiServiceName: aiFoundryAiServices.?outputs.name!
   }
   scope: resourceGroup(subscription().subscriptionId, resourceGroup().name)
 }
 
 module cogServiceRoleAssignmentsExisting './modules/role.bicep' = if(useExistingResourceId) {
   params: {
-    name: 'reuse-${guid(containerApp.name, aiFoundryAiServices.outputs.aiProjectInfo.resourceId)}'
-    principalId: containerApp.outputs.?systemAssignedMIPrincipalId!
-    aiServiceName: aiFoundryAiServices.outputs.name
+    name: 'reuse-${guid(containerApp.name, aiFoundryAiServices.?outputs.aiProjectInfo.resourceId!)}'
+    principalId: containerApp.?outputs.?systemAssignedMIPrincipalId!
+    aiServiceName: aiFoundryAiServices.?outputs.name!
   }
   scope: resourceGroup( split(existingFoundryProjectResourceId, '/')[2], split(existingFoundryProjectResourceId, '/')[4])
 }
@@ -820,7 +820,7 @@ module privateDnsZonesCosmosDb 'br/public:avm/res/network/private-dns-zone:0.7.0
     virtualNetworkLinks: [
       {
         name: 'vnetlink-cosmosdb'
-        virtualNetworkResourceId: virtualNetwork.outputs.resourceId
+        virtualNetworkResourceId: virtualNetwork.?outputs.resourceId!
       }
     ]
     tags: tags
@@ -852,10 +852,10 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.12.0' = if (co
             name: 'pep-${cosmosDbResourceName}'
             customNetworkInterfaceName: 'nic-${cosmosDbResourceName}'
             privateDnsZoneGroup: {
-              privateDnsZoneGroupConfigs: [{ privateDnsZoneResourceId: privateDnsZonesCosmosDb.outputs.resourceId }]
+              privateDnsZoneGroupConfigs: [{ privateDnsZoneResourceId: privateDnsZonesCosmosDb!.outputs.resourceId }]
             }
             service: 'Sql'
-            subnetResourceId: cosmosDbAccountConfiguration.?subnetResourceId ?? virtualNetwork.outputs.subnetResourceIds[0]
+            subnetResourceId: cosmosDbAccountConfiguration.?subnetResourceId ?? virtualNetwork.?outputs.subnetResourceIds[0]
           }
         ]
       : []
@@ -885,7 +885,7 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.12.0' = if (co
       'EnableServerless'
     ]
     sqlRoleAssignmentsPrincipalIds: [
-      containerApp.outputs.?systemAssignedMIPrincipalId
+      containerApp.?outputs.?systemAssignedMIPrincipalId
     ]
     sqlRoleDefinitions: [
       {
@@ -913,10 +913,10 @@ module containerAppEnvironment 'modules/container-app-environment.bicep' = if (c
     name: containerAppEnvironmentResourceName
     tags: containerAppEnvironmentConfiguration.?tags ?? tags
     location: containerAppEnvironmentConfiguration.?location ?? solutionLocation
-    logAnalyticsResourceId: logAnalyticsWorkspaceId
+    logAnalyticsResourceId: logAnalyticsWorkspaceId!
     publicNetworkAccess: 'Enabled'
     zoneRedundant: false
-    applicationInsightsConnectionString: applicationInsights.outputs.connectionString
+    applicationInsightsConnectionString: applicationInsights.?outputs.connectionString!
     enableTelemetry: enableTelemetry
     subnetResourceId: virtualNetworkEnabled
       ? containerAppEnvironmentConfiguration.?subnetResourceId ?? virtualNetwork.?outputs.?subnetResourceIds[3] ?? ''
@@ -932,13 +932,15 @@ module containerApp 'br/public:avm/res/app/container-app:0.14.2' = if (container
   name: take('avm.res.app.container-app.${containerAppResourceName}', 64)
   params: {
     name: containerAppResourceName
-    tags: containerAppConfiguration.?tags ?? tags
+    tags: union(containerAppConfiguration.?tags ?? tags, {
+      'azd-service-name': 'backend'
+    })
     location: containerAppConfiguration.?location ?? solutionLocation
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppConfiguration.?environmentResourceId ?? containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppConfiguration.?environmentResourceId ?? containerAppEnvironment.?outputs.resourceId!
     managedIdentities: {
       systemAssigned: true //Replace with user assigned identity
-      userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId]
+      userAssignedResourceIds: [userAssignedIdentity.?outputs.resourceId!]
     }
     ingressTargetPort: containerAppConfiguration.?ingressTargetPort ?? 8000
     ingressExternal: true
@@ -1004,11 +1006,11 @@ module containerApp 'br/public:avm/res/app/container-app:0.14.2' = if (container
           }
           {
             name: 'APPLICATIONINSIGHTS_INSTRUMENTATION_KEY'
-            value: applicationInsights.outputs.instrumentationKey
+            value: applicationInsights.?outputs.instrumentationKey
           }
           {
             name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-            value: applicationInsights.outputs.connectionString
+            value: applicationInsights.?outputs.connectionString
           }
           {
             name: 'AZURE_AI_SUBSCRIPTION_ID'
@@ -1028,7 +1030,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.14.2' = if (container
           }
           {
             name: 'AZURE_AI_AGENT_ENDPOINT'
-            value: aiFoundryAiServices.outputs.aiProjectInfo.apiEndpoint
+            value: aiFoundryAiServices.?outputs.aiProjectInfo.apiEndpoint
           }
           {
             name: 'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
@@ -1073,8 +1075,8 @@ module webSite 'br/public:avm/res/web/site:0.15.1' = if (webSiteEnabled) {
     location: webSiteConfiguration.?location ?? solutionLocation
     kind: 'app,linux,container'
     enableTelemetry: enableTelemetry
-    serverFarmResourceId: webSiteConfiguration.?environmentResourceId ?? webServerFarm.?outputs.resourceId
-    appInsightResourceId: applicationInsights.outputs.resourceId
+    serverFarmResourceId: webSiteConfiguration.?environmentResourceId ?? webServerFarm.?outputs.resourceId!
+    appInsightResourceId: applicationInsights.?outputs.resourceId
     diagnosticSettings: [{ workspaceResourceId: logAnalyticsWorkspaceId }]
     publicNetworkAccess: 'Enabled' //TODO: use Azure Front Door WAF or Application Gateway WAF instead
     siteConfig: {
@@ -1085,7 +1087,7 @@ module webSite 'br/public:avm/res/web/site:0.15.1' = if (webSiteEnabled) {
       DOCKER_REGISTRY_SERVER_URL: 'https://${webSiteConfiguration.?containerImageRegistryDomain ?? 'biabcontainerreg.azurecr.io'}'
       WEBSITES_PORT: '3000'
       WEBSITES_CONTAINER_START_TIME_LIMIT: '1800' // 30 minutes, adjust as needed
-      BACKEND_API_URL: 'https://${containerApp.outputs.fqdn}'
+      BACKEND_API_URL: 'https://${containerApp.?outputs.fqdn}'
       AUTH_ENABLED: 'false'
     }
   }
@@ -1098,7 +1100,7 @@ module webSite 'br/public:avm/res/web/site:0.15.1' = if (webSiteEnabled) {
 // Add your outputs here
 
 @description('The default url of the website to connect to the Multi-Agent Custom Automation Engine solution.')
-output webSiteDefaultHostname string = webSite.outputs.defaultHostname
+output webSiteDefaultHostname string = webSite.?outputs.defaultHostname!
 
 @export()
 @description('The type for the Multi-Agent Custom Automation Engine Log Analytics Workspace resource configuration.')

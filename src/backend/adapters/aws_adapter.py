@@ -1,5 +1,7 @@
 """AWS adapter - proxy to existing infrastructure."""
 import os
+import re
+from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 from adapters.base_adapter import BaseAdapter, ToolExecutionResult
 import time
@@ -170,7 +172,26 @@ class AWSAdapter(BaseAdapter):
         )
         if not bucket:
             raise ValueError("bucket is required for S3 object operations")
-        return str(bucket)
+        bucket_value = str(bucket).strip()
+
+        # Tolerate natural-language bucket inputs (e.g. spaces instead of hyphens).
+        # Example: "fibroskin academic videos" -> "fibroskin-academic-videos"
+        if " " in bucket_value:
+            bucket_value = re.sub(r"\s+", "-", bucket_value).strip("-")
+
+        canonical_bucket = (
+            os.getenv("AWS_S3_BUCKET")
+            or os.getenv("AWS_S3_BUCKET_NAME")
+            or os.getenv("AWS_BUCKET_NAME")
+        )
+        if canonical_bucket:
+            norm_given = "".join(ch for ch in bucket_value.lower() if ch.isalnum())
+            norm_canonical = "".join(ch for ch in canonical_bucket.lower() if ch.isalnum())
+            similarity = SequenceMatcher(None, norm_given, norm_canonical).ratio()
+            if norm_given == norm_canonical or similarity >= 0.82:
+                return str(canonical_bucket)
+
+        return bucket_value
 
     @staticmethod
     def _resolve_region(params: Dict[str, Any], credentials: Dict[str, str]) -> str:

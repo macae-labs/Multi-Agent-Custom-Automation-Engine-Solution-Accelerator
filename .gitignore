@@ -48,6 +48,19 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+
+# Backup and sensitive files
+*.backup
+*.bak
+.env.backup
+.env.*.backup
+
+# VS Code local settings (user-specific)
+.vscode/
+!.vscode/extensions.json
+
+# Azure Functions local settings
+src/backend/azure_functions/local.settings.json
 .hypothesis/
 .pytest_cache/
 cover/
@@ -215,7 +228,6 @@ artifacts/
 **/Properties/launchSettings.json
 
 # VS Code
-.vscode/
 
 *_i.c
 *_p.c
@@ -462,3 +474,7 @@ infra/scripts/generar_token_azure.ps1
 infra/scripts/test_ai_foundry_connection.ps1
 infra/scripts/token_helper.ps1
 keys/
+
+# Azure Functions local settings
+local.settings.json
+local.settings.*.json

@@ -258,6 +258,9 @@ module cognitiveService_privateEndpoints 'br/public:avm/res/network/private-endp
       split(privateEndpoint.?resourceGroupResourceId ?? resourceGroup().id, '/')[2],
       split(privateEndpoint.?resourceGroupResourceId ?? resourceGroup().id, '/')[4]
     )
+    dependsOn: [
+      cognitiveService_deployments
+    ]
     params: {
       name: privateEndpoint.?name ?? 'pep-${last(split(cognitiveService.id, '/'))}-${privateEndpoint.?service ?? 'account'}-${index}'
       privateLinkServiceConnections: privateEndpoint.?isManualConnection != true
@@ -367,7 +370,7 @@ module aiProject 'project.bicep' = if(!empty(projectName) || !empty(azureExistin
 import { secretsOutputType } from 'br/public:avm/utl/types/avm-common-types:0.5.1'
 @description('A hashtable of references to the secrets exported to the provided Key Vault. The key of each reference is each secret\'s name.')
 output exportedSecrets secretsOutputType = (secretsExportConfiguration != null)
-  ? toObject(secretsExport.outputs.secretsSet, secret => last(split(secret.secretResourceId, '/')), secret => secret)
+  ? toObject(secretsExport.?outputs.secretsSet!, secret => last(split(secret.secretResourceId, '/')), secret => secret)
   : {}
 
 @description('The private endpoints of the congitive services account.')
@@ -382,7 +385,7 @@ output privateEndpoints privateEndpointOutputType[] = [
 ]
 
 import { aiProjectOutputType } from 'project.bicep'
-output aiProjectInfo aiProjectOutputType = aiProject.outputs.aiProjectInfo
+output aiProjectInfo aiProjectOutputType = aiProject.?outputs.aiProjectInfo!
 
 // ================ //
 // Definitions      //

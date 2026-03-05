@@ -19,16 +19,25 @@ const AppWrapper = () => {
   const [config, setConfig] = useState<ConfigType>(defaultConfig);
   useEffect(() => {
     const initConfig = async () => {
-      // Use default config directly for development
-      let config = defaultConfig;
-      config.ENABLE_AUTH = toBoolean(config.ENABLE_AUTH);
+      // Load runtime config from frontend server (/config) and fallback to defaults.
+      let runtimeConfig = { ...defaultConfig };
+      try {
+        const response = await fetch("/config");
+        if (response.ok) {
+          const configFromServer = await response.json();
+          runtimeConfig = { ...runtimeConfig, ...configFromServer };
+        }
+      } catch {
+        // keep default config in local/dev fallback
+      }
+      runtimeConfig.ENABLE_AUTH = toBoolean(runtimeConfig.ENABLE_AUTH as any);
 
-      window.appConfig = config;
-      setEnvData(config);
-      setApiUrl(config.API_URL);
-      setConfig(config);
+      window.appConfig = runtimeConfig;
+      setEnvData(runtimeConfig);
+      setApiUrl(runtimeConfig.API_URL);
+      setConfig(runtimeConfig);
       
-      let defaultUserInfo = config.ENABLE_AUTH ? await getUserInfo() : ({} as UserInfo);
+      let defaultUserInfo = runtimeConfig.ENABLE_AUTH ? await getUserInfo() : ({} as UserInfo);
       window.userInfo = defaultUserInfo;
       setUserInfoGlobal(defaultUserInfo);
       

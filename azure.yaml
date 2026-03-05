@@ -4,3 +4,34 @@ metadata:
   template: multi-agent-custom-automation-engine-solution-accelerator@1.0
 requiredVersions:
   azd: ">=1.15.0 !=1.17.1"
+
+# Infrastructure provisioning
+infra:
+  # Use bicep for IaC
+  provider: bicep
+  # Path to the main bicep file
+  path: infra
+  # Parameters passed to bicep deployment
+  parameters:
+    - key: useWafAlignedArchitecture
+      value: ${AZURE_ENV_WAF_ALIGNED=false}
+
+# Services to package and deploy
+services:
+  backend:
+    # Language/framework
+    language: py
+    # Path to service directory relative to workspace root
+    project: src/backend
+    # Host where service runs
+    host: containerapp
+    # Build docker image for deployment
+    docker:
+      path: Dockerfile
+      registry: boatrentalacr.azurecr.io
+
+  frontend:
+    language: py
+    project: src/frontend
+    host: appservice
+

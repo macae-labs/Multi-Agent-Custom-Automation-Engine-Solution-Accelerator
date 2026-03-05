@@ -12,6 +12,7 @@
     ],
     "settings": {
         "terminal.integrated.suggest.suggestOnTriggerCharacters": true,
-        "terminal.integrated.suggest.selectionMode": "always"
+        "terminal.integrated.suggest.selectionMode": "never",
+        "debug.internalConsoleOptions": "neverOpen"
     }
 }
