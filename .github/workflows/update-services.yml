@@ -1,0 +1,172 @@
+name: Update Services
+
+on:
+  workflow_run:
+    workflows: ["Build Docker and Optional Push"]
+    types:
+      - completed
+    branches:
+      - main
+      - dev
+      - hotfix
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (main=latest, dev=dev, hotfix=hotfix)"
+        required: true
+        default: "main"
+        type: choice
+        options:
+          - main
+          - dev
+          - hotfix
+      resource_group:
+        description: "Azure Resource Group name (leave empty to use AZURE_RESOURCE_GROUP variable)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-services:
+    name: Update Azure Services
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          az --version
+
+      - name: Login to Azure
+        run: |
+          az login --service-principal \
+            -u ${{ secrets.AZURE_CLIENT_ID }} \
+            -p ${{ secrets.AZURE_CLIENT_SECRET }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }}
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+      - name: Determine Image Tag
+        id: determine_tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            BRANCH="${{ inputs.environment }}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+          elif [[ "$BRANCH" == "dev" ]]; then
+            echo "IMAGE_TAG=dev" >> $GITHUB_ENV
+          elif [[ "$BRANCH" == "hotfix" ]]; then
+            echo "IMAGE_TAG=hotfix" >> $GITHUB_ENV
+          else
+            echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+          fi
+
+      - name: Resolve Resource Group
+        id: resolve_rg
+        run: |
+          if [ -n "${{ inputs.resource_group }}" ]; then
+            echo "RESOURCE_GROUP=${{ inputs.resource_group }}" >> $GITHUB_ENV
+          else
+            echo "RESOURCE_GROUP=${{ vars.AZURE_RESOURCE_GROUP }}" >> $GITHUB_ENV
+          fi
+
+      - name: Get Container App and Registry Info
+        id: get_resources
+        run: |
+          CONTAINER_APP_NAME=$(az containerapp list \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[0].name" -o tsv)
+          echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> $GITHUB_ENV
+          echo "Resolved Container App: $CONTAINER_APP_NAME"
+
+          WEBAPP_NAME=$(az webapp list \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[?starts_with(name, 'app-')].name | [0]" -o tsv)
+          echo "WEBAPP_NAME=$WEBAPP_NAME" >> $GITHUB_ENV
+          echo "Resolved Web App: $WEBAPP_NAME"
+
+      - name: Update Backend Container App Image
+        run: |
+          ACR_SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
+          IMAGE="${ACR_SERVER}/macaebackend:${{ env.IMAGE_TAG }}"
+
+          echo "Updating Container App '${{ env.CONTAINER_APP_NAME }}' with image: $IMAGE"
+          az containerapp update \
+            --name "${{ env.CONTAINER_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --image "$IMAGE"
+
+      - name: Update Frontend Web App Image
+        if: env.WEBAPP_NAME != ''
+        run: |
+          ACR_SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
+          IMAGE="${ACR_SERVER}/macaefrontend:${{ env.IMAGE_TAG }}"
+
+          echo "Updating Web App '${{ env.WEBAPP_NAME }}' with image: $IMAGE"
+          az webapp config container set \
+            --name "${{ env.WEBAPP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --container-image-name "$IMAGE" \
+            --container-registry-url "https://${{ secrets.ACR_LOGIN_SERVER }}" \
+            --container-registry-user "${{ secrets.ACR_USERNAME }}" \
+            --container-registry-password "${{ secrets.ACR_PASSWORD }}"
+
+      - name: Restart Backend Container App
+        run: |
+          echo "Restarting Container App '${{ env.CONTAINER_APP_NAME }}'..."
+          REVISION=$(az containerapp revision list \
+            --name "${{ env.CONTAINER_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[0].name" -o tsv)
+          if [ -n "$REVISION" ]; then
+            az containerapp revision restart \
+              --revision "$REVISION" \
+              --resource-group "${{ env.RESOURCE_GROUP }}"
+          else
+            echo "No active revision found for '${{ env.CONTAINER_APP_NAME }}', skipping restart."
+          fi
+
+      - name: Restart Frontend Web App
+        if: env.WEBAPP_NAME != ''
+        run: |
+          echo "Restarting Web App '${{ env.WEBAPP_NAME }}'..."
+          az webapp restart \
+            --name "${{ env.WEBAPP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}"
+
+      - name: Verify Backend Deployment
+        run: |
+          echo "Fetching updated Backend FQDN..."
+          FQDN=$(az containerapp show \
+            --name "${{ env.CONTAINER_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "Backend available at: https://$FQDN"
+
+      - name: Send Notification on Failure
+        if: failure()
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EMAIL_BODY=$(cat <<EOF
+          {
+            "body": "<p>Dear Team,</p><p>The Update Services workflow has failed.</p><p><strong>Build URL:</strong> ${RUN_URL}</p><p>Please investigate the matter at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>"
+          }
+          EOF
+          )
+          curl -X POST "${{ secrets.LOGIC_APP_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "$EMAIL_BODY" || echo "Failed to send notification"
+
+      - name: Logout from Azure
+        if: always()
+        run: |
+          az logout
+          echo "Logged out from Azure."
