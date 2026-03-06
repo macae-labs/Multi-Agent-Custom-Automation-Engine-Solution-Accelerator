@@ -1,5 +1,6 @@
 # tests/test_config.py
-from unittest.mock import patch, MagicMock
+from collections.abc import Iterator
+from unittest.mock import patch
 import os
 import pytest
 
@@ -22,7 +23,7 @@ MOCK_ENV_VARS = {
 
 
 @pytest.fixture
-def mock_env():
+def mock_env() -> Iterator[None]:
     with patch.dict(os.environ, MOCK_ENV_VARS):
         yield
 

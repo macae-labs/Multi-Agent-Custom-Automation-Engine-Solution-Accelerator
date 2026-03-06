@@ -45,8 +45,11 @@ def test_input_task_invalid_json():
     """Test the case where the input JSON is invalid."""
     invalid_json = "Invalid JSON data"
 
-    headers = {"Authorization": "Bearer mock-token"}
-    response = client.post("/api/input_task", data=invalid_json, headers=headers)
+    headers = {
+        "Authorization": "Bearer mock-token",
+        "Content-Type": "application/json",
+    }
+    response = client.post("/api/input_task", content=invalid_json, headers=headers)
 
     # Assert response for invalid JSON
     assert response.status_code == 422

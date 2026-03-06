@@ -1,0 +1,119 @@
+name: Update Services
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/backend/**'
+      - 'src/frontend/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR: ${{ secrets.ACR_LOGIN_SERVER != '' && secrets.ACR_LOGIN_SERVER || format('{0}.azurecr.io', secrets.ACR_NAME) }}
+  TAG: ${{ github.sha }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'src/backend/**'
+            frontend:
+              - 'src/frontend/**'
+
+  backend:
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push backend image (ACR build)
+        run: |
+          if [ -z "${{ env.ACR_NAME }}" ]; then
+            echo "Missing secret ACR_NAME"
+            exit 1
+          fi
+          az acr build \
+            --registry "${{ env.ACR_NAME }}" \
+            --image "macaebackend:latest" \
+            --image "macaebackend:${{ env.TAG }}" \
+            --file src/backend/Dockerfile \
+            src/backend
+
+      - name: Update Container App
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          if [ -z "$RG" ]; then RG="${{ secrets.RG }}"; fi
+          if [ -z "$RG" ]; then
+            echo "Missing secret BACKEND_RG (or legacy RG)"
+            exit 1
+          fi
+          az containerapp update \
+            -n ${{ secrets.BACKEND_CONTAINER_APP }} \
+            -g "$RG" \
+            --image ${{ env.ACR }}/macaebackend:${{ env.TAG }}
+
+  frontend:
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push frontend image (ACR build)
+        run: |
+          if [ -z "${{ env.ACR_NAME }}" ]; then
+            echo "Missing secret ACR_NAME"
+            exit 1
+          fi
+          az acr build \
+            --registry "${{ env.ACR_NAME }}" \
+            --image "macaefrontend:latest" \
+            --image "macaefrontend:${{ env.TAG }}" \
+            --file src/frontend/Dockerfile \
+            src/frontend
+
+      - name: Update WebApp
+        run: |
+          RG="${{ secrets.FRONTEND_RG }}"
+          if [ -z "$RG" ]; then RG="${{ secrets.RG }}"; fi
+          if [ -z "$RG" ]; then
+            echo "Missing secret FRONTEND_RG (or legacy RG)"
+            exit 1
+          fi
+          az webapp config container set \
+            -g "$RG" \
+            -n ${{ secrets.FRONTEND_WEBAPP }} \
+            --container-registry-url https://${{ env.ACR }} \
+            --container-image-name ${{ env.ACR }}/macaefrontend:${{ env.TAG }}
+          az webapp restart -g "$RG" -n ${{ secrets.FRONTEND_WEBAPP }}
