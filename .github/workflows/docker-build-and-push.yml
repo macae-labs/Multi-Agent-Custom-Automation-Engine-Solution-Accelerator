@@ -7,6 +7,11 @@ on:
       - dev
       - demo
       - hotfix
+    paths:
+      - 'src/backend/**'
+      - 'src/frontend/**'
+      - '**/Dockerfile'
+      - '.github/workflows/docker-build-and-push.yml'
   pull_request:
     types:
       - opened
@@ -18,74 +23,144 @@ on:
       - dev
       - demo
       - hotfix
+    paths:
+      - 'src/backend/**'
+      - 'src/frontend/**'
+      - '**/Dockerfile'
+      - '.github/workflows/docker-build-and-push.yml'
   workflow_dispatch:
+    inputs:
+      target_env:
+        description: "GitHub Environment to use"
+        required: false
+        type: choice
+        default: dev
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR: ${{ secrets.ACR_LOGIN_SERVER != '' && secrets.ACR_LOGIN_SERVER || format('{0}.azurecr.io', secrets.ACR_NAME) }}
+  TAG: ${{ github.sha }}
 
 jobs:
-  build-and-push:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      should_deploy: ${{ steps.check_deploy.outputs.should_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'src/backend/**'
+            frontend:
+              - 'src/frontend/**'
+      
+      - name: Check if deployment should occur
+        id: check_deploy
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push-backend:
+    needs: changes
+    if: |
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.backend == 'true') &&
+      needs.changes.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_env || 'dev' }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-
-      - name: Log in to Azure Container Registry
-        if: ${{ github.ref_name == 'main' || github.ref_name == 'dev' || github.ref_name == 'demo' || github.ref_name == 'hotfix' }}
-        uses: azure/docker-login@v2
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          login-server: ${{ secrets.ACR_LOGIN_SERVER || 'acrlogin.azurecr.io' }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-      
-      - name: Get registry
-        id: registry
+      - name: Build and push backend image (ACR build)
         run: |
-          echo "ext_registry=${{ secrets.ACR_LOGIN_SERVER || 'acrlogin.azurecr.io'}}" >> $GITHUB_OUTPUT
-
-      - name: Determine Tag Name Based on Branch
-        id: determine_tag
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "TAG=latest" >> $GITHUB_ENV
-          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "TAG=dev" >> $GITHUB_ENV
-          elif [[ "${{ github.ref }}" == "refs/heads/demo" ]]; then
-            echo "TAG=demo" >> $GITHUB_ENV
-          elif [[ "${{ github.ref }}" == "refs/heads/hotfix" ]]; then
-            echo "TAG=hotfix" >> $GITHUB_ENV
-          else
-            echo "TAG=pullrequest-ignore" >> $GITHUB_ENV
+          if [ -z "${{ env.ACR_NAME }}" ]; then
+            echo "Missing secret ACR_NAME"
+            exit 1
           fi
+          az acr build \
+            --registry "${{ env.ACR_NAME }}" \
+            --image "macaebackend:latest" \
+            --image "macaebackend:${{ env.TAG }}" \
+            --file src/backend/Dockerfile \
+            src/backend
 
-      - name: Set Historical Tag
+      - name: Update Container App
         run: |
-          DATE_TAG=$(date +'%Y-%m-%d')
-          RUN_ID=${{ github.run_number }}
-          # Create historical tag using TAG, DATE_TAG, and RUN_ID
-          echo "HISTORICAL_TAG=${{ env.TAG }}_${DATE_TAG}_${RUN_ID}" >> $GITHUB_ENV
+          RG="${{ secrets.BACKEND_RG }}"
+          if [ -z "$RG" ]; then
+            echo "Missing secret BACKEND_RG"
+            exit 1
+          fi
+          az containerapp update \
+            -n ${{ secrets.BACKEND_CONTAINER_APP }} \
+            -g "$RG" \
+            --image ${{ env.ACR }}/macaebackend:${{ env.TAG }}
 
-      - name: Build and optionally push Backend Docker image
-        uses: docker/build-push-action@v6
+  build-and-push-frontend:
+    needs: changes
+    if: |
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.frontend == 'true') &&
+      needs.changes.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_env || 'dev' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          context: ./src/backend
-          file: ./src/backend/Dockerfile
-          push: ${{ env.TAG != 'pullrequest-ignore' }}
-          tags: |
-            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.TAG }}
-            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.HISTORICAL_TAG }}
-  
-      - name: Build and optionally push Frontend Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src/frontend
-          file: ./src/frontend/Dockerfile
-          push: ${{ env.TAG != 'pullrequest-ignore' }}
-          tags: |
-            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.TAG }}
-            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.HISTORICAL_TAG }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push frontend image (ACR build)
+        run: |
+          if [ -z "${{ env.ACR_NAME }}" ]; then
+            echo "Missing secret ACR_NAME"
+            exit 1
+          fi
+          az acr build \
+            --registry "${{ env.ACR_NAME }}" \
+            --image "macaefrontend:latest" \
+            --image "macaefrontend:${{ env.TAG }}" \
+            --file src/frontend/Dockerfile \
+            src/frontend
+
+      - name: Update WebApp
+        run: |
+          RG="${{ secrets.FRONTEND_RG }}"
+          if [ -z "$RG" ]; then
+            echo "Missing secret FRONTEND_RG"
+            exit 1
+          fi
+          az webapp config container set \
+            -g "$RG" \
+            -n ${{ secrets.FRONTEND_WEBAPP }} \
+            --container-registry-url https://${{ env.ACR }} \
+            --container-image-name ${{ env.ACR }}/macaefrontend:${{ env.TAG }}
+          az webapp restart -g "$RG" -n ${{ secrets.FRONTEND_WEBAPP }}

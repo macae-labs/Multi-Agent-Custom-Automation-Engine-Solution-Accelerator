@@ -2,10 +2,30 @@ name: Validate WAF Deployment
 
 on:
   workflow_dispatch:
+    inputs:
+      target_env:
+        description: "GitHub Environment to use"
+        required: false
+        type: choice
+        default: dev
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  QUOTA_FAILED: "false"
+  RESOURCE_GROUP_NAME: ""
+  AZURE_LOCATION: ""
+  OPENAI_RESOURCE_NAME: ""
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_env || 'dev' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -13,54 +33,54 @@ jobs:
       - name: Run Quota Check
         id: quota-check
         run: |
-          export AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
-          export AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
-          export AZURE_CLIENT_SECRET=${{ secrets.AZURE_CLIENT_SECRET }}
+          set -o pipefail
           export AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
           export GPT_MIN_CAPACITY="150"
           export AZURE_REGIONS="${{ vars.AZURE_REGIONS }}"
 
           chmod +x infra/scripts/checkquota.sh
-          if ! infra/scripts/checkquota.sh; then
+          if ! infra/scripts/checkquota.sh 2>&1 | tee /tmp/quota-check.log; then
             # If quota check fails due to insufficient quota, set the flag
-            if grep -q "No region with sufficient quota found" infra/scripts/checkquota.sh; then
-              echo "QUOTA_FAILED=true" >> $GITHUB_ENV
+            if grep -q "No region with sufficient quota found" /tmp/quota-check.log; then
+              echo "quota_failed=true" >> $GITHUB_OUTPUT
+              exit 1
             fi
             exit 1  # Fail the pipeline if any other failure occurs
           fi
+          echo "quota_failed=false" >> $GITHUB_OUTPUT
 
       - name: Send Notification on Quota Failure
-        if: env.QUOTA_FAILED == 'true'
+        if: failure() && steps.quota-check.outputs.quota_failed == 'true'
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          EMAIL_BODY=$(cat <<EOF
-          {
-            "body": "<p>Dear Team,</p><p>The quota check has failed, and the pipeline cannot proceed.</p><p><strong>Build URL:</strong> ${RUN_URL}</p><p>Please take necessary action.</p><p>Best regards,<br>Your Automation Team</p>"
-          }
-          EOF
-          )
-
-          curl -X POST "${{ secrets.AUTO_LOGIC_APP_URL }}" \
+          curl -X POST "${{ secrets.ALERT_LOGIC_APP_URL }}" \
             -H "Content-Type: application/json" \
-            -d "$EMAIL_BODY" || echo "Failed to send notification"
+            -d '{"context":"quota","severity":"error","workflow":"deploy-waf.yml","message":"Quota check failed. Pipeline cannot proceed.","run_url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            || echo "Failed to send notification"
 
       - name: Fail Pipeline if Quota Check Fails
-        if: env.QUOTA_FAILED == 'true'
+        if: steps.quota-check.outputs.quota_failed == 'true'
         run: exit 1
 
       - name: Set Deployment Region
         run: |
+          if [ -z "$VALID_REGION" ]; then
+            VALID_REGION="${{ vars.AZURE_LOCATION }}"
+          fi
+          if [ -z "$VALID_REGION" ]; then
+            VALID_REGION="eastus2"
+          fi
           echo "Selected Region: $VALID_REGION"
           echo "AZURE_LOCATION=$VALID_REGION" >> $GITHUB_ENV
 
       - name: Setup Azure CLI
-        run: |
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-          az --version  # Verify installation
+        run: az --version
 
-      - name: Login to Azure
-        run: |
-          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Bicep CLI
         run: az bicep install
@@ -95,40 +115,39 @@ jobs:
           TIMESTAMP=$(date +%s)
           UPDATED_TIMESTAMP=$(echo $TIMESTAMP | tail -c 6)
           UNIQUE_SOLUTION_PREFIX="${COMMON_PART}${UPDATED_TIMESTAMP}"
+          echo "SOLUTION_PREFIX=${UNIQUE_SOLUTION_PREFIX}" >> $GITHUB_OUTPUT
           echo "SOLUTION_PREFIX=${UNIQUE_SOLUTION_PREFIX}" >> $GITHUB_ENV
 
       - name: Deploy Bicep Template
         id: deploy
         run: |
           set -e
+          VM_ADMIN_USERNAME="${{ secrets.WAF_VM_ADMIN_USERNAME }}"
+          VM_ADMIN_PASSWORD="${{ secrets.WAF_VM_ADMIN_PASSWORD }}"
+          if [ -z "$VM_ADMIN_USERNAME" ] || [ -z "$VM_ADMIN_PASSWORD" ]; then
+            echo "Missing required secrets WAF_VM_ADMIN_USERNAME and/or WAF_VM_ADMIN_PASSWORD"
+            exit 1
+          fi
+          VIRTUAL_MACHINE_CONFIGURATION=$(jq -cn --arg u "$VM_ADMIN_USERNAME" --arg p "$VM_ADMIN_PASSWORD" '{adminUsername:$u,adminPassword:$p}')
           az deployment group create \
             --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
             --template-file infra/main.bicep \
             --parameters \
-              environmentName=${{ env.SOLUTION_PREFIX }} \
+              environmentName=${{ steps.generate_solution_prefix.outputs.SOLUTION_PREFIX }} \
+              solutionLocation="${{ env.AZURE_LOCATION }}" \
               useWafAlignedArchitecture=true \
               aiDeploymentsLocation='${{ env.AZURE_LOCATION }}' \
               gptModelCapacity=5 \
-              virtualMachineConfiguration='{"adminUsername": "adminuser", "adminPassword": "P@ssw0rd1234"}' \
+              virtualMachineConfiguration="$VIRTUAL_MACHINE_CONFIGURATION" \
               logAnalyticsWorkspaceConfiguration='{"existingWorkspaceResourceId": ""}'
 
       - name: Send Notification on Failure
         if: failure()
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          # Construct the email body
-          EMAIL_BODY=$(cat <<EOF
-          {
-            "body": "<p>Dear Team,</p><p>We would like to inform you that the Multi-Agent-Custom-Automation-Engine-Solution-Accelerator Automation process has encountered an issue and has failed to complete successfully.</p><p><strong>Build URL:</strong> ${RUN_URL}<br> ${OUTPUT}</p><p>Please investigate the matter at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>"
-          }
-          EOF
-          )
-
-          # Send the notification
-          curl -X POST "${{ secrets.LOGIC_APP_URL }}" \
+          curl -X POST "${{ secrets.ALERT_LOGIC_APP_URL }}" \
             -H "Content-Type: application/json" \
-            -d "$EMAIL_BODY" || echo "Failed to send notification"
+            -d '{"context":"waf-deploy","severity":"error","workflow":"deploy-waf.yml","message":"WAF deployment failed.","run_url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            || echo "Failed to send notification"
 
       - name: Get OpenAI Resource from Resource Group
         id: get_openai_resource
@@ -143,7 +162,7 @@ jobs:
 
           if [ -z "$openai_resource_name" ]; then
             echo "No OpenAI resource found in resource group ${{ env.RESOURCE_GROUP_NAME }}."
-            exit 1
+            exit 0
           else
             echo "OPENAI_RESOURCE_NAME=${openai_resource_name}" >> $GITHUB_ENV
             echo "OpenAI resource name: ${openai_resource_name}" 
@@ -223,6 +242,10 @@ jobs:
 
           set -e 
           echo "Azure OpenAI: ${{ env.OPENAI_RESOURCE_NAME }}"
+          if [ -z "${{ env.OPENAI_RESOURCE_NAME }}" ]; then
+            echo "No OpenAI resource to purge. Skipping."
+            exit 0
+          fi
 
           # Purge OpenAI Resource
           echo "Purging the OpenAI Resource..."

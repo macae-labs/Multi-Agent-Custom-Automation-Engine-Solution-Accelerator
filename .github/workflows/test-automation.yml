@@ -19,9 +19,13 @@ on:
         required: false
         type: string
     secrets:
-      EMAILNOTIFICATION_LOGICAPP_URL_TA:
+      ALERT_LOGIC_APP_URL:
         required: false
-        description: "Logic App URL for email notifications"
+        description: "Logic App URL for alert notifications"
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   test:
@@ -45,7 +49,9 @@ jobs:
       - name: Azure CLI Login
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # - name: Start Container App
       #   uses: azure/cli@v2
@@ -153,31 +159,19 @@ jobs:
       - name: Send Notification
         if: always()
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          REPORT_URL=${{ steps.upload_report.outputs.artifact-url }}
           IS_SUCCESS=${{ steps.test_result.outputs.IS_SUCCESS }}
-
+          REPORT_URL=${{ steps.upload_report.outputs.artifact-url }}
           if [ "$IS_SUCCESS" = "true" ]; then
-                  EMAIL_BODY=$(cat <<EOF
-                  {
-                    "body": "<p>Dear Team,</p><p>We would like to inform you that the ${{ env.accelerator_name }} Test Automation process has completed successfully.</p><p><strong>Run URL:</strong> <a href=\\"${RUN_URL}\\">${RUN_URL}</a><br></p><p><strong>Test Report:</strong> <a href=\\"${REPORT_URL}\\">${REPORT_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
-                    "subject": "${{ env.accelerator_name }} Test Automation - Success"
-                  }
-          EOF
-            )
+            SEVERITY="info"
+            MSG="E2E tests passed. Report: ${REPORT_URL}"
           else
-                  EMAIL_BODY=$(cat <<EOF
-                  {
-                    "body": "<p>Dear Team,</p><p>We would like to inform you that the ${{ env.accelerator_name }} Test Automation process has encountered an issue and has failed to complete successfully.</p><p><strong>Run URL:</strong> <a href=\\"${RUN_URL}\\">${RUN_URL}</a><br></p><p><strong>Test Report:</strong> <a href=\\"${REPORT_URL}\\">${REPORT_URL}</a></p><p>Please investigate the matter at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>",
-                    "subject": "${{ env.accelerator_name }} Test Automation - Failure"
-                  }
-          EOF
-            )
+            SEVERITY="error"
+            MSG="E2E tests failed. Report: ${REPORT_URL}"
           fi
-
-          curl -X POST "${{ secrets.EMAILNOTIFICATION_LOGICAPP_URL_TA }}" \
+          curl -X POST "${{ secrets.ALERT_LOGIC_APP_URL }}" \
             -H "Content-Type: application/json" \
-            -d "$EMAIL_BODY" || echo "Failed to send notification"
+            -d "{\"context\":\"e2e\",\"severity\":\"${SEVERITY}\",\"workflow\":\"test-automation.yml\",\"message\":\"${MSG}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            || echo "Failed to send notification"
 
       # - name: Stop Container App
       #   if: always()
