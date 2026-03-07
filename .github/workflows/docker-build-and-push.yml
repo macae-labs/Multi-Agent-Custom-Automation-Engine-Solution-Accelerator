@@ -154,8 +154,18 @@ jobs:
           echo "New revision: $NEW_REVISION"
           echo "App URL: https://$APP_FQDN"
 
+      - name: Check revision mode
+        id: check_revision_mode
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          REVISION_MODE=$(az containerapp show -n "$APP" -g "$RG" \
+            --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "revision_mode=$REVISION_MODE" >> $GITHUB_OUTPUT
+          echo "Revision mode: $REVISION_MODE"
+
       - name: Canary rollout (10% new, 90% previous)
-        if: steps.capture_previous.outputs.previous_revision != ''
+        if: steps.capture_previous.outputs.previous_revision != '' && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
         run: |
           RG="${{ secrets.BACKEND_RG }}"
           APP="${{ secrets.BACKEND_CONTAINER_APP }}"
@@ -218,7 +228,7 @@ jobs:
           fi
 
       - name: Promote new revision to 100%
-        if: success()
+        if: success() && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
         run: |
           RG="${{ secrets.BACKEND_RG }}"
           APP="${{ secrets.BACKEND_CONTAINER_APP }}"
@@ -227,7 +237,7 @@ jobs:
             --revision-weight "${{ steps.capture_new.outputs.new_revision }}=100"
 
       - name: Rollback to previous revision on failure
-        if: failure() && steps.capture_previous.outputs.previous_revision != ''
+        if: failure() && steps.capture_previous.outputs.previous_revision != '' && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
         run: |
           RG="${{ secrets.BACKEND_RG }}"
           APP="${{ secrets.BACKEND_CONTAINER_APP }}"
