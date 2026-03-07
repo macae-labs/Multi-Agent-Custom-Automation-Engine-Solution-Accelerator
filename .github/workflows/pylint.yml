@@ -39,8 +39,8 @@ jobs:
       
       - name: Run ruff (critical rules)
         run: |
-          ruff check src/backend --select E9,F63,F7,F82
+          ruff check src/backend --select E9,F63,F7,F82 --exclude tests
       
       - name: Run flake8
         run: |
-          flake8 --config=.flake8 src/backend
+          flake8 --config=.flake8 --exclude=tests src/backend

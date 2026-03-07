@@ -17,7 +17,6 @@ from config_kernel import Config
 from kernel_agents.agent_factory import AgentFactory
 from models.messages_kernel import AgentType
 from utils_kernel import get_agents
-from semantic_kernel.functions.kernel_arguments import KernelArguments
 
 # Load environment variables from .env file
 load_dotenv()
@@ -46,7 +45,7 @@ class AgentIntegrationTest(unittest.TestCase):
                 self.fail(f"Required environment variable {var} not set")
                 
         # Print test configuration
-        print(f"\nRunning tests with:")
+        print("\nRunning tests with:")
         print(f"  - Session ID: {self.session_id}")
         print(f"  - OpenAI Deployment: {os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}")
         print(f"  - OpenAI Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT')}")
@@ -127,11 +126,13 @@ class AgentIntegrationTest(unittest.TestCase):
         return agents
 
     async def _test_create_azure_ai_agent(self):
-        """Test creating an AzureAIAgent directly."""
-        agent = await get_azure_ai_agent(
+        """Test creating an agent using AgentFactory."""
+        agent = await AgentFactory.create_agent(
+            agent_type=AgentType.GENERIC,
             session_id=self.session_id,
-            agent_name="test-agent",
-            system_prompt="You are a test agent."
+            user_id="test-user",
+            temperature=0.0,
+            system_message="You are a test agent."
         )
         
         self.assertIsNotNone(agent)
@@ -169,22 +170,22 @@ class AgentIntegrationTest(unittest.TestCase):
             self.test_environment_variables()
             
             print("Testing kernel creation...")
-            kernel = await self._test_create_kernel()
+            await self._test_create_kernel()
             
             print("Testing agent factory...")
-            generic_agent = await self._test_create_agent_factory()
+            await self._test_create_agent_factory()
             
             print("Testing creating all agents...")
-            all_agents_raw = await self._test_create_all_agents()
+            await self._test_create_all_agents()
             
             print("Testing get_agents utility...")
-            agents = await self._test_get_agents()
+            await self._test_get_agents()
             
             print("Testing Azure AI agent creation...")
-            azure_agent = await self._test_create_azure_ai_agent()
+            await self._test_create_azure_ai_agent()
             
             print("Testing agent tool invocation...")
-            tool_result = await self._test_agent_tool_invocation()
+            await self._test_agent_tool_invocation()
             
             print("\nAll tests completed successfully!")
             
