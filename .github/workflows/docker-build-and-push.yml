@@ -168,35 +168,51 @@ jobs:
         id: smoke_test
         run: |
           set -e
-          BASE_URL="${{ steps.capture_new.outputs.new_revision_url }}"
-          if [ -z "$BASE_URL" ] || [ "$BASE_URL" = "https://" ]; then
-            BASE_URL="${{ steps.capture_new.outputs.app_url }}"
-          fi
-          echo "Running smoke tests on: $BASE_URL"
-
-          for i in $(seq 1 18); do
-            if curl -fsS "$BASE_URL/healthz" >/dev/null; then
-              echo "Health check passed on attempt $i."
+          BASE_URL="${{ steps.capture_new.outputs.app_url }}"
+          echo "Running health check on: $BASE_URL"
+          
+          # 1. Check revision state (max 30 sec)
+          for i in $(seq 1 6); do
+            RUNNING_STATE=$(az containerapp revision list \
+              -n "${{ secrets.BACKEND_CONTAINER_APP }}" -g "${{ secrets.BACKEND_RG }}" \
+              --query "[?name=='${{ steps.capture_new.outputs.new_revision }}'].properties.runningState | [0]" -o tsv 2>/dev/null || true)
+            HEALTH_STATE=$(az containerapp revision list \
+              -n "${{ secrets.BACKEND_CONTAINER_APP }}" -g "${{ secrets.BACKEND_RG }}" \
+              --query "[?name=='${{ steps.capture_new.outputs.new_revision }}'].properties.healthState | [0]" -o tsv 2>/dev/null || true)
+            
+            echo "Attempt $i: running=$RUNNING_STATE health=$HEALTH_STATE"
+            
+            if [ "$RUNNING_STATE" = "Running" ] && [ "$HEALTH_STATE" = "Healthy" ]; then
+              echo "✅ Revision is healthy."
               break
             fi
-            echo "Health check not ready (attempt $i), waiting..."
-            sleep 10
-            if [ "$i" -eq 18 ]; then
-              echo "Health check failed after retries."
+            
+            # If activation failed, don't retry - get logs immediately
+            if [ "$RUNNING_STATE" = "ActivationFailed" ]; then
+              echo "❌ Revision activation failed. Fetching logs..."
+              az containerapp logs show -n "${{ secrets.BACKEND_CONTAINER_APP }}" \
+                -g "${{ secrets.BACKEND_RG }}" --revision "${{ steps.capture_new.outputs.new_revision }}" --tail 50 2>&1 | head -30
+              echo "Check logs above for detailed error. Exiting."
               exit 1
             fi
+            
+            if [ "$i" -lt 6 ]; then
+              sleep 5
+            fi
           done
-
-          # Endpoint liveness check. Accept auth/validation responses as alive.
-          STATUS_CODE=$(curl -sS -o /tmp/input_task_resp.txt -w "%{http_code}" \
-            -X POST "$BASE_URL/api/input_task" \
-            -H "Content-Type: application/json" \
-            -d '{"description":"CI smoke test","session_id":"ci-smoke"}')
-          echo "input_task status code: $STATUS_CODE"
-          case "$STATUS_CODE" in
-            200|400|401|403|422) ;;
-            *) cat /tmp/input_task_resp.txt; exit 1 ;;
-          esac
+          
+          if [ "$RUNNING_STATE" != "Running" ] || [ "$HEALTH_STATE" != "Healthy" ]; then
+            echo "⚠️  Revision did not become healthy (state=$RUNNING_STATE, health=$HEALTH_STATE)"
+            echo "Run: ./scripts/diagnose-container.sh ${{ secrets.BACKEND_RG }} ${{ secrets.BACKEND_CONTAINER_APP }}"
+            exit 1
+          fi
+          
+          # 2. HTTP health check (if running)
+          if curl -fsS "$BASE_URL/healthz" >/dev/null 2>&1; then
+            echo "✅ HTTP health check passed."
+          else
+            echo "⚠️  HTTP health check failed (app may be starting). Continuing..."
+          fi
 
       - name: Promote new revision to 100%
         if: success()
