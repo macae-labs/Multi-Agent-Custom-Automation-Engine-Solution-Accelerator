@@ -180,6 +180,23 @@ jobs:
           echo "Revision did not become healthy in time."
           exit 1
 
+      - name: Dump revision diagnostics on readiness failure
+        if: failure()
+        run: |
+          set +e
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          NEW_REV="${{ steps.capture_new.outputs.new_revision }}"
+          echo "=== Revision details ==="
+          az containerapp revision show -n "$APP" -g "$RG" --revision "$NEW_REV" -o jsonc || true
+          echo "=== Revision conditions ==="
+          az containerapp revision show -n "$APP" -g "$RG" --revision "$NEW_REV" \
+            --query "properties.conditions" -o jsonc || true
+          echo "=== System logs ==="
+          az containerapp logs show -n "$APP" -g "$RG" --revision "$NEW_REV" --type system --tail 200 || true
+          echo "=== Console logs ==="
+          az containerapp logs show -n "$APP" -g "$RG" --revision "$NEW_REV" --type console --tail 200 || true
+
       - name: Canary rollout (10% new, 90% previous)
         if: steps.capture_previous.outputs.previous_revision != ''
         run: |
