@@ -94,20 +94,39 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push backend image (ACR build)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: ACR Login
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR }}/macaebackend:latest
+            ${{ env.ACR }}/macaebackend:${{ env.TAG }}
+
+      - name: Capture current active revision
+        id: capture_previous
         run: |
-          if [ -z "${{ env.ACR_NAME }}" ]; then
-            echo "Missing secret ACR_NAME"
-            exit 1
-          fi
-          az acr build \
-            --registry "${{ env.ACR_NAME }}" \
-            --image "macaebackend:latest" \
-            --image "macaebackend:${{ env.TAG }}" \
-            --file src/backend/Dockerfile \
-            src/backend
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          PREVIOUS_REVISION=$(az containerapp revision list \
+            -n "$APP" -g "$RG" \
+            --query "[?properties.active==\`true\`][0].name" -o tsv)
+          echo "previous_revision=$PREVIOUS_REVISION" >> $GITHUB_OUTPUT
+          echo "Previous active revision: ${PREVIOUS_REVISION:-none}"
 
       - name: Update Container App
+        id: update_backend
         run: |
           RG="${{ secrets.BACKEND_RG }}"
           if [ -z "$RG" ]; then
@@ -118,6 +137,70 @@ jobs:
             -n ${{ secrets.BACKEND_CONTAINER_APP }} \
             -g "$RG" \
             --image ${{ env.ACR }}/macaebackend:${{ env.TAG }}
+
+      - name: Capture new revision and app URL
+        id: capture_new
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          NEW_REVISION=$(az containerapp revision list \
+            -n "$APP" -g "$RG" \
+            --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
+          APP_FQDN=$(az containerapp show -n "$APP" -g "$RG" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          NEW_REVISION_FQDN=$(az containerapp revision list \
+            -n "$APP" -g "$RG" \
+            --query "[?name=='$NEW_REVISION'].properties.fqdn | [0]" -o tsv 2>/dev/null || true)
+          echo "new_revision=$NEW_REVISION" >> $GITHUB_OUTPUT
+          echo "app_url=https://$APP_FQDN" >> $GITHUB_OUTPUT
+          echo "new_revision_url=https://$NEW_REVISION_FQDN" >> $GITHUB_OUTPUT
+          echo "New revision: $NEW_REVISION"
+          echo "App URL: https://$APP_FQDN"
+
+      - name: Canary rollout (10% new, 90% previous)
+        if: steps.capture_previous.outputs.previous_revision != ''
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          az containerapp ingress traffic set \
+            -n "$APP" -g "$RG" \
+            --revision-weight \
+            "${{ steps.capture_new.outputs.new_revision }}=10" \
+            "${{ steps.capture_previous.outputs.previous_revision }}=90"
+
+      - name: Smoke test backend
+        id: smoke_test
+        run: |
+          set -e
+          BASE_URL="${{ steps.capture_new.outputs.new_revision_url }}"
+          if [ "$BASE_URL" = "https://" ] || [ -z "$BASE_URL" ]; then
+            BASE_URL="${{ steps.capture_new.outputs.app_url }}"
+          fi
+          echo "Running smoke tests on: $BASE_URL"
+          curl -fsS "$BASE_URL/healthz"
+          curl -fsS -X POST "$BASE_URL/api/input_task" \
+            -H "Content-Type: application/json" \
+            -d '{"description":"CI smoke test","session_id":"ci-smoke"}'
+
+      - name: Promote new revision to 100%
+        if: success()
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          az containerapp ingress traffic set \
+            -n "$APP" -g "$RG" \
+            --revision-weight "${{ steps.capture_new.outputs.new_revision }}=100"
+
+      - name: Rollback to previous revision on failure
+        if: failure() && steps.capture_previous.outputs.previous_revision != ''
+        run: |
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          PREV="${{ steps.capture_previous.outputs.previous_revision }}"
+          az containerapp ingress traffic set \
+            -n "$APP" -g "$RG" \
+            --revision-weight "$PREV=100"
+          echo "Rollback executed to revision: $PREV"
 
   build-and-push-frontend:
     needs: changes

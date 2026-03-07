@@ -9,11 +9,22 @@ AZURE_CLIENT_ID="${AZURE_CLIENT_ID}"
 AZURE_TENANT_ID="${AZURE_TENANT_ID}"
 AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}"
 
-# Authenticate using Managed Identity
-echo "Authentication using Managed Identity..."
-if ! az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID"; then
-   echo "❌ Error: Failed to login using Managed Identity."
-   exit 1
+# Authenticate with service principal only when full credentials are provided.
+# Otherwise, rely on an existing login context (OIDC/managed identity).
+echo "🔐 Authenticating with Azure..."
+if [[ -n "$AZURE_CLIENT_ID" && -n "$AZURE_TENANT_ID" && -n "$AZURE_CLIENT_SECRET" ]]; then
+    echo "Using service principal credentials from environment."
+    if ! az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null; then
+        echo "❌ Error: Failed to login using service principal credentials."
+        exit 1
+    fi
+else
+    echo "Using existing Azure session (OIDC/managed identity)."
+    if ! az account show >/dev/null 2>&1; then
+        echo "❌ Error: No active Azure session found."
+        echo "Run azure/login in workflow before quota check or provide AZURE_CLIENT_* secrets."
+        exit 1
+    fi
 fi
 
 echo "🔄 Validating required environment variables..."
