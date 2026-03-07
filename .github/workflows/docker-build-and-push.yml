@@ -153,50 +153,6 @@ jobs:
           echo "New revision: $NEW_REVISION"
           echo "App URL: https://$APP_FQDN"
 
-      - name: Wait for new revision readiness
-        run: |
-          set -e
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          NEW_REV="${{ steps.capture_new.outputs.new_revision }}"
-          if [ -z "$NEW_REV" ]; then
-            echo "New revision not found."
-            exit 1
-          fi
-          for i in $(seq 1 24); do
-            RUNNING_STATE=$(az containerapp revision list \
-              -n "$APP" -g "$RG" \
-              --query "[?name=='$NEW_REV'].properties.runningState | [0]" -o tsv)
-            HEALTH_STATE=$(az containerapp revision list \
-              -n "$APP" -g "$RG" \
-              --query "[?name=='$NEW_REV'].properties.healthState | [0]" -o tsv)
-            echo "Attempt $i: running=$RUNNING_STATE health=$HEALTH_STATE"
-            if [ "$RUNNING_STATE" = "Running" ] && [ "$HEALTH_STATE" = "Healthy" ]; then
-              echo "Revision is ready."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Revision did not become healthy in time."
-          exit 1
-
-      - name: Dump revision diagnostics on readiness failure
-        if: failure()
-        run: |
-          set +e
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          NEW_REV="${{ steps.capture_new.outputs.new_revision }}"
-          echo "=== Revision details ==="
-          az containerapp revision show -n "$APP" -g "$RG" --revision "$NEW_REV" -o jsonc || true
-          echo "=== Revision conditions ==="
-          az containerapp revision show -n "$APP" -g "$RG" --revision "$NEW_REV" \
-            --query "properties.conditions" -o jsonc || true
-          echo "=== System logs ==="
-          az containerapp logs show -n "$APP" -g "$RG" --revision "$NEW_REV" --type system --tail 200 || true
-          echo "=== Console logs ==="
-          az containerapp logs show -n "$APP" -g "$RG" --revision "$NEW_REV" --type console --tail 200 || true
-
       - name: Canary rollout (10% new, 90% previous)
         if: steps.capture_previous.outputs.previous_revision != ''
         run: |
