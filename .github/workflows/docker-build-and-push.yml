@@ -153,6 +153,33 @@ jobs:
           echo "New revision: $NEW_REVISION"
           echo "App URL: https://$APP_FQDN"
 
+      - name: Wait for new revision readiness
+        run: |
+          set -e
+          RG="${{ secrets.BACKEND_RG }}"
+          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
+          NEW_REV="${{ steps.capture_new.outputs.new_revision }}"
+          if [ -z "$NEW_REV" ]; then
+            echo "New revision not found."
+            exit 1
+          fi
+          for i in $(seq 1 24); do
+            RUNNING_STATE=$(az containerapp revision list \
+              -n "$APP" -g "$RG" \
+              --query "[?name=='$NEW_REV'].properties.runningState | [0]" -o tsv)
+            HEALTH_STATE=$(az containerapp revision list \
+              -n "$APP" -g "$RG" \
+              --query "[?name=='$NEW_REV'].properties.healthState | [0]" -o tsv)
+            echo "Attempt $i: running=$RUNNING_STATE health=$HEALTH_STATE"
+            if [ "$RUNNING_STATE" = "Running" ] && [ "$HEALTH_STATE" = "Healthy" ]; then
+              echo "Revision is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Revision did not become healthy in time."
+          exit 1
+
       - name: Canary rollout (10% new, 90% previous)
         if: steps.capture_previous.outputs.previous_revision != ''
         run: |
@@ -169,14 +196,34 @@ jobs:
         run: |
           set -e
           BASE_URL="${{ steps.capture_new.outputs.new_revision_url }}"
-          if [ "$BASE_URL" = "https://" ] || [ -z "$BASE_URL" ]; then
+          if [ -z "$BASE_URL" ] || [ "$BASE_URL" = "https://" ]; then
             BASE_URL="${{ steps.capture_new.outputs.app_url }}"
           fi
           echo "Running smoke tests on: $BASE_URL"
-          curl -fsS "$BASE_URL/healthz"
-          curl -fsS -X POST "$BASE_URL/api/input_task" \
+
+          for i in $(seq 1 18); do
+            if curl -fsS "$BASE_URL/healthz" >/dev/null; then
+              echo "Health check passed on attempt $i."
+              break
+            fi
+            echo "Health check not ready (attempt $i), waiting..."
+            sleep 10
+            if [ "$i" -eq 18 ]; then
+              echo "Health check failed after retries."
+              exit 1
+            fi
+          done
+
+          # Endpoint liveness check. Accept auth/validation responses as alive.
+          STATUS_CODE=$(curl -sS -o /tmp/input_task_resp.txt -w "%{http_code}" \
+            -X POST "$BASE_URL/api/input_task" \
             -H "Content-Type: application/json" \
-            -d '{"description":"CI smoke test","session_id":"ci-smoke"}'
+            -d '{"description":"CI smoke test","session_id":"ci-smoke"}')
+          echo "input_task status code: $STATUS_CODE"
+          case "$STATUS_CODE" in
+            200|400|401|403|422) ;;
+            *) cat /tmp/input_task_resp.txt; exit 1 ;;
+          esac
 
       - name: Promote new revision to 100%
         if: success()
