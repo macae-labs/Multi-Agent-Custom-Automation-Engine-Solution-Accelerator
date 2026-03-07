@@ -59,6 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
+        continue-on-error: true
         with:
           filters: |
             backend:
@@ -182,8 +183,10 @@ jobs:
             
             echo "Attempt $i: running=$RUNNING_STATE health=$HEALTH_STATE"
             
-            if [ "$RUNNING_STATE" = "Running" ] && [ "$HEALTH_STATE" = "Healthy" ]; then
-              echo "✅ Revision is healthy."
+            # Accept both Running and RunningAtMaxScale as valid states
+            if [[ "$RUNNING_STATE" =~ ^(Running|RunningAtMaxScale)$ ]] && [ "$HEALTH_STATE" = "Healthy" ]; then
+              echo "✅ Revision is healthy (state: $RUNNING_STATE)."
+              HEALTHY=true
               break
             fi
             
@@ -201,7 +204,7 @@ jobs:
             fi
           done
           
-          if [ "$RUNNING_STATE" != "Running" ] || [ "$HEALTH_STATE" != "Healthy" ]; then
+          if [ "$HEALTHY" != "true" ]; then
             echo "⚠️  Revision did not become healthy (state=$RUNNING_STATE, health=$HEALTH_STATE)"
             echo "Run: ./scripts/diagnose-container.sh ${{ secrets.BACKEND_RG }} ${{ secrets.BACKEND_CONTAINER_APP }}"
             exit 1
