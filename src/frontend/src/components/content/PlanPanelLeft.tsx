@@ -18,6 +18,7 @@ import {
 } from "@fluentui/react-icons";
 import TaskList from "./TaskList";
 import { useCallback, useEffect, useState } from "react";
+import React from 'react';
 import { useNavigate, useParams } from "react-router-dom";
 import { PlanPanelLefProps, PlanWithSteps, Task, UserInfo } from "@/models";
 import { apiService } from "@/api";
@@ -47,6 +48,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({ reloadTasks,restReload }) 
     try {
       setPlansLoading(true);
       setPlansError(null);
+      setUserInfo(getUserInfoGlobal()); // Refresh user info on load
       const plansData = await apiService.getPlans(undefined, !forceRefresh);
       setPlans(plansData);
     } catch (error) {
@@ -153,7 +155,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({ reloadTasks,restReload }) 
 
         <PanelFooter>
           <PanelUserCard
-            name={userInfo ? userInfo.user_first_last_name : "Guest"}
+            name={userInfo?.user_first_last_name?.trim() || "Guest"}
             // alias={userInfo ? userInfo.user_email : ""}
             size={32}
           />

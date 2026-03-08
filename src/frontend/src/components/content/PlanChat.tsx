@@ -12,7 +12,8 @@ import {
   ToolbarDivider,
 } from "@fluentui/react-components";
 import { DiamondRegular, HeartRegular } from "@fluentui/react-icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import React from "react";
 import ReactMarkdown from "react-markdown";
 import "../../styles/PlanChat.css";
 import "../../styles/Chat.css";
@@ -29,7 +30,6 @@ const PlanChat: React.FC<PlanChatProps> = ({
   submittingChatDisableInput,
   OnChatSubmit,
 }) => {
-  const messages = planData?.messages || [];
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [inputHeight, setInputHeight] = useState(0);
 
@@ -37,6 +37,10 @@ const PlanChat: React.FC<PlanChatProps> = ({
   const inputContainerRef = useRef<HTMLDivElement>(null);
 
   // Scroll to Bottom useEffect
+
+const messages = useMemo(() => {
+  return planData?.messages || [];
+}, [planData?.messages]);
 
   useEffect(() => {
     scrollToBottom();
