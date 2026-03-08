@@ -2,11 +2,11 @@ name: Validate Deployment
 
 on:
   schedule:
-    - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
+    - cron: '0 11,23 * * *' # Runs at 11:00 AM and 11:00 PM GMT
   workflow_dispatch:
     inputs:
       target_env:
-        description: "GitHub Environment to use"
+        description: 'GitHub Environment to use'
         required: false
         type: choice
         default: dev
@@ -16,10 +16,10 @@ on:
 env:
   GPT_MIN_CAPACITY: 150
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-  QUOTA_FAILED: "false"
-  RESOURCE_GROUP_NAME: ""
-  AZURE_LOCATION: ""
-  OPENAI_RESOURCE_NAME: ""
+  QUOTA_FAILED: 'false'
+  RESOURCE_GROUP_NAME: ''
+  AZURE_LOCATION: ''
+  OPENAI_RESOURCE_NAME: ''
 
 permissions:
   id-token: write
@@ -209,7 +209,7 @@ jobs:
     environment: ${{ github.event.inputs.target_env || 'dev' }}
     env:
       RESOURCE_GROUP_NAME: ${{ needs.deploy.outputs.RESOURCE_GROUP_NAME }}
-      OPENAI_RESOURCE_NAME: ""
+      OPENAI_RESOURCE_NAME: ''
     steps:
       - name: Setup Azure CLI
         run: az --version

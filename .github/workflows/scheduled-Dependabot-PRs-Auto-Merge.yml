@@ -24,7 +24,7 @@ name: Scheduled Dependabot PRs Auto-Merge
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Runs once a day at midnight UTC
+    - cron: '0 0 * * *' # Runs once a day at midnight UTC
   workflow_dispatch:
 
 permissions:
@@ -96,7 +96,7 @@ jobs:
               echo "✅ PR #$pr_number is mergeable. Skipping rebase."
             fi
           done < matched_prs.txt
-          
+
       - name: Auto-Merge PRs using available strategy
         if: success()
         env:

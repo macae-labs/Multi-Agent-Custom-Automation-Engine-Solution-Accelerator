@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       target_env:
-        description: "GitHub Environment to use"
+        description: 'GitHub Environment to use'
         required: false
         type: choice
         default: dev
@@ -66,7 +66,7 @@ jobs:
               - 'src/backend/**'
             frontend:
               - 'src/frontend/**'
-      
+
       - name: Check if deployment should occur
         id: check_deploy
         run: |
@@ -181,7 +181,7 @@ jobs:
           set -e
           BASE_URL="${{ steps.capture_new.outputs.app_url }}"
           echo "Running health check on: $BASE_URL"
-          
+
           # 1. Check revision state (max 30 sec)
           for i in $(seq 1 6); do
             RUNNING_STATE=$(az containerapp revision list \
@@ -213,13 +213,13 @@ jobs:
               sleep 5
             fi
           done
-          
+
           if [ "$HEALTHY" != "true" ]; then
             echo "⚠️  Revision did not become healthy (state=$RUNNING_STATE, health=$HEALTH_STATE)"
             echo "Run: ./scripts/diagnose-container.sh ${{ secrets.BACKEND_RG }} ${{ secrets.BACKEND_CONTAINER_APP }}"
             exit 1
           fi
-          
+
           # 2. HTTP health check (if running)
           if curl -fsS "$BASE_URL/healthz" >/dev/null 2>&1; then
             echo "✅ HTTP health check passed."

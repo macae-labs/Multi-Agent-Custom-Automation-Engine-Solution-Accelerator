@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_env:
-        description: "GitHub Environment to use"
+        description: 'GitHub Environment to use'
         required: false
         type: choice
         default: dev
@@ -17,10 +17,10 @@ permissions:
   contents: read
 
 env:
-  QUOTA_FAILED: "false"
-  RESOURCE_GROUP_NAME: ""
-  AZURE_LOCATION: ""
-  OPENAI_RESOURCE_NAME: ""
+  QUOTA_FAILED: 'false'
+  RESOURCE_GROUP_NAME: ''
+  AZURE_LOCATION: ''
+  OPENAI_RESOURCE_NAME: ''
 
 jobs:
   deploy:

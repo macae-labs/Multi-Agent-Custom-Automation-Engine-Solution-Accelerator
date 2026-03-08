@@ -7,11 +7,11 @@ on:
       MACAE_WEB_URL:
         required: false
         type: string
-        description: "Web URL for MACAE (overrides environment variable)"
+        description: 'Web URL for MACAE (overrides environment variable)'
       MACAE_URL_API:
         required: false
         type: string
-        description: "API URL for MACAE (overrides environment variable)"
+        description: 'API URL for MACAE (overrides environment variable)'
       MACAE_RG:
         required: false
         type: string
@@ -21,7 +21,7 @@ on:
     secrets:
       ALERT_LOGIC_APP_URL:
         required: false
-        description: "Logic App URL for alert notifications"
+        description: 'Logic App URL for alert notifications'
 
 permissions:
   id-token: write
@@ -35,7 +35,7 @@ jobs:
       MACAE_URL_API: ${{ inputs.MACAE_URL_API }}
       MACAE_RG: ${{ inputs.MACAE_RG }}
       MACAE_CONTAINER_APP: ${{ inputs.MACAE_CONTAINER_APP }}
-      accelerator_name: "MACAE"
+      accelerator_name: 'MACAE'
 
     steps:
       - name: Checkout repository
@@ -44,7 +44,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.13"
+          python-version: '3.13'
 
       - name: Azure CLI Login
         uses: azure/login@v2

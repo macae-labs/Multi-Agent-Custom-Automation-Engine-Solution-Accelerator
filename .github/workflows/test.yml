@@ -35,6 +35,21 @@ permissions:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    env:
+      AZURE_OPENAI_ENDPOINT: https://mock-openai-endpoint.azure.com/
+      AZURE_OPENAI_API_VERSION: 2024-05-01-preview
+      AZURE_OPENAI_DEPLOYMENT_NAME: mock-deployment
+      AZURE_OPENAI_MODEL_NAME: gpt-4o
+      AZURE_OPENAI_API_KEY: mock-api-key-for-testing
+      COSMOSDB_ENDPOINT: https://mock-cosmosdb.documents.azure.com:443/
+      COSMOSDB_DATABASE: mock_database
+      COSMOSDB_CONTAINER: mock_container
+      COSMOS_CONNECTION_STRING: AccountEndpoint=https://mock-cosmosdb.documents.azure.com:443/;AccountKey=mock-key;
+      AZURE_TENANT_ID: 00000000-0000-0000-0000-000000000000
+      AZURE_CLIENT_ID: 00000000-0000-0000-0000-000000000000
+      AZURE_CLIENT_SECRET: mock-secret
+      AZURE_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000
+      CONNECTOR_DEMO_MODE: true
 
     steps:
       - name: Checkout code
@@ -67,7 +82,7 @@ jobs:
         run: |
           cd src/backend
           pytest --cov=. --cov-report=term-missing --cov-report=xml
-          
+
       - name: Skip coverage report if no tests
         if: steps.check_tests.outputs.skip_tests == 'true'
         run: |
@@ -81,7 +96,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
 
