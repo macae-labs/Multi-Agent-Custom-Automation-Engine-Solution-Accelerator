@@ -9,6 +9,7 @@ This demonstrates:
 """
 import asyncio
 import logging
+import pytest
 from datetime import datetime
 
 logging.basicConfig(
@@ -17,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
+@pytest.mark.asyncio
 async def test_strategic_orchestrator():
     """Test the StrategicOrchestratorAgent with simulated health data."""
     
@@ -33,7 +34,7 @@ async def test_strategic_orchestrator():
     # Step 1: Create Strategic Orchestrator Agent
     logger.info("\n[STEP 1] Initializing StrategicOrchestratorAgent...")
     agent = await StrategicOrchestratorAgent.create()
-    logger.info(f"✓ Agent created: {agent.agent_name}")
+    logger.info(f"✓ Agent created: {getattr(agent, '_agent_name', 'StrategicOrchestratorAgent')}")
     logger.info(f"  System prompt ({len(agent._system_message)} chars):\n"
                 f"  {agent._system_message[:200]}...")
     
