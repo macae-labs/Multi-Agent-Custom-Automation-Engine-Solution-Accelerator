@@ -29,7 +29,7 @@ from semantic_kernel.functions.kernel_function_metadata import KernelFunctionMet
 # Default formatting instructions used across agents
 DEFAULT_FORMATTING_INSTRUCTIONS = "Instructions: returning the output of this function call verbatim to the user in markdown. Then write AGENT SUMMARY: and then include a summary of what you did."
 MAX_AZURE_AGENT_TOOLS = 128
-MAX_AZURE_AGENT_TOOLS_PER_RUN = 32
+MAX_AZURE_AGENT_TOOLS_PER_RUN = 64
 
 
 def _patch_tool_validation_for_prefixed_kernel_names() -> None:
@@ -347,9 +347,11 @@ class BaseAgent(AzureAIAgent):
             )
             return response.model_dump_json()
 
-        # Add messages to chat history for context
-        # This gives the agent visibility of the conversation history
-        self._chat_history.extend(
+        # Build a per-invocation context window (system prompt + last 10 turns max)
+        # to avoid unbounded growth of the shared chat history across cached agent reuse.
+        MAX_HISTORY_TURNS = 10
+        history_tail = self._chat_history[:1] + self._chat_history[-(MAX_HISTORY_TURNS * 2):]
+        history_tail.extend(
             [
                 {"role": "assistant", "content": action_request.action},
                 {
@@ -413,7 +415,7 @@ class BaseAgent(AzureAIAgent):
                     )
                     async_generator = self.invoke(
                         messages=(
-                            f"{str(self._chat_history)}\n\n"
+                            f"{str(history_tail)}\n\n"
                             f"{tool_instruction}\n\n"
                             f"Please perform this action: {step.action}"
                         ),

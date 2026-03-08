@@ -428,10 +428,9 @@ class TechSupportTools:
                     description = method.__doc__.strip()
 
                 # Get kernel_function description if available
-                if hasattr(method, "__kernel_function__") and getattr(
-                    method.__kernel_function__, "description", None
-                ):
-                    description = method.__kernel_function__.description
+                kf = getattr(method, "__kernel_function__", None)
+                if kf and getattr(kf, "description", None):
+                    description = getattr(kf, "description")
 
                 # Get argument information by introspection
                 sig = inspect.signature(method)
