@@ -15,16 +15,16 @@ In production mode, it uses the Microsoft Graph SDK.
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-from connectors.base import BaseConnector, ConnectorConfig, get_connector_config
+from connectors.base import BaseConnector, ConnectorConfig
 
 logger = logging.getLogger(__name__)
 
 # Only import Graph SDK if available
 try:
     from azure.identity import ClientSecretCredential
-    from msgraph import GraphServiceClient
+    from msgraph.graph_service_client import GraphServiceClient
     from msgraph.generated.users.item.send_mail.send_mail_post_request_body import SendMailPostRequestBody
     from msgraph.generated.models.message import Message
     from msgraph.generated.models.item_body import ItemBody
@@ -34,6 +34,14 @@ try:
     GRAPH_SDK_AVAILABLE = True
 except ImportError:
     GRAPH_SDK_AVAILABLE = False
+    ClientSecretCredential = cast(Any, object)
+    GraphServiceClient = cast(Any, object)
+    SendMailPostRequestBody = cast(Any, object)
+    Message = cast(Any, object)
+    ItemBody = cast(Any, object)
+    BodyType = cast(Any, object)
+    Recipient = cast(Any, object)
+    EmailAddress = cast(Any, object)
     logger.warning("Microsoft Graph SDK not installed. Install with: pip install msgraph-sdk azure-identity")
 
 
@@ -70,6 +78,12 @@ class GraphConnector(BaseConnector):
         except Exception as e:
             self.logger.error(f"Failed to initialize Graph client: {e}")
             return False
+
+    def _require_client(self) -> Any:
+        """Return initialized Graph client or raise a clear error."""
+        if self._client is None:
+            raise RuntimeError("Graph client is not initialized")
+        return self._client
     
     # =========================================================================
     # EMAIL OPERATIONS
@@ -117,6 +131,8 @@ class GraphConnector(BaseConnector):
             }
         
         try:
+            client = self._require_client()
+
             # Build message using msgraph SDK typed objects
             request_body = SendMailPostRequestBody(
                 message=Message(
@@ -135,11 +151,13 @@ class GraphConnector(BaseConnector):
             )
             
             if cc:
+                if request_body.message is None:
+                    request_body.message = Message()
                 request_body.message.cc_recipients = [
                     Recipient(email_address=EmailAddress(address=addr)) for addr in cc
                 ]
             
-            await self._client.users.by_user_id(from_user).send_mail.post(request_body)
+            await client.users.by_user_id(from_user).send_mail.post(request_body)
             
             return {
                 "success": True,
@@ -230,6 +248,8 @@ class GraphConnector(BaseConnector):
             }
         
         try:
+            client = self._require_client()
+
             event = {
                 "subject": subject,
                 "start": {
@@ -258,7 +278,7 @@ class GraphConnector(BaseConnector):
                 event["isOnlineMeeting"] = True
                 event["onlineMeetingProvider"] = "teamsForBusiness"
             
-            result = await self._client.users.by_user_id(user_email).events.post(event)
+            result = await client.users.by_user_id(user_email).events.post(event)
             
             return {
                 "success": True,
@@ -344,7 +364,8 @@ class GraphConnector(BaseConnector):
             }
         
         try:
-            user = await self._client.users.by_user_id(user_email).get()
+            client = self._require_client()
+            user = await client.users.by_user_id(user_email).get()
             return {
                 "success": True,
                 "user": {
