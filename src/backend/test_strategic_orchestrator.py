@@ -35,8 +35,12 @@ async def test_strategic_orchestrator():
     logger.info("\n[STEP 1] Initializing StrategicOrchestratorAgent...")
     agent = await StrategicOrchestratorAgent.create()
     logger.info(f"✓ Agent created: {getattr(agent, '_agent_name', 'StrategicOrchestratorAgent')}")
-    logger.info(f"  System prompt ({len(agent._system_message)} chars):\n"
-                f"  {agent._system_message[:200]}...")
+    # _system_message may not exist on all agent implementations; fallback safely
+    system_prompt = getattr(agent, "_system_message", None) or getattr(agent, "system_message", "")
+    if system_prompt:
+        logger.info(f"  System prompt ({len(system_prompt)} chars):\n  {system_prompt[:200]}...")
+    else:
+        logger.info("  System prompt: <not available>")
     
     # Step 2: Collect current health snapshot
     logger.info("\n[STEP 2] Collecting real health snapshot from providers...")
