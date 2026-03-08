@@ -5,7 +5,6 @@ import {
     InputTask,
     InputTaskResponse,
     PlanWithSteps,
-    Plan,
     Step,
     StepStatus,
     AgentType,
@@ -266,7 +265,7 @@ export class APIService {
             updated_action?: string;
         }
     ): Promise<Step> {
-        const response = await this.provideStepFeedback(
+        await this.provideStepFeedback(
             stepId,
             planId,
             sessionId,

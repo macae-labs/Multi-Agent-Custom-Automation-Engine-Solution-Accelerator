@@ -1,9 +1,6 @@
 // TaskDetails.tsx - Merged TSX + Styles
 
 import { HumanFeedbackStatus, Step as OriginalStep, TaskDetailsProps } from "@/models";
-
-// Extend Step to include _isActionLoading
-type Step = OriginalStep & { _isActionLoading?: boolean };
 import {
   Text,
   Avatar,
@@ -25,6 +22,9 @@ import { TaskService } from "@/services";
 import PanelRightToolbar from "@/coral/components/Panels/PanelRightToolbar";
 import "../../styles/TaskDetails.css";
 import ProgressCircle from "@/coral/components/Progress/ProgressCircle";
+
+// Extend Step to include _isActionLoading
+type Step = OriginalStep & { _isActionLoading?: boolean };
 
 const TaskDetails: React.FC<TaskDetailsProps> = ({
   planData,

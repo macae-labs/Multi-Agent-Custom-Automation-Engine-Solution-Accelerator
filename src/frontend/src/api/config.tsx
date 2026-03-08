@@ -139,7 +139,7 @@ export const toBoolean = (value: any): boolean => {
     }
     return value.trim().toLowerCase() === 'true';
 };
-export default {
+const exportedConfig = {
     setApiUrl,
     getApiUrl,
     toBoolean,
@@ -150,3 +150,5 @@ export default {
     USER_ID,
     API_URL
 };
+
+export default exportedConfig;

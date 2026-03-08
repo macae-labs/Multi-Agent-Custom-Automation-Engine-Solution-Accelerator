@@ -160,4 +160,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
   }
 );
 
+// Add a display name for the forwardRef component to satisfy eslint/react rules
+ChatInput.displayName = "ChatInput";
+
 export default ChatInput;

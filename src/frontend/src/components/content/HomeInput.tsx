@@ -129,6 +129,10 @@ const HomeInput: React.FC<HomeInputProps> = ({
                     <div className="home-input-quick-tasks-section">
                         <div className="home-input-quick-tasks-header">
                             <Body1Strong>Quick tasks</Body1Strong>
+                            <div className="home-input-quick-tasks-controls">
+                                <Caption1 className="home-input-quick-tasks-caption">Shortcuts for common actions</Caption1>
+                                <Button appearance="subtle" className="home-input-quick-tasks-button">View all</Button>
+                            </div>
                         </div>
 
                         <div className="home-input-quick-tasks">
