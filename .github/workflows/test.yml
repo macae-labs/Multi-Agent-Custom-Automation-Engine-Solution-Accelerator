@@ -151,13 +151,11 @@ jobs:
             .github/workflows/
           config_file: .yamllint.yml
 
-      - name: Install Bicep
-        uses: azure/CLI@v2
-        with:
-          inlineScript: az bicep install
-
-      - name: Validate Bicep compiles
+      - name: Install and Validate Bicep
         uses: azure/CLI@v2
         with:
           inlineScript: |
+            set -e
+            az bicep install
+            az bicep version
             az bicep build --file infra/main.bicep

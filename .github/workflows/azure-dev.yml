@@ -24,14 +24,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Bicep
-        uses: azure/CLI@v2
-        with:
-          inlineScript: az bicep install
-
-      - name: Validate current Bicep only
+      - name: Install and Validate Bicep
         uses: azure/CLI@v2
         with:
           inlineScript: |
+            set -e
+
+            az bicep install
             az bicep version
             az bicep build --file infra/main.bicep
+
+            if [ -d "infra/modules" ]; then
+              find infra/modules -name "*.bicep" -type f | while read -r file; do
+                echo "Validating $file"
+                az bicep build --file "$file"
+              done
+            fi
