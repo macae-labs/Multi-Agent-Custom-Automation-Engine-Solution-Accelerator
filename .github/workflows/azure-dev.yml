@@ -24,6 +24,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Install Bicep
+        uses: azure/CLI@v2
+        with:
+          inlineScript: az bicep install
+
       - name: Validate current Bicep only
         uses: azure/CLI@v2
         with:
