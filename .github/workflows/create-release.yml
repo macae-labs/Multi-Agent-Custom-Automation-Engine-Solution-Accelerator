@@ -22,7 +22,7 @@ jobs:
       - uses: codfish/semantic-release-action@v3
         id: semantic
         with:
-          tag-format: 'v${version}'
+          tag-format: 'fork-v${version}'
           additional-packages: |
             ['conventional-changelog-conventionalcommits@7']
           plugins: |
