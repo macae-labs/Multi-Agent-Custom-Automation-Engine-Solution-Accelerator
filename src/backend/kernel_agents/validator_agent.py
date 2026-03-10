@@ -140,18 +140,24 @@ class ValidatorAgent:
                 if isinstance(json_doc, str):
                     tools_data = json.loads(json_doc)
                     if isinstance(tools_data, list):
-                        tool_names = [
-                            t.get("name", "unknown")
+                        # Support both "name" (Azure format) and "function" (local format)
+                        all_tool_names = [
+                            t.get("name") or t.get("function", "unknown")
                             for t in tools_data
                             if isinstance(t, dict)
-                        ][:5]
+                        ]
+                        # Show all tools (max 30 to avoid prompt bloat)
+                        tool_names = all_tool_names[:30]
+                        if len(all_tool_names) > 30:
+                            tool_names.append(f"...+{len(all_tool_names)-30} more")
                     else:
                         tool_names = ["(see full doc)"]
                 else:
                     tool_names = ["(non-JSON format)"]
 
                 lines.append(f"- {agent_label}: {', '.join(tool_names)}")
-            except Exception:
+            except Exception as e:
+                logging.warning(f"Failed to parse tools for {agent_label}: {e}")
                 lines.append(f"- {agent_label}: (tools available)")
 
         return "\n".join(lines)
