@@ -14,7 +14,6 @@ class AWSAdapter(BaseAdapter):
         return "aws_s3"
 
     @staticmethod
-
     def _resolve_endpoint(tool_name: str) -> str:
         """Resolve API/Lambda endpoint for each AWS operation."""
         by_tool = {

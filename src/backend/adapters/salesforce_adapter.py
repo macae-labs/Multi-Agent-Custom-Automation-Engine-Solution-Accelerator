@@ -17,7 +17,6 @@ class SalesforceAdapter(BaseAdapter):
         credentials: Dict[str, str],
     ) -> Any:
         """Execute Salesforce operations using simple-salesforce."""
-        
 
         # Initialize Salesforce client with credentials
         instance_url = credentials.get("instance_url")

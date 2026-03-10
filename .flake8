@@ -2,4 +2,10 @@
 max-line-length = 88
 extend-ignore = E501
 exclude = .venv, frontend, src/backend/tests
+extend-exclude =
+    src/backend/EXAMPLE_*.py,
+    src/backend/VALIDATOR_INTEGRATION_EXAMPLE.py,
+    src/backend/validate_observability.py,
+    src/backend/test_observability.py,
+    src/backend/test_strategic_orchestrator.py
 ignore = E203, W503, G004, G200, E402

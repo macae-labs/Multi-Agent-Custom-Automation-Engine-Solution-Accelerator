@@ -47,7 +47,7 @@ async def _forward_to_webhook(payload: Dict[str, Any]) -> bool:
 )
 async def process_strategic_decision(message: func.ServiceBusMessage) -> None:
     """Consume strategic decision messages and trigger execution hooks.
-    
+
     Note: Uses Managed Identity via SERVICEBUS_ENDPOINT environment variable.
     The Function App's system-assigned identity must have 'Azure Service Bus Data Receiver'
     permissions on the Service Bus namespace.

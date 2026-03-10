@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConnectorConfig:
     """Configuration for service connectors.
-    
+
     This class manages connector settings from environment variables
     with fallback to default values for development/demo mode.
     """
@@ -72,15 +72,15 @@ def get_connector_config() -> ConnectorConfig:
 
 class BaseConnector(ABC):
     """Abstract base class for all service connectors.
-    
+
     All connectors should inherit from this class and implement
     the required methods. The connector automatically falls back
     to demo mode if the service is not configured.
     """
-    
+
     def __init__(self, config: Optional[ConnectorConfig] = None):
         """Initialize the connector with configuration.
-        
+
         Args:
             config: Optional connector configuration. If not provided,
                    uses the global configuration.
@@ -88,37 +88,37 @@ class BaseConnector(ABC):
         self.config = config or get_connector_config()
         self._initialized = False
         self.logger = logging.getLogger(self.__class__.__name__)
-    
+
     @property
     @abstractmethod
     def service_name(self) -> str:
         """Return the name of the service this connector integrates with."""
         pass
-    
+
     @abstractmethod
     def is_configured(self) -> bool:
         """Check if this connector is properly configured for production use."""
         pass
-    
+
     @property
     def is_demo_mode(self) -> bool:
         """Check if connector should operate in demo mode."""
         return self.config.demo_mode or not self.is_configured()
-    
+
     async def initialize(self) -> bool:
         """Initialize the connector (authenticate, establish connections, etc.).
-        
+
         Returns:
             True if initialization succeeded, False otherwise.
         """
         if self._initialized:
             return True
-            
+
         if self.is_demo_mode:
             self.logger.info(f"{self.service_name} connector running in DEMO mode")
             self._initialized = True
             return True
-        
+
         try:
             success = await self._initialize_production()
             self._initialized = success
@@ -128,19 +128,19 @@ class BaseConnector(ABC):
         except Exception as e:
             self.logger.error(f"Failed to initialize {self.service_name} connector: {e}")
             return False
-    
+
     @abstractmethod
     async def _initialize_production(self) -> bool:
         """Initialize production connection. Override in subclasses."""
         pass
-    
+
     def _demo_response(self, operation: str, **kwargs) -> Dict[str, Any]:
         """Generate a demo response for an operation.
-        
+
         Args:
             operation: Name of the operation being simulated
             **kwargs: Parameters that would be used in the real operation
-            
+
         Returns:
             A simulated response dictionary
         """

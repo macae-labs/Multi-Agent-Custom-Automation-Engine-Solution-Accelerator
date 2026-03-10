@@ -33,12 +33,12 @@ class S3Plugin:
                 params={"s3_key": s3_key},
                 tool_id="get_video_signed_url"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             data = result.result
             return (
                 f"##### Video Signed URL\n"
@@ -70,12 +70,12 @@ class S3Plugin:
                 params={"bucket_name": bucket_name, "s3_key": s3_key, "content": content},
                 tool_id="s3_upload_object"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             data = result.result
             return f"Successfully uploaded object to {data.get('key')} in bucket {data.get('bucket')}"
         except Exception as e:
@@ -97,12 +97,12 @@ class S3Plugin:
                 params={"bucket_name": bucket_name, "s3_key": s3_key},
                 tool_id="s3_delete_object"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             data = result.result
             return f"Successfully deleted object {data.get('key')} from bucket {data.get('bucket')}"
         except Exception as e:
@@ -124,12 +124,12 @@ class S3Plugin:
                 params={"bucket_name": bucket_name, "prefix": prefix},
                 tool_id="s3_list_objects"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             data = result.result
             objects = data.get('objects', [])
             return f"Found {len(objects)} objects in bucket {data.get('bucket')} with prefix '{prefix}': {objects}"

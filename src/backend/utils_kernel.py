@@ -4,8 +4,6 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
-
 # Semantic Kernel imports
 import semantic_kernel as sk
 
@@ -159,7 +157,7 @@ def load_tools_from_json_files() -> List[Dict[str, Any]]:
 async def rai_success(description: str) -> bool:
     """
     Checks if a description passes the RAI (Responsible AI) check.
-    
+
     NOTE: Bypassed - Azure OpenAI has built-in content filtering.
     The original RAI prompt was being flagged as "jailbreak" by Azure.
 

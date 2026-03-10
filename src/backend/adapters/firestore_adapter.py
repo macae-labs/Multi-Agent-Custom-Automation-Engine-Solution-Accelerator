@@ -80,10 +80,10 @@ class FirestoreAdapter(BaseAdapter):
 
         doc_ref = db.document(full_path)
         doc = doc_ref.get()
-        
+
         if not doc.exists:
             return {"exists": False, "data": None}
-        
+
         return {"exists": True, "data": doc.to_dict(), "id": doc.id}
 
     async def _create_document(self, db, params: Dict[str, Any]) -> Dict[str, str]:
@@ -159,10 +159,10 @@ class FirestoreAdapter(BaseAdapter):
         """List document IDs in a collection."""
         collection = params.get("collection")
         limit = params.get("limit", 100)
-        
+
         if not collection:
             raise ValueError("collection is required")
-        
+
         docs = db.collection(collection).limit(limit).stream()
         return [{"id": doc.id, "path": f"{collection}/{doc.id}"} for doc in docs]
 

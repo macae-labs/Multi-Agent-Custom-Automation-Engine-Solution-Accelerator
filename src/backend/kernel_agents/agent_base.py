@@ -640,7 +640,7 @@ class BaseAgent(AzureAIAgent):
                 try:
                     # Extract data from the dict sent by Semantic Kernel
                     js_data = response_format.get("json_schema", {})
-                    
+
                     # Re-package as strong objects from Azure SDK
                     response_format = ResponseFormatJsonSchemaType(
                         json_schema=ResponseFormatJsonSchema(

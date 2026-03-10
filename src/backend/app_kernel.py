@@ -334,11 +334,11 @@ async def human_feedback_endpoint(human_feedback: HumanFeedback, request: Reques
     human_agent = cast(
         HumanAgent,
         await AgentFactory.create_agent(
-        agent_type=AgentType.HUMAN,
-        session_id=human_feedback.session_id,
-        user_id=user_id,
-        memory_store=memory_store,
-        client=client,
+            agent_type=AgentType.HUMAN,
+            session_id=human_feedback.session_id,
+            user_id=user_id,
+            memory_store=memory_store,
+            client=client,
         ),
     )
 
@@ -438,11 +438,11 @@ async def human_clarification_endpoint(
     human_agent = cast(
         HumanAgent,
         await AgentFactory.create_agent(
-        agent_type=AgentType.HUMAN,
-        session_id=human_clarification.session_id,
-        user_id=user_id,
-        memory_store=memory_store,
-        client=client,
+            agent_type=AgentType.HUMAN,
+            session_id=human_clarification.session_id,
+            user_id=user_id,
+            memory_store=memory_store,
+            client=client,
         ),
     )
 
@@ -1029,7 +1029,8 @@ async def get_all_messages(request: Request):
     kernel, memory_store = await initialize_runtime_and_context("", user_id)
     message_list = await memory_store.get_all_items()
     return message_list
-  
+
+
 @app.get("/api/tools/providers")
 async def get_tool_providers() -> List[ToolProvider]:
     """Get all available tool providers for onboarding."""
@@ -1044,71 +1045,71 @@ async def get_tools_for_agent(agent_type: str) -> List[ToolDefinition]:
 
 @app.post("/api/tools/connect")
 async def connect_tool(request: ConnectToolRequest, http_request: Request) -> ConnectToolResponse:
-  """Connect a tool by storing credentials in Key Vault."""
-  provider = ToolRegistry.get_provider(request.provider_id)
-  if not provider:
-    raise HTTPException(status_code=404, detail=f"Provider {request.provider_id} not found")
-    
-  required_fields = {field.name for field in provider.credential_fields if field.required}
-  provided_fields = set(request.credentials.keys())
-  missing_fields = required_fields - provided_fields
-    
-  if missing_fields:
-    raise HTTPException(
-      status_code=400,
-      detail=f"Missing required fields: {', '.join(missing_fields)}"
-    )
-    
-  try:
-    secret_uri = await credential_resolver.store_credentials(
-      project_id=request.project_id,
-      provider_id=request.provider_id,
-      credentials=request.credentials
-    )
-        
-    # Store binding in Cosmos
-    binding = CredentialBinding(
-      provider_id=request.provider_id,
-      secret_uri=secret_uri,
-      is_active=True
-    )
+    """Connect a tool by storing credentials in Key Vault."""
+    provider = ToolRegistry.get_provider(request.provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider {request.provider_id} not found")
 
-    authenticated_user = get_authenticated_user_details(request_headers=http_request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-      raise HTTPException(status_code=400, detail="no user")
+    required_fields = {field.name for field in provider.credential_fields if field.required}
+    provided_fields = set(request.credentials.keys())
+    missing_fields = required_fields - provided_fields
 
-    _, memory_store = await initialize_runtime_and_context(request.session_id, user_id)
-    profiles = await memory_store.get_data_by_type_and_session_id(
-      "project_profile", request.session_id
-    )
-    if profiles:
-      profile = cast(ProjectProfile, profiles[-1])
-      existing_binding = next(
-        (b for b in profile.credential_bindings if b.provider_id == request.provider_id),
-        None,
-      )
-      if existing_binding:
-        existing_binding.secret_uri = secret_uri
-        existing_binding.is_active = True
-      else:
-        profile.credential_bindings.append(binding)
-      await memory_store.update_item(profile)
-        
-    return ConnectToolResponse(
-      success=True,
-      secret_uri=secret_uri,
-      message=f"Successfully connected {provider.display_name}"
-    )
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Failed to store credentials: {str(e)}")
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required fields: {', '.join(missing_fields)}"
+        )
+
+    try:
+        secret_uri = await credential_resolver.store_credentials(
+            project_id=request.project_id,
+            provider_id=request.provider_id,
+            credentials=request.credentials
+        )
+
+        # Store binding in Cosmos
+        binding = CredentialBinding(
+            provider_id=request.provider_id,
+            secret_uri=secret_uri,
+            is_active=True
+        )
+
+        authenticated_user = get_authenticated_user_details(request_headers=http_request.headers)
+        user_id = authenticated_user["user_principal_id"]
+        if not user_id:
+            raise HTTPException(status_code=400, detail="no user")
+
+        _, memory_store = await initialize_runtime_and_context(request.session_id, user_id)
+        profiles = await memory_store.get_data_by_type_and_session_id(
+            "project_profile", request.session_id
+        )
+        if profiles:
+            profile = cast(ProjectProfile, profiles[-1])
+            existing_binding = next(
+                (b for b in profile.credential_bindings if b.provider_id == request.provider_id),
+                None,
+            )
+            if existing_binding:
+                existing_binding.secret_uri = secret_uri
+                existing_binding.is_active = True
+            else:
+                profile.credential_bindings.append(binding)
+            await memory_store.update_item(profile)
+
+        return ConnectToolResponse(
+            success=True,
+            secret_uri=secret_uri,
+            message=f"Successfully connected {provider.display_name}"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store credentials: {str(e)}")
 
 
 @app.get("/api/tools/credentials/{project_id}/{provider_id}")
 async def get_credential_status(project_id: str, provider_id: str) -> Dict[str, Any]:
     """Check if credentials are configured for a project/provider."""
     credentials = await credential_resolver.resolve_credentials(project_id, provider_id)
-    
+
     return {
         "project_id": project_id,
         "provider_id": provider_id,

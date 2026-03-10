@@ -9,8 +9,6 @@ from typing import Any, Dict, List, Optional, Type, Tuple
 import numpy as np
 
 from azure.cosmos.partition_key import PartitionKey
-from azure.cosmos.aio import CosmosClient
-from azure.identity import DefaultAzureCredential
 from semantic_kernel.memory.memory_record import MemoryRecord
 from semantic_kernel.memory.memory_store_base import MemoryStoreBase
 from semantic_kernel.contents import ChatMessageContent, ChatHistory, AuthorRole
@@ -71,7 +69,7 @@ class CosmosMemoryContext(MemoryStoreBase):
 
     async def initialize(self):
         """Initialize the memory context using CosmosDB.
-        
+
         Uses the singleton database client from AppConfig to prevent
         creating multiple CosmosClient instances and causing aiohttp session leaks.
         """

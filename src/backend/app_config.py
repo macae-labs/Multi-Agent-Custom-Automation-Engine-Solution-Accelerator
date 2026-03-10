@@ -176,7 +176,7 @@ class AppConfig:
             A new Semantic Kernel instance configured with AzureChatCompletion
         """
         kernel = Kernel()
-        
+
         # Add the Azure OpenAI chat completion service
         # This is required for ChatCompletionAgent to work
         chat_service = AzureChatCompletion(
@@ -187,13 +187,13 @@ class AppConfig:
             service_id="agent_chat_service",  # Named service for agents
         )
         kernel.add_service(chat_service)
-        
+
         logging.info(f"Kernel created with AzureChatCompletion service: {self.AZURE_OPENAI_DEPLOYMENT_NAME}")
         return kernel
 
     def _get_token_provider(self) -> Any:
         """Get an async token provider for Azure OpenAI authentication.
-        
+
         Returns:
             A callable that returns access tokens for Azure OpenAI
         """
@@ -245,13 +245,13 @@ class AppConfig:
                 and self.AZURE_AI_PROJECT_NAME
             ):
                 endpoint = f"{endpoint}/api/projects/{self.AZURE_AI_PROJECT_NAME}"
-            
+
             # Create client with increased timeout for agent operations
             from azure.core.pipeline.transport import AioHttpTransport
             transport = AioHttpTransport(connection_timeout=300, read_timeout=300)
-            
+
             self._ai_project_client = AIProjectClient(
-                endpoint=endpoint, 
+                endpoint=endpoint,
                 credential=credential,
                 transport=transport
             )
@@ -263,12 +263,12 @@ class AppConfig:
 
     async def close(self) -> None:
         """Close all cached async clients properly to prevent resource leaks.
-        
+
         This method should be called during application shutdown to ensure
         all aiohttp sessions and TCP connections are properly closed.
         """
         errors = []
-        
+
         # Close AI Project Client
         if self._ai_project_client is not None:
             try:
@@ -278,7 +278,7 @@ class AppConfig:
                 errors.append(f"AIProjectClient: {exc}")
             finally:
                 self._ai_project_client = None
-        
+
         # Close Cosmos Client
         if self._cosmos_client is not None:
             try:
@@ -289,7 +289,7 @@ class AppConfig:
             finally:
                 self._cosmos_client = None
                 self._cosmos_database = None
-        
+
         # Close Azure Credentials
         if self._azure_credentials is not None:
             try:
@@ -299,7 +299,7 @@ class AppConfig:
                 errors.append(f"DefaultAzureCredential: {exc}")
             finally:
                 self._azure_credentials = None
-        
+
         if errors:
             logging.warning(f"Errors during client cleanup: {', '.join(errors)}")
         else:

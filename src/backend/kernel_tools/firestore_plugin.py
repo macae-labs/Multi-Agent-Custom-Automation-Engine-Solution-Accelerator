@@ -7,8 +7,6 @@ from adapters.base_adapter import BaseAdapter
 
 class FirestorePlugin:
     """Generic Firestore plugin using adapter for credential resolution."""
-    
-    
 
     def __init__(self, project_id: str, collection_root: str, session_id: Optional[str] = None, user_id: Optional[str] = None):
         self.project_id = project_id
@@ -20,7 +18,7 @@ class FirestorePlugin:
             session_id=session_id,
             user_id=user_id
         )
-    
+
     @kernel_function(
         name="read_firestore_doc",
         description="Read a document from Firestore using its path (e.g., 'users/123')"
@@ -48,7 +46,7 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore read failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="write_firestore_doc",
         description="Write document to Firestore collection. Use format: collection/document_id or just collection/ for auto-ID."
@@ -110,7 +108,7 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore write failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="list_firestore_collections",
         description="List all Firestore collections"
@@ -123,15 +121,15 @@ class FirestorePlugin:
                 params={},
                 tool_id="list_firestore_collections"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             collections = result.result
             return str([c["id"] for c in collections])
-            
+
         except Exception as e:
             logging.error(f"Firestore list failed: {e}")
             return f"Error: {str(e)}"
@@ -163,7 +161,7 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore list_documents failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="count_firestore_docs",
         description="Count documents in a Firestore collection"
@@ -180,18 +178,18 @@ class FirestorePlugin:
                 params={"collection": collection},
                 tool_id="count_firestore_docs"
             )
-            
+
             if not result.success:
                 if result.credentials_required:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
-            
+
             return f"Count: {result.result['count']}"
-            
+
         except Exception as e:
             logging.error(f"Firestore count failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="query_firestore_docs",
         description="Query documents from a Firestore collection with optional where clauses and limit. 'where' should be a JSON string list of clauses: [{field, operator, value}]."
@@ -229,7 +227,7 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore query failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="update_firestore_doc",
         description="Update an existing document in Firestore. Requires collection/document_id as doc_path and data as JSON string."
@@ -264,7 +262,7 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore update failed: {e}")
             return f"Error: {str(e)}"
-    
+
     @kernel_function(
         name="delete_firestore_doc",
         description="Delete a document from Firestore. Requires collection/document_id as doc_path."

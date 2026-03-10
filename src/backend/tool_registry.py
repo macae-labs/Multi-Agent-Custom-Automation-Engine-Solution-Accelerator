@@ -11,6 +11,7 @@ class CredentialRequirement(BaseModel):
     required_fields: List[Dict[str, Any]]
     onboarding_url: str
 
+
 class ConnectToolResponse(BaseModel):
     """Response after connecting a tool."""
     success: bool
@@ -24,6 +25,7 @@ class ConnectToolRequest(BaseModel):
     project_id: str
     provider_id: str
     credentials: Dict[str, str]
+
 
 class CredentialType(str, Enum):
     """Types of credentials supported."""
@@ -78,10 +80,13 @@ class CredentialBinding(BaseModel):
 TOOL_PROVIDERS: Dict[str, ToolProvider] = {}
 
 # Helper to ensure provider_id uniqueness
+
+
 def register_provider(provider: ToolProvider):
     if provider.provider_id in TOOL_PROVIDERS:
         raise ValueError(f"Duplicate provider_id: {provider.provider_id}")
     TOOL_PROVIDERS[provider.provider_id] = provider
+
 
 register_provider(ToolProvider(
     provider_id="salesforce",
@@ -191,6 +196,8 @@ register_provider(ToolProvider(
 TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {}
 
 # Helper to ensure tool_id uniqueness and required fields
+
+
 def register_tool(tool: ToolDefinition):
     if tool.tool_id in TOOL_DEFINITIONS:
         raise ValueError(f"Duplicate tool_id: {tool.tool_id}")
@@ -199,6 +206,7 @@ def register_tool(tool: ToolDefinition):
     if not hasattr(tool, "requires_credentials"):
         raise ValueError(f"Tool {tool.tool_id} missing requires_credentials")
     TOOL_DEFINITIONS[tool.tool_id] = tool
+
 
 register_tool(ToolDefinition(
     tool_id="salesforce_create_lead",
@@ -326,16 +334,21 @@ register_tool(ToolDefinition(
     agent_type="Tech_Support_Agent",
     requires_credentials=True,
 ))
+
+
 # Credential binding store (in-memory for now)
 _CREDENTIAL_BINDINGS: Dict[str, CredentialBinding] = {}
+
 
 def save_credential_binding(binding: CredentialBinding):
     key = f"{binding.project_id}:{binding.provider_id}"
     _CREDENTIAL_BINDINGS[key] = binding
 
+
 def get_credential_binding(project_id: str, provider_id: str) -> Optional[CredentialBinding]:
     key = f"{project_id}:{provider_id}"
     return _CREDENTIAL_BINDINGS.get(key)
+
 
 def get_bindings_for_project(project_id: str) -> List[CredentialBinding]:
     return [b for k, b in _CREDENTIAL_BINDINGS.items() if b.project_id == project_id]
@@ -343,17 +356,17 @@ def get_bindings_for_project(project_id: str) -> List[CredentialBinding]:
 
 class ToolRegistry:
     """Central registry for tool discovery."""
-    
+
     @staticmethod
     def get_all_providers() -> List[ToolProvider]:
         """Get all available tool providers."""
         return list(TOOL_PROVIDERS.values())
-    
+
     @staticmethod
     def get_provider(provider_id: str) -> Optional[ToolProvider]:
         """Get a specific provider by ID."""
         return TOOL_PROVIDERS.get(provider_id)
-    
+
     @staticmethod
     def get_tools_for_agent(agent_type: str) -> List[ToolDefinition]:
         """Get all tools available for a specific agent."""
@@ -423,13 +436,13 @@ class ToolRegistry:
             if tool.tool_id in expanded_enabled or tool.provider_id in active_provider_set:
                 filtered.append(tool)
         return filtered
-    
+
     @staticmethod
     def get_required_credentials(tool_id: str) -> Optional[List[CredentialField]]:
         """Get required credentials for a tool."""
         tool = TOOL_DEFINITIONS.get(tool_id)
         if not tool:
             return None
-        
+
         provider = TOOL_PROVIDERS.get(tool.provider_id)
         return provider.credential_fields if provider else None

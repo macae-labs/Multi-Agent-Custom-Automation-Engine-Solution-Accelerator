@@ -28,25 +28,25 @@ def format_date_for_user(date_str: str, user_locale: Optional[str] = None) -> st
 def parse_date_string(date_str: str) -> datetime:
     """
     Parse a date string into a datetime object.
-    
+
     Supports various formats:
     - ISO format: "2024-02-15", "2024-02-15T10:00:00"
     - Natural language: "next Monday", "tomorrow", "in 3 days"
     - Common formats: "02/15/2024", "February 15, 2024"
-    
+
     Args:
         date_str: The date string to parse
-        
+
     Returns:
         datetime: Parsed datetime object (defaults to 10:00 AM if no time specified)
     """
     # Default time for scheduled events
     default_hour = 10
     default_minute = 0
-    
+
     date_str = date_str.strip().lower()
     today = datetime.now().replace(hour=default_hour, minute=default_minute, second=0, microsecond=0)
-    
+
     # Handle relative dates
     if date_str == "today":
         return today
@@ -54,13 +54,13 @@ def parse_date_string(date_str: str) -> datetime:
         return today + timedelta(days=1)
     elif date_str == "yesterday":
         return today - timedelta(days=1)
-    
+
     # Handle "in X days"
     in_days_match = re.match(r"in\s+(\d+)\s+days?", date_str)
     if in_days_match:
         days = int(in_days_match.group(1))
         return today + timedelta(days=days)
-    
+
     # Handle "next Monday", "next Tuesday", etc.
     weekdays = {
         "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
@@ -76,7 +76,7 @@ def parse_date_string(date_str: str) -> datetime:
             if days_ahead <= 0:
                 days_ahead += 7
             return today + timedelta(days=days_ahead)
-    
+
     # Try common date formats
     formats = [
         "%Y-%m-%d",           # 2024-02-15
@@ -89,7 +89,7 @@ def parse_date_string(date_str: str) -> datetime:
         "%d %B %Y",           # 15 February 2024
         "%Y/%m/%d",           # 2024/02/15
     ]
-    
+
     for fmt in formats:
         try:
             parsed = datetime.strptime(date_str, fmt)
@@ -99,7 +99,7 @@ def parse_date_string(date_str: str) -> datetime:
             return parsed
         except ValueError:
             continue
-    
+
     # If all else fails, try to parse with dateutil if available
     try:
         from dateutil import parser
@@ -109,7 +109,7 @@ def parse_date_string(date_str: str) -> datetime:
         return parsed
     except (ImportError, ValueError):
         pass
-    
+
     # Last resort: return today + 7 days with a warning
     logging.warning(f"Could not parse date '{date_str}', defaulting to one week from today")
     return today + timedelta(days=7)

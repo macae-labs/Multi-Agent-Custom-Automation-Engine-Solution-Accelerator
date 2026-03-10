@@ -22,25 +22,25 @@ logger = logging.getLogger(__name__)
 
 class CalendarConnector(BaseConnector):
     """Calendar connector for scheduling operations."""
-    
+
     def __init__(self, config: Optional[ConnectorConfig] = None):
         super().__init__(config)
         # In-memory calendar for demo mode
         self._events: Dict[str, Dict[str, Any]] = {}
-    
+
     @property
     def service_name(self) -> str:
         return "Calendar Service"
-    
+
     def is_configured(self) -> bool:
         # Calendar is configured if we have Graph API or dedicated calendar API
         return self.config.is_graph_configured() or bool(self.config.calendar_api_url)
-    
+
     async def _initialize_production(self) -> bool:
         """Initialize production calendar service."""
         # Would initialize Graph client or other calendar API
         return True
-    
+
     async def schedule_event(
         self,
         title: str,
@@ -52,7 +52,7 @@ class CalendarConnector(BaseConnector):
         event_type: str = "meeting"
     ) -> Dict[str, Any]:
         """Schedule a calendar event.
-        
+
         Args:
             title: Event title
             start_time: Start datetime
@@ -61,15 +61,15 @@ class CalendarConnector(BaseConnector):
             location: Event location
             description: Event description
             event_type: Type of event (meeting, orientation, review, etc.)
-            
+
         Returns:
             Event details with ID and confirmation
         """
         await self.initialize()
-        
+
         event_id = f"evt_{uuid.uuid4().hex[:8]}"
         end_time = start_time + timedelta(minutes=duration_minutes)
-        
+
         event = {
             "id": event_id,
             "title": title,
@@ -83,16 +83,16 @@ class CalendarConnector(BaseConnector):
             "status": "scheduled",
             "created_at": datetime.utcnow().isoformat()
         }
-        
+
         self._events[event_id] = event
-        
+
         return {
             "success": True,
             "demo_mode": self.is_demo_mode,
             "event": event,
             "message": f"Event '{title}' scheduled for {start_time.strftime('%B %d, %Y at %I:%M %p')}"
         }
-    
+
     async def schedule_orientation(
         self,
         employee_name: str,
@@ -100,12 +100,12 @@ class CalendarConnector(BaseConnector):
         hr_contact: str = "hr@company.com"
     ) -> Dict[str, Any]:
         """Schedule an orientation session.
-        
+
         Args:
             employee_name: New employee name
             date: Orientation date/time
             hr_contact: HR contact email
-            
+
         Returns:
             Orientation event details
         """
@@ -128,7 +128,7 @@ Please bring any questions you may have!
             """.strip(),
             event_type="orientation"
         )
-    
+
     async def schedule_performance_review(
         self,
         employee_name: str,
@@ -136,12 +136,12 @@ Please bring any questions you may have!
         manager_email: Optional[str] = None
     ) -> Dict[str, Any]:
         """Schedule a performance review.
-        
+
         Args:
             employee_name: Employee name
             date: Review date/time
             manager_email: Manager's email
-            
+
         Returns:
             Review event details
         """
@@ -154,7 +154,7 @@ Please bring any questions you may have!
             description=f"Annual/quarterly performance review for {employee_name}.",
             event_type="review"
         )
-    
+
     async def schedule_training(
         self,
         employee_name: str,
@@ -163,13 +163,13 @@ Please bring any questions you may have!
         duration_hours: int = 4
     ) -> Dict[str, Any]:
         """Schedule a training session.
-        
+
         Args:
             employee_name: Employee name
             program_name: Training program name
             date: Training date/time
             duration_hours: Duration in hours
-            
+
         Returns:
             Training event details
         """
@@ -182,7 +182,7 @@ Please bring any questions you may have!
             description=f"Training session for {employee_name}: {program_name}",
             event_type="training"
         )
-    
+
     async def get_events(
         self,
         start_date: Optional[datetime] = None,
@@ -190,27 +190,27 @@ Please bring any questions you may have!
         event_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """Get calendar events within a date range.
-        
+
         Args:
             start_date: Start of range (defaults to today)
             end_date: End of range (defaults to 30 days from start)
             event_type: Filter by event type
-            
+
         Returns:
             List of events
         """
         await self.initialize()
-        
+
         start_date = start_date or datetime.utcnow()
         end_date = end_date or (start_date + timedelta(days=30))
-        
+
         events = []
         for event in self._events.values():
             event_start = datetime.fromisoformat(event["start_time"])
             if start_date <= event_start <= end_date:
                 if event_type is None or event["event_type"] == event_type:
                     events.append(event)
-        
+
         return {
             "success": True,
             "demo_mode": self.is_demo_mode,

@@ -36,12 +36,12 @@ class StrategicOrchestratorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"Failed to create CosmosMemoryContext: {e}")
                 memory_store = None
-        
+
         # Cast for type checking - actual memory_store might be None
         if memory_store is None:
             from typing import cast
             memory_store = cast(Any, None)
-        
+
         super().__init__(
             agent_name=agent_name,
             session_id=session_id,
