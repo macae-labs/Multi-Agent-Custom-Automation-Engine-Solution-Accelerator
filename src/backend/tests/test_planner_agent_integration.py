@@ -9,10 +9,8 @@ import sys
 import unittest
 import asyncio
 import uuid
-import json
-from typing import Dict, List, Optional, Any, Set
+from typing import Any, Set
 from dotenv import load_dotenv
-from datetime import datetime
 
 # Add the parent directory to the path so we can import our modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,10 +22,8 @@ from models.messages_kernel import (
     InputTask, 
     Plan, 
     Step, 
-    AgentMessage,
     PlanStatus,
-    StepStatus,
-    HumanFeedbackStatus
+    StepStatus
 )
 from semantic_kernel.functions.kernel_arguments import KernelArguments
 
@@ -71,7 +67,7 @@ class TestCleanupCosmosContext(CosmosMemoryContext):
         
     async def cleanup_test_data(self) -> None:
         """Clean up all data created during testing."""
-        print(f"\nCleaning up test data...")
+        print("\nCleaning up test data...")
         print(f"  - {len(self.created_items)} messages")
         print(f"  - {len(self.created_plans)} plans")
         print(f"  - {len(self.created_steps)} steps")
@@ -107,7 +103,7 @@ class TestCleanupCosmosContext(CosmosMemoryContext):
         try:
             # First try to read the item to get its partition key
             # This approach handles cases where we don't know the partition key for an item
-            query = f"SELECT * FROM c WHERE c.id = @id"
+            query = "SELECT * FROM c WHERE c.id = @id"
             params = [{"name": "@id", "value": item_id}]
             items = self._container.query_items(query=query, parameters=params, enable_cross_partition_query=True)
             
@@ -155,7 +151,7 @@ class PlannerAgentIntegrationTest(unittest.TestCase):
             self.fail("COSMOSDB_ENDPOINT not set or is using default local value")
         
         # Print test configuration
-        print(f"\nRunning tests with:")
+        print("\nRunning tests with:")
         print(f"  - Session ID: {self.session_id}")
         print(f"  - OpenAI Deployment: {os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}")
         print(f"  - OpenAI Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT')}")

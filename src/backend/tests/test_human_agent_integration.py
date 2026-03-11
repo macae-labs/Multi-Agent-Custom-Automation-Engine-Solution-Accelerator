@@ -12,8 +12,6 @@ from kernel_agents.agent_factory import AgentFactory
 from models.messages_kernel import AgentType
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
 from kernel_agents.human_agent import HumanAgent
-from semantic_kernel.functions.kernel_arguments import KernelArguments
-from models.messages_kernel import HumanFeedback
 
 # Configure logging for the tests
 logging.basicConfig(level=logging.INFO)

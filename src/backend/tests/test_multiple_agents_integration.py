@@ -2,11 +2,8 @@ import sys
 import os
 import pytest
 import logging
-import inspect
 import json
 import asyncio
-from unittest import mock
-from typing import Any, Dict, List, Optional
 
 # Ensure src/backend is on the Python path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -15,8 +12,6 @@ from config_kernel import Config
 from kernel_agents.agent_factory import AgentFactory
 from models.messages_kernel import AgentType
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
-from semantic_kernel.functions.kernel_arguments import KernelArguments
-from semantic_kernel import Kernel
 
 # Import agent types to test
 from kernel_agents.hr_agent import HrAgent

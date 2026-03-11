@@ -3,7 +3,6 @@ import os
 import pytest
 import logging
 import json
-import asyncio
 
 # Ensure src/backend is on the Python path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -13,7 +12,6 @@ from kernel_agents.agent_factory import AgentFactory
 from models.messages_kernel import AgentType
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
 from kernel_agents.hr_agent import HrAgent
-from semantic_kernel.functions.kernel_arguments import KernelArguments
 
 # Configure logging for the tests
 logging.basicConfig(level=logging.INFO)

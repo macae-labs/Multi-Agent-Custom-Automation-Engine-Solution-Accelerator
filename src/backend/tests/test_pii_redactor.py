@@ -1,11 +1,9 @@
 """Tests for PII Redactor module."""
 
-import pytest
 from utils.pii_redactor import (
     PIIRedactor,
     PIIContext,
     PIIType,
-    RedactionResult,
     get_pii_context,
     clear_pii_context,
 )

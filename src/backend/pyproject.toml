@@ -37,3 +37,8 @@ dependencies = [
     "urllib3>=1.26.0,<2",
     "uvicorn>=0.34.2",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.5",
+]

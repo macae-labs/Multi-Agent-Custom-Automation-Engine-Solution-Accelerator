@@ -270,7 +270,7 @@ class DatabaseConnector(BaseConnector):
                     "success": True,
                     "demo_mode": True,
                     "employee": emp.to_dict(),
-                    "message": f"[DEMO] Updated employee record"
+                    "message": "[DEMO] Updated employee record"
                 }
         
         return {"success": False, "error": "Employee not found"}

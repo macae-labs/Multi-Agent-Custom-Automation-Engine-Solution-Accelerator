@@ -11,7 +11,7 @@ import unittest
 import asyncio
 import uuid
 import json
-from typing import Dict, List, Optional, Any, Set
+from typing import Any, Set
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -28,14 +28,10 @@ from models.messages_kernel import (
     InputTask, 
     Plan, 
     Step, 
-    AgentMessage,
     PlanStatus,
     StepStatus,
-    HumanFeedbackStatus,
-    ActionRequest,
-    ActionResponse
+    HumanFeedbackStatus
 )
-from semantic_kernel.functions.kernel_arguments import KernelArguments
 
 # Load environment variables from .env file
 load_dotenv()
@@ -77,7 +73,7 @@ class TestCleanupCosmosContext(CosmosMemoryContext):
         
     async def cleanup_test_data(self) -> None:
         """Clean up all data created during testing."""
-        print(f"\nCleaning up test data...")
+        print("\nCleaning up test data...")
         print(f"  - {len(self.created_items)} messages")
         print(f"  - {len(self.created_plans)} plans")
         print(f"  - {len(self.created_steps)} steps")
@@ -113,7 +109,7 @@ class TestCleanupCosmosContext(CosmosMemoryContext):
         try:
             # First try to read the item to get its partition key
             # This approach handles cases where we don't know the partition key for an item
-            query = f"SELECT * FROM c WHERE c.id = @id"
+            query = "SELECT * FROM c WHERE c.id = @id"
             params = [{"name": "@id", "value": item_id}]
             items = self._container.query_items(query=query, parameters=params, enable_cross_partition_query=True)
             
@@ -163,7 +159,7 @@ class GroupChatManagerIntegrationTest(unittest.TestCase):
             self.fail("COSMOSDB_ENDPOINT not set or is using default local value")
         
         # Print test configuration
-        print(f"\nRunning tests with:")
+        print("\nRunning tests with:")
         print(f"  - Session ID: {self.session_id}")
         print(f"  - OpenAI Deployment: {os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}")
         print(f"  - OpenAI Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT')}")
@@ -356,7 +352,7 @@ class GroupChatManagerIntegrationTest(unittest.TestCase):
         
         print(f"\nApproved step: {first_step.id}")
         print(f"Updated step status: {updated_step.status}")
-        print(f"Messages:")
+        print("Messages:")
         for msg in messages[-3:]:  # Show the last few messages
             print(f"  - {msg.source}: {msg.content[:50]}...")
         
@@ -440,7 +436,7 @@ class GroupChatManagerIntegrationTest(unittest.TestCase):
             self.assertIn("conversation_history", conversation_history)
             self.assertIn(plan.summary, conversation_history)
             
-            print(f"\nGenerated conversation history:")
+            print("\nGenerated conversation history:")
             print(f"{conversation_history[:200]}...")
             
             return conversation_history
