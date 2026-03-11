@@ -1,4 +1,10 @@
-name: Build Docker and Optional Push
+name: Build Docker (Validation Only)
+
+# =============================================================================
+# IMPORTANT: Azure Container Apps CD handles automatic deployments from ACR.
+# This workflow only builds and validates Docker images.
+# Deployments are handled by Azure CD workflows.
+# =============================================================================
 
 on:
   push:
@@ -29,15 +35,6 @@ on:
       - '**/Dockerfile'
       - '.github/workflows/docker-build-and-push.yml'
   workflow_dispatch:
-    inputs:
-      target_env:
-        description: 'GitHub Environment to use'
-        required: false
-        type: choice
-        default: dev
-        options:
-          - dev
-          - prod
 
 permissions:
   id-token: write
@@ -54,7 +51,6 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      should_deploy: ${{ steps.check_deploy.outputs.should_deploy }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -67,228 +63,73 @@ jobs:
             frontend:
               - 'src/frontend/**'
 
-      - name: Check if deployment should occur
-        id: check_deploy
+      - name: Check mode
         run: |
-          if [[ "${{ github.ref_name }}" == "main" ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "🔨 Manual run detected - build validation only"
           else
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "🔨 Push/PR detected - build validation only"
           fi
+          echo "ℹ️  Azure CD handles deployment"
 
-  build-and-push-backend:
+  # =============================================================================
+  # BUILD-ONLY JOB: Runs on push/PR and workflow_dispatch
+  # =============================================================================
+  build-backend-only:
     needs: changes
     if: |
-      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.backend == 'true') &&
-      needs.changes.outputs.should_deploy == 'true'
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.target_env || 'dev' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: ACR Login via Azure CLI
-        run: az acr login --name ${{ secrets.ACR_NAME }}
-
-      - name: Build and push backend image
+      - name: Build backend image (validation only)
         uses: docker/build-push-action@v6
         with:
           context: src/backend
           file: src/backend/Dockerfile
-          push: true
+          push: false
           tags: |
-            ${{ env.ACR }}/macaebackend:latest
-            ${{ env.ACR }}/macaebackend:${{ env.TAG }}
+            macaebackend:${{ env.TAG }}
+            macaebackend:latest
 
-      - name: Capture current active revision
-        id: capture_previous
+      - name: Build validation complete
         run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          PREVIOUS_REVISION=$(az containerapp revision list \
-            -n "$APP" -g "$RG" \
-            --query "[?properties.active==\`true\`][0].name" -o tsv)
-          echo "previous_revision=$PREVIOUS_REVISION" >> $GITHUB_OUTPUT
-          echo "Previous active revision: ${PREVIOUS_REVISION:-none}"
+          echo "✅ Backend Docker image built successfully"
+          echo "ℹ️  Image NOT pushed - deployment handled by Azure CD"
 
-      - name: Update Container App
-        id: update_backend
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          if [ -z "$RG" ]; then
-            echo "Missing secret BACKEND_RG"
-            exit 1
-          fi
-          az containerapp update \
-            -n ${{ secrets.BACKEND_CONTAINER_APP }} \
-            -g "$RG" \
-            --image ${{ env.ACR }}/macaebackend:${{ env.TAG }}
-
-      - name: Capture new revision and app URL
-        id: capture_new
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          NEW_REVISION=$(az containerapp revision list \
-            -n "$APP" -g "$RG" \
-            --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
-          APP_FQDN=$(az containerapp show -n "$APP" -g "$RG" \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
-          NEW_REVISION_FQDN=$(az containerapp revision list \
-            -n "$APP" -g "$RG" \
-            --query "[?name=='$NEW_REVISION'].properties.fqdn | [0]" -o tsv 2>/dev/null || true)
-          echo "new_revision=$NEW_REVISION" >> $GITHUB_OUTPUT
-          echo "app_url=https://$APP_FQDN" >> $GITHUB_OUTPUT
-          echo "new_revision_url=https://$NEW_REVISION_FQDN" >> $GITHUB_OUTPUT
-          echo "New revision: $NEW_REVISION"
-          echo "App URL: https://$APP_FQDN"
-
-      - name: Check revision mode
-        id: check_revision_mode
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          REVISION_MODE=$(az containerapp show -n "$APP" -g "$RG" \
-            --query "properties.configuration.activeRevisionsMode" -o tsv)
-          echo "revision_mode=$REVISION_MODE" >> $GITHUB_OUTPUT
-          echo "Revision mode: $REVISION_MODE"
-
-      - name: Canary rollout (10% new, 90% previous)
-        if: steps.capture_previous.outputs.previous_revision != '' && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          az containerapp ingress traffic set \
-            -n "$APP" -g "$RG" \
-            --revision-weight \
-            "${{ steps.capture_new.outputs.new_revision }}=10" \
-            "${{ steps.capture_previous.outputs.previous_revision }}=90"
-
-      - name: Smoke test backend
-        id: smoke_test
-        run: |
-          set -e
-          BASE_URL="${{ steps.capture_new.outputs.app_url }}"
-          echo "Running health check on: $BASE_URL"
-
-          # 1. Check revision state (max 30 sec)
-          for i in $(seq 1 6); do
-            RUNNING_STATE=$(az containerapp revision list \
-              -n "${{ secrets.BACKEND_CONTAINER_APP }}" -g "${{ secrets.BACKEND_RG }}" \
-              --query "[?name=='${{ steps.capture_new.outputs.new_revision }}'].properties.runningState | [0]" -o tsv 2>/dev/null || true)
-            HEALTH_STATE=$(az containerapp revision list \
-              -n "${{ secrets.BACKEND_CONTAINER_APP }}" -g "${{ secrets.BACKEND_RG }}" \
-              --query "[?name=='${{ steps.capture_new.outputs.new_revision }}'].properties.healthState | [0]" -o tsv 2>/dev/null || true)
-            
-            echo "Attempt $i: running=$RUNNING_STATE health=$HEALTH_STATE"
-            
-            # Accept both Running and RunningAtMaxScale as valid states
-            if [[ "$RUNNING_STATE" =~ ^(Running|RunningAtMaxScale)$ ]] && [ "$HEALTH_STATE" = "Healthy" ]; then
-              echo "✅ Revision is healthy (state: $RUNNING_STATE)."
-              HEALTHY=true
-              break
-            fi
-            
-            # If activation failed, don't retry - get logs immediately
-            if [ "$RUNNING_STATE" = "ActivationFailed" ]; then
-              echo "❌ Revision activation failed. Fetching logs..."
-              az containerapp logs show -n "${{ secrets.BACKEND_CONTAINER_APP }}" \
-                -g "${{ secrets.BACKEND_RG }}" --revision "${{ steps.capture_new.outputs.new_revision }}" --tail 50 2>&1 | head -30
-              echo "Check logs above for detailed error. Exiting."
-              exit 1
-            fi
-            
-            if [ "$i" -lt 6 ]; then
-              sleep 5
-            fi
-          done
-
-          if [ "$HEALTHY" != "true" ]; then
-            echo "⚠️  Revision did not become healthy (state=$RUNNING_STATE, health=$HEALTH_STATE)"
-            echo "Run: ./scripts/diagnose-container.sh ${{ secrets.BACKEND_RG }} ${{ secrets.BACKEND_CONTAINER_APP }}"
-            exit 1
-          fi
-
-          # 2. HTTP health check (if running)
-          if curl -fsS "$BASE_URL/healthz" >/dev/null 2>&1; then
-            echo "✅ HTTP health check passed."
-          else
-            echo "⚠️  HTTP health check failed (app may be starting). Continuing..."
-          fi
-
-      - name: Promote new revision to 100%
-        if: success() && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          az containerapp ingress traffic set \
-            -n "$APP" -g "$RG" \
-            --revision-weight "${{ steps.capture_new.outputs.new_revision }}=100"
-
-      - name: Rollback to previous revision on failure
-        if: failure() && steps.capture_previous.outputs.previous_revision != '' && steps.check_revision_mode.outputs.revision_mode == 'Multiple'
-        run: |
-          RG="${{ secrets.BACKEND_RG }}"
-          APP="${{ secrets.BACKEND_CONTAINER_APP }}"
-          PREV="${{ steps.capture_previous.outputs.previous_revision }}"
-          az containerapp ingress traffic set \
-            -n "$APP" -g "$RG" \
-            --revision-weight "$PREV=100"
-          echo "Rollback executed to revision: $PREV"
-
-  build-and-push-frontend:
+  # =============================================================================
+  # BUILD-ONLY FRONTEND: Runs on push/PR and workflow_dispatch
+  # =============================================================================
+  build-frontend-only:
     needs: changes
     if: |
-      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.frontend == 'true') &&
-      needs.changes.outputs.should_deploy == 'true'
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.target_env || 'dev' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend image (validation only)
+        uses: docker/build-push-action@v6
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          context: src/frontend
+          file: src/frontend/Dockerfile
+          push: false
+          tags: |
+            macaefrontend:${{ env.TAG }}
+            macaefrontend:latest
 
-      - name: Build and push frontend image (ACR build)
+      - name: Build validation complete
         run: |
-          if [ -z "${{ env.ACR_NAME }}" ]; then
-            echo "Missing secret ACR_NAME"
-            exit 1
-          fi
-          az acr build \
-            --registry "${{ env.ACR_NAME }}" \
-            --image "macaefrontend:latest" \
-            --image "macaefrontend:${{ env.TAG }}" \
-            --file src/frontend/Dockerfile \
-            src/frontend
-
-      - name: Update WebApp
-        run: |
-          RG="${{ secrets.FRONTEND_RG }}"
-          if [ -z "$RG" ]; then
-            echo "Missing secret FRONTEND_RG"
-            exit 1
-          fi
-          az webapp config container set \
-            -g "$RG" \
-            -n ${{ secrets.FRONTEND_WEBAPP }} \
-            --container-registry-url https://${{ env.ACR }} \
-            --container-image-name ${{ env.ACR }}/macaefrontend:${{ env.TAG }}
-          az webapp restart -g "$RG" -n ${{ secrets.FRONTEND_WEBAPP }}
+          echo "✅ Frontend Docker image built successfully"
+          echo "ℹ️  Image NOT pushed - deployment handled by Azure CD"
