@@ -1,0 +1,49 @@
+name: Trigger auto deployment for ca-macae-wsxymdijs3u2
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ main ]
+    paths:
+    - '**'
+    - '.github/workflows/ca-macae-wsxymdijs3u2-AutoDeployTrigger-1645b26d-9387-4799-bd5f-495be274e222.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:      
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.CAMACAEWSXYMDIJS3U2_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.CAMACAEWSXYMDIJS3U2_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.CAMACAEWSXYMDIJS3U2_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}src/backend
+          _dockerfilePathKey_: _dockerfilePath_
+          _targetLabelKey_: _targetLabel_
+          registryUrl: boatrentalacr.azurecr.io
+          registryUsername: ${{ secrets.CAMACAEWSXYMDIJS3U2_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.CAMACAEWSXYMDIJS3U2_REGISTRY_PASSWORD }}
+          containerAppName: ca-macae-wsxymdijs3u2
+          resourceGroup: boat-rental-app-group-eus2-clean
+          imageToBuild: boatrentalacr.azurecr.io/ca-macae-wsxymdijs3u2:${{ github.sha }}
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
+
+
