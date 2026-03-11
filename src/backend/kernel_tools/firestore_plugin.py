@@ -296,3 +296,58 @@ class FirestorePlugin:
         except Exception as e:
             logging.error(f"Firestore delete failed: {e}")
             return f"Error: {str(e)}"
+
+    @kernel_function(
+        name="list_firestore_subcollections",
+        description="List subcollections of a Firestore document or collection. Accepts a document path (e.g., 'users/123') or a collection name (e.g., 'users') to discover subcollections from the first available document."
+    )
+    async def list_subcollections(
+        self,
+        doc_path: Annotated[str, "Document path (e.g., 'users/123' or 'courses/abc')"],
+    ) -> str:
+        """List subcollections under a document using adapter."""
+        try:
+            result = await self._adapter.execute(
+                tool_name="list_subcollections",
+                params={"doc_path": doc_path.strip("/")},
+                tool_id="list_firestore_subcollections"
+            )
+            if not result.success:
+                if result.credentials_required:
+                    return BaseAdapter.to_json(result)
+                return f"Error: {result.error}"
+            subcols = result.result
+            if not subcols:
+                return f"No subcollections found under '{doc_path}'"
+            return str([s["id"] for s in subcols])
+        except Exception as e:
+            logging.error(f"Firestore list_subcollections failed: {e}")
+            return f"Error: {str(e)}"
+
+    @kernel_function(
+        name="list_documents_at_path",
+        description="List documents at any Firestore path including subcollections (e.g., 'users/123/orders')"
+    )
+    async def list_documents_at_path(
+        self,
+        collection_path: Annotated[str, "Full collection path (e.g., 'users' or 'users/123/orders')"],
+        limit: Annotated[int, "Maximum documents to return"] = 25,
+    ) -> str:
+        """List documents at any collection path (root or subcollection)."""
+        try:
+            result = await self._adapter.execute(
+                tool_name="list_documents_at_path",
+                params={"collection_path": collection_path.strip("/"), "limit": limit},
+                tool_id="list_documents_at_path"
+            )
+            if not result.success:
+                if result.credentials_required:
+                    return BaseAdapter.to_json(result)
+                return f"Error: {result.error}"
+            docs = result.result
+            if not docs:
+                return f"No documents found at '{collection_path}'"
+            return str(docs)
+        except Exception as e:
+            logging.error(f"Firestore list_documents_at_path failed: {e}")
+            return f"Error: {str(e)}"

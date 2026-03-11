@@ -56,12 +56,10 @@ async def main():
             },
             "errors": []
         }
-        
         base_msg = "You are a helpful tech support agent."
         enhanced = HealthAwareContextInjector.inject_health_snapshot(
             base_msg, mock_snapshot
         )
-        
         if "Current Application Health Status" in enhanced:
             print("   ✅ Health context injected successfully")
             print(f"      Enhanced message length: {len(enhanced)} chars")
@@ -71,7 +69,6 @@ async def main():
     except Exception as e:
         print(f"   ❌ Failed to inject health context: {e}")
         return False
-    
     # Test 4: Test decision helper
     print("\n4. Testing AgentHealthDecisionHelper...")
     try:
@@ -80,18 +77,15 @@ async def main():
             ["firestore", "aws_s3"],
             "test_operation"
         )
-        
         if should_proceed:
             print(f"   ✅ Decision helper working: {reason}")
         else:
             print(f"   ⚠️  Decision: {reason}")
-        
         retry_strat = AgentHealthDecisionHelper.get_retry_strategy(mock_snapshot)
         print(f"   ✅ Retry strategy: {retry_strat['max_retries']} max retries")
     except Exception as e:
         print(f"   ❌ Failed decision helper test: {e}")
         return False
-    
     # Test 5: Test trends aggregation
     print("\n5. Testing trends aggregation...")
     try:
@@ -128,7 +122,6 @@ async def main():
     except Exception as e:
         print(f"   ❌ Failed trends test: {e}")
         return False
-    
     # Test 6: Test app_health_monitor (basic)
     print("\n6. Testing AppHealthMonitor basics...")
     try:
@@ -140,7 +133,6 @@ async def main():
     except Exception as e:
         print(f"   ❌ Failed AppHealthMonitor import: {e}")
         return False
-    
     print("\n" + "=" * 60)
     print("✅ ALL OBSERVABILITY COMPONENTS VALIDATED SUCCESSFULLY!")
     print("=" * 60)

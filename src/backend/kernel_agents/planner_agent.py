@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from azure.ai.agents.models import (ResponseFormatJsonSchema,
                                     ResponseFormatJsonSchemaType)
 from context.cosmos_memory_kernel import CosmosMemoryContext
+from utils.pii_redactor import get_pii_context
 from event_utils import track_event_if_configured
 from kernel_agents.agent_base import BaseAgent
 from kernel_agents.validator_agent import ValidatorAgent
@@ -223,6 +224,20 @@ class PlannerAgent(BaseAgent):
         """
         # Parse the input task
         logging.info("Handling input task")
+
+        # Redact PII from the description to avoid content filter issues
+        # The original values are stored in the session's PII context for later re-hydration
+        pii_context = get_pii_context(input_task.session_id)
+        original_description = input_task.description
+        redacted_description = pii_context.redact(original_description)
+        
+        if redacted_description != original_description:
+            logging.info(f"PII redacted from input: {len(pii_context.get_token_map())} tokens created")
+            # Create a modified input task with redacted description
+            input_task = InputTask(
+                session_id=input_task.session_id,
+                description=redacted_description
+            )
 
         plan, steps = await self._create_structured_plan(input_task)
 
@@ -462,11 +477,17 @@ class PlannerAgent(BaseAgent):
 
             # At this point, we have a valid parsed_result
 
-            # Extract plan details
-            initial_goal = parsed_result.initial_goal
+            # Extract plan details and re-hydrate PII tokens with original values
+            # The model received redacted text, so its response may contain tokens like {{EMAIL_1}}
+            # We need to replace these with the actual values before storing
+            pii_context = get_pii_context(input_task.session_id)
+            
+            initial_goal = pii_context.rehydrate(parsed_result.initial_goal)
             steps_data = parsed_result.steps
-            summary = parsed_result.summary_plan_and_steps
+            summary = pii_context.rehydrate(parsed_result.summary_plan_and_steps)
             human_clarification_request = parsed_result.human_clarification_request
+            if human_clarification_request:
+                human_clarification_request = pii_context.rehydrate(human_clarification_request)
 
             # Create the Plan instance
             plan = Plan(
@@ -486,7 +507,8 @@ class PlannerAgent(BaseAgent):
             # Create steps from the parsed data
             steps = []
             for step_data in steps_data:
-                action = step_data.action
+                # Re-hydrate the action to replace PII tokens with actual values
+                action = pii_context.rehydrate(step_data.action)
                 agent_name = step_data.agent
 
                 # Validate agent name
@@ -515,7 +537,9 @@ class PlannerAgent(BaseAgent):
             try:
                 validator = ValidatorAgent(self, self._available_agents)
                 validation_result = await validator.validate_plan_batch(
-                    steps=steps, agent_tools=self._agent_tools_list
+                    steps=steps,
+                    agent_tools=self._agent_tools_list,
+                    session_id=input_task.session_id,
                 )
                 corrections = ValidatorAgent.apply_corrections(
                     steps=steps, validation_result=validation_result

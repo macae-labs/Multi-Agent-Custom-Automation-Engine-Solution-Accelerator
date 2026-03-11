@@ -9,6 +9,7 @@ from models.project_profile import ProjectProfile
 from kernel_tools.external_api_plugin import ExternalAPIPlugin
 from kernel_tools.s3_plugin import S3Plugin
 from kernel_tools.firestore_plugin import FirestorePlugin
+from kernel_tools.cloud_functions_plugin import CloudFunctionsPlugin
 from semantic_kernel.functions import KernelFunction
 from tool_registry import ToolRegistry
 
@@ -34,6 +35,12 @@ class ProjectContextLoader:
             return FirestorePlugin(
                 project_id=custom_config.get("gcp_project_id", profile.project_id),
                 collection_root=profile.firestore_root or "",
+                session_id=session_id,
+                user_id=user_id,
+            )
+        if provider_id == "cloud_functions":
+            return CloudFunctionsPlugin(
+                project_id=custom_config.get("gcp_project_id", profile.project_id),
                 session_id=session_id,
                 user_id=user_id,
             )
@@ -187,19 +194,9 @@ class ProjectContextLoader:
         logging.info(
             "Loaded fallback project plugins for session %s: %s",
             session_id,
-            [
-                "get_video_signed_url",
-                "s3_upload_object",
-                "s3_delete_object",
-                "s3_list_objects",
-                "read_firestore_doc",
-                "write_firestore_doc",
-                "list_firestore_collections",
-                "list_firestore_documents",
-                "count_firestore_docs",
-                "query_firestore_docs",
-                "update_firestore_doc",
-                "delete_firestore_doc",
-            ],
+            sorted(set(
+                str(getattr(getattr(p, "metadata", None), "name", None) or getattr(p, "name", ""))
+                for p in plugins
+            )),
         )
         return plugins

@@ -407,11 +407,17 @@ class BaseAgent(AzureAIAgent):
                     tool_instruction = (
                         f"Available tools for this agent: {available_tools_text}.\n"
                         + (
-                            f"If relevant to the requested step, you MUST call one of these function(s): {required_fn_text}.\n"
+                            f"You MUST call one of these function(s): {required_fn_text}.\n"
                             if required_fn_text
                             else ""
                         )
-                        + "Do not claim a function is unavailable if it is listed above."
+                        + "Do not claim a function is unavailable if it is listed above.\n"
+                        + "If the action requires multiple tool calls to fully complete (e.g. exploring nested data, multi-step operations), make all necessary calls sequentially before responding.\n"
+                        + "When querying a data source (e.g. Firestore), follow this approach: "
+                        + "1) Discover available collections/resources first if the target is unknown. "
+                        + "2) Query or read from the discovered target. "
+                        + "3) If the result is empty, verify by checking adjacent collections or retrying with a broader scope before concluding no data exists. "
+                        + "4) Base all decisions on real-time schema introspection, not assumed names or structures."
                     )
                     async_generator = self.invoke(
                         messages=(

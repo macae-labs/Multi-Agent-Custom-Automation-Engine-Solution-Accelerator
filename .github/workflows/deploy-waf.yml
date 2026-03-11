@@ -98,7 +98,7 @@ jobs:
       - name: Check and Create Resource Group
         id: check_create_rg
         run: |
-          set -e  
+          set -e
           echo "Checking if resource group exists..."
           rg_exists=$(az group exists --name ${{ env.RESOURCE_GROUP_NAME }})
           if [ "$rg_exists" = "false" ]; then
@@ -165,13 +165,13 @@ jobs:
             exit 0
           else
             echo "OPENAI_RESOURCE_NAME=${openai_resource_name}" >> $GITHUB_ENV
-            echo "OpenAI resource name: ${openai_resource_name}" 
+            echo "OpenAI resource name: ${openai_resource_name}"
           fi
 
       - name: Delete Bicep Deployment
         if: always()
         run: |
-          set -e  
+          set -e
           echo "Checking if resource group exists..."
           rg_exists=$(az group exists --name ${{ env.RESOURCE_GROUP_NAME }})
           if [ "$rg_exists" = "true" ]; then
@@ -240,7 +240,7 @@ jobs:
         if: always()
         run: |
 
-          set -e 
+          set -e
           echo "Azure OpenAI: ${{ env.OPENAI_RESOURCE_NAME }}"
           if [ -z "${{ env.OPENAI_RESOURCE_NAME }}" ]; then
             echo "No OpenAI resource to purge. Skipping."

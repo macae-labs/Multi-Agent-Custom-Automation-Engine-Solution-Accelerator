@@ -7,6 +7,7 @@ from typing import Any, List, Optional
 from semantic_kernel.kernel_pydantic import KernelBaseModel
 
 from models.messages_kernel import AgentType, Step
+from utils.pii_redactor import PIIRedactor, get_pii_context
 
 
 class StepValidation(KernelBaseModel):
@@ -34,7 +35,7 @@ class ValidatorAgent:
         self._available_agents = available_agents
 
     async def validate_plan_batch(
-        self, steps: List[Step], agent_tools: dict[Any, Any]
+        self, steps: List[Step], agent_tools: dict[Any, Any], session_id: Optional[str] = None
     ) -> PlanValidationResult:
         """Validate all step assignments in a single LLM call.
 
@@ -53,12 +54,19 @@ class ValidatorAgent:
             normalized_tools = self._normalize_tools(agent_tools)
 
             # Build batch validation prompt
-            steps_summary = "\n".join(
-                [
-                    f"{i}. Action: {step.action} | Assigned: {step.agent.value}"
-                    for i, step in enumerate(steps)
-                ]
-            )
+            pii_redactor = PIIRedactor()
+            pii_context = get_pii_context(session_id) if session_id else None
+            steps_summary_lines = []
+            for i, step in enumerate(steps):
+                action_for_validator = (
+                    pii_context.redact(step.action)
+                    if pii_context is not None
+                    else pii_redactor.redact(step.action).redacted_text
+                )
+                steps_summary_lines.append(
+                    f"{i}. Action: {action_for_validator} | Assigned: {step.agent.value}"
+                )
+            steps_summary = "\n".join(steps_summary_lines)
 
             validation_prompt = (
                 f"Evaluate agent assignments for {len(steps)} steps in this plan.\n\n"

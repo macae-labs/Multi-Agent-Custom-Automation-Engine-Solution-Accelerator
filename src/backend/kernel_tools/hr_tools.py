@@ -1003,10 +1003,9 @@ class HrTools:
 
             if hasattr(method, "__kernel_function__"):
                 description = ""
-                if hasattr(method, "__kernel_function__"):
-                    kf = method.__kernel_function__
-                    if hasattr(kf, "description"):
-                        description = kf.description
+                kf = getattr(method, "__kernel_function__", None)
+                if kf and hasattr(kf, "description"):
+                    description = kf.description
 
                 sig = inspect.signature(method)
                 type_hints = get_type_hints(method)

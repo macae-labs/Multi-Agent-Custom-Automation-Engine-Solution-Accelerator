@@ -326,6 +326,24 @@ register_tool(ToolDefinition(
     agent_type="Tech_Support_Agent",
     requires_credentials=True,
 ))
+
+register_tool(ToolDefinition(
+    tool_id="list_firestore_subcollections",
+    display_name="List Firestore Subcollections",
+    description="List subcollections of a Firestore document",
+    provider_id="firestore",
+    agent_type="Tech_Support_Agent",
+    requires_credentials=True,
+))
+
+register_tool(ToolDefinition(
+    tool_id="list_documents_at_path",
+    display_name="List Documents at Path",
+    description="List documents at any Firestore path including subcollections",
+    provider_id="firestore",
+    agent_type="Tech_Support_Agent",
+    requires_credentials=True,
+))
 # Credential binding store (in-memory for now)
 _CREDENTIAL_BINDINGS: Dict[str, CredentialBinding] = {}
 

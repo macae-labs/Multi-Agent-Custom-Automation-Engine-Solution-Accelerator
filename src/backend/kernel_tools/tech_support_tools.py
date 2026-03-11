@@ -18,17 +18,18 @@ class TechSupportTools:
     )
     async def send_welcome_email(employee_name: str, email_address: str) -> str:
         graph = get_graph_connector()
-        
         result = await graph.send_welcome_email(employee_name, email_address)
-        
+
+        if not result.get("success") and not result.get("demo_mode"):
+            raise RuntimeError(f"Failed to send email: {result.get('error', 'Unknown error')}")
+
         demo_tag = "[DEMO] " if result.get("demo_mode") else ""
-        status = "Delivered ✓" if result.get("success") else f"Failed: {result.get('error', 'Unknown error')}"
         
         return (
             f"##### {demo_tag}Welcome Email Sent\n"
             f"**Employee Name:** {employee_name}\n"
             f"**Email Address:** {email_address}\n"
-            f"**Status:** {status}\n\n"
+            f"**Status:** Delivered ✓\n\n"
             f"A welcome email has been successfully sent to {employee_name} at {email_address}.\n"
             f"{TechSupportTools.formatting_instructions}"
         )
