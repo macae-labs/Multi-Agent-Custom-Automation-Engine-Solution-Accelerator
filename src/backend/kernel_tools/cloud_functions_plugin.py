@@ -20,6 +20,7 @@ from semantic_kernel.functions import kernel_function
 # Try to import Google Auth for Cloud Run authentication
 try:
     import google.auth as _google_auth  # noqa: F401 - availability check
+
     GOOGLE_AUTH_AVAILABLE = True
 except ImportError:
     GOOGLE_AUTH_AVAILABLE = False
@@ -28,6 +29,7 @@ except ImportError:
 @dataclass
 class FunctionConfig:
     """Configuration for a single Cloud Function."""
+
     url: str
     method: str = "POST"
     require_auth: bool = False
@@ -169,7 +171,9 @@ class CloudFunctionsPlugin:
         user_id: Optional[str] = None,
         timeout: float = 60.0,
     ):
-        self.project_id = project_id or os.getenv("FIREBASE_PROJECT_ID", "eng-gate-453810-h3")
+        self.project_id = project_id or os.getenv(
+            "FIREBASE_PROJECT_ID", "eng-gate-453810-h3"
+        )
         self.session_id = session_id
         self.user_id = user_id
         self.timeout = timeout
@@ -206,7 +210,7 @@ class CloudFunctionsPlugin:
         if not config:
             return {
                 "success": False,
-                "error": f"Unknown function '{function_name}'. Not in FUNCTION_REGISTRY."
+                "error": f"Unknown function '{function_name}'. Not in FUNCTION_REGISTRY.",
             }
 
         url = config.url
@@ -220,7 +224,7 @@ class CloudFunctionsPlugin:
                 return {
                     "success": False,
                     "error": f"Function '{function_name}' requires authentication but failed to obtain token. "
-                             f"Ensure GOOGLE_APPLICATION_CREDENTIALS is set or running in GCP environment."
+                    f"Ensure GOOGLE_APPLICATION_CREDENTIALS is set or running in GCP environment.",
                 }
             headers["Authorization"] = f"Bearer {token}"
 
@@ -228,9 +232,7 @@ class CloudFunctionsPlugin:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # Firebase Callable Functions always use POST with {"data": payload}
                 response = await client.post(
-                    url,
-                    json={"data": payload},
-                    headers=headers
+                    url, json={"data": payload}, headers=headers
                 )
                 response.raise_for_status()
 
@@ -243,11 +245,20 @@ class CloudFunctionsPlugin:
                 return {"success": True, "data": data}
 
         except httpx.HTTPStatusError as e:
-            error_text = e.response.text[:300] if e.response.text else "No response body"
-            self._logger.error(f"Cloud Function {function_name} returned {e.response.status_code}: {error_text}")
-            return {"success": False, "error": f"HTTP {e.response.status_code}: {error_text}"}
+            error_text = (
+                e.response.text[:300] if e.response.text else "No response body"
+            )
+            self._logger.error(
+                f"Cloud Function {function_name} returned {e.response.status_code}: {error_text}"
+            )
+            return {
+                "success": False,
+                "error": f"HTTP {e.response.status_code}: {error_text}",
+            }
         except httpx.TimeoutException:
-            self._logger.error(f"Cloud Function {function_name} timed out after {self.timeout}s")
+            self._logger.error(
+                f"Cloud Function {function_name} timed out after {self.timeout}s"
+            )
             return {"success": False, "error": f"Timeout after {self.timeout}s"}
         except Exception as e:
             self._logger.error(f"Cloud Function {function_name} failed: {e}")
@@ -259,16 +270,19 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="create_order",
-        description="Create a new order for a customer. Use this for purchases and enrollments."
+        description="Create a new order for a customer. Use this for purchases and enrollments.",
     )
     async def create_order(
         self,
         customer_id: Annotated[str, "Customer ID"],
         items: Annotated[str, "JSON array of items [{product_id, quantity, price}]"],
-        payment_method: Annotated[str, "Payment method (stripe, cash, voucher)"] = "stripe",
+        payment_method: Annotated[
+            str, "Payment method (stripe, cash, voucher)"
+        ] = "stripe",
     ) -> str:
         """Create order via Cloud Function - handles payment integration."""
         import json
+
         try:
             items_list = json.loads(items) if isinstance(items, str) else items
         except Exception:
@@ -276,7 +290,11 @@ class CloudFunctionsPlugin:
 
         result = await self._call_function(
             "createOrder",
-            {"customerId": customer_id, "items": items_list, "paymentMethod": payment_method}
+            {
+                "customerId": customer_id,
+                "items": items_list,
+                "paymentMethod": payment_method,
+            },
         )
 
         if result["success"]:
@@ -285,7 +303,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="send_emails",
-        description="Send emails to users. Use for notifications, campaigns, or transactional emails."
+        description="Send emails to users. Use for notifications, campaigns, or transactional emails.",
     )
     async def send_emails(
         self,
@@ -311,7 +329,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="init_stripe_payment",
-        description="Initialize a Stripe payment session for a customer."
+        description="Initialize a Stripe payment session for a customer.",
     )
     async def init_stripe_payment(
         self,
@@ -328,7 +346,7 @@ class CloudFunctionsPlugin:
                 "amount": amount,
                 "currency": currency,
                 "description": description,
-            }
+            },
         )
 
         if result["success"]:
@@ -336,8 +354,7 @@ class CloudFunctionsPlugin:
         return f"Failed to init payment: {result['error']}"
 
     @kernel_function(
-        name="forgot_password",
-        description="Send password reset email to a user."
+        name="forgot_password", description="Send password reset email to a user."
     )
     async def forgot_password(
         self,
@@ -350,10 +367,7 @@ class CloudFunctionsPlugin:
             return f"Password reset email sent to {email}"
         return f"Failed to send reset email: {result['error']}"
 
-    @kernel_function(
-        name="change_email",
-        description="Change a user's email address."
-    )
+    @kernel_function(name="change_email", description="Change a user's email address.")
     async def change_email(
         self,
         user_id: Annotated[str, "User ID"],
@@ -361,8 +375,7 @@ class CloudFunctionsPlugin:
     ) -> str:
         """Change user email via Cloud Function."""
         result = await self._call_function(
-            "changeEmail",
-            {"userId": user_id, "newEmail": new_email}
+            "changeEmail", {"userId": user_id, "newEmail": new_email}
         )
 
         if result["success"]:
@@ -373,10 +386,7 @@ class CloudFunctionsPlugin:
     # READ OPERATIONS (via Cloud Functions when logic is needed)
     # =========================================================================
 
-    @kernel_function(
-        name="get_courses",
-        description="Get list of available courses."
-    )
+    @kernel_function(name="get_courses", description="Get list of available courses.")
     async def get_courses(
         self,
         category: Annotated[str, "Filter by category (optional)"] = "",
@@ -395,26 +405,20 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_course_detail",
-        description="Get detailed information about a specific course."
+        description="Get detailed information about a specific course.",
     )
     async def get_course_detail(
         self,
         course_id: Annotated[str, "Course ID"],
     ) -> str:
         """Get course details via Cloud Function."""
-        result = await self._call_function(
-            "getCourseDetail",
-            {"courseId": course_id}
-        )
+        result = await self._call_function("getCourseDetail", {"courseId": course_id})
 
         if result["success"]:
             return str(result["data"])
         return f"Failed to get course detail: {result['error']}"
 
-    @kernel_function(
-        name="get_products",
-        description="Get list of available products."
-    )
+    @kernel_function(name="get_products", description="Get list of available products.")
     async def get_products(
         self,
         category: Annotated[str, "Filter by category (optional)"] = "",
@@ -431,10 +435,7 @@ class CloudFunctionsPlugin:
             return str(result["data"])
         return f"Failed to get products: {result['error']}"
 
-    @kernel_function(
-        name="get_orders",
-        description="Get orders for a customer."
-    )
+    @kernel_function(name="get_orders", description="Get orders for a customer.")
     async def get_orders(
         self,
         customer_id: Annotated[str, "Customer ID"],
@@ -451,10 +452,7 @@ class CloudFunctionsPlugin:
             return str(result["data"])
         return f"Failed to get orders: {result['error']}"
 
-    @kernel_function(
-        name="get_mentors",
-        description="Get list of available mentors."
-    )
+    @kernel_function(name="get_mentors", description="Get list of available mentors.")
     async def get_mentors(self) -> str:
         """Get mentors via Cloud Function."""
         result = await self._call_function("getMentors", {})
@@ -463,8 +461,7 @@ class CloudFunctionsPlugin:
         return f"Failed to get mentors: {result['error']}"
 
     @kernel_function(
-        name="get_categories",
-        description="Get list of available categories."
+        name="get_categories", description="Get list of available categories."
     )
     async def get_categories(self) -> str:
         """Get categories via Cloud Function."""
@@ -475,7 +472,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="check_availability",
-        description="Check availability for a course or event."
+        description="Check availability for a course or event.",
     )
     async def check_availability(
         self,
@@ -493,10 +490,7 @@ class CloudFunctionsPlugin:
             return str(result["data"])
         return f"Failed to check availability: {result['error']}"
 
-    @kernel_function(
-        name="find_user_by_id",
-        description="Find a user by their ID."
-    )
+    @kernel_function(name="find_user_by_id", description="Find a user by their ID.")
     async def find_user_by_id(
         self,
         user_id: Annotated[str, "User ID to look up"],
@@ -510,7 +504,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_or_create_customer",
-        description="Get existing customer or create new one."
+        description="Get existing customer or create new one.",
     )
     async def get_or_create_customer(
         self,
@@ -534,7 +528,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_product_detail",
-        description="Get detailed information about a specific product including price, description, and availability."
+        description="Get detailed information about a specific product including price, description, and availability.",
     )
     async def get_product_detail(
         self,
@@ -542,8 +536,7 @@ class CloudFunctionsPlugin:
     ) -> str:
         """Get product details via Cloud Function."""
         result = await self._call_function(
-            "getProductDetail",
-            {"productId": product_id}
+            "getProductDetail", {"productId": product_id}
         )
 
         if result["success"]:
@@ -552,7 +545,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_contact_info",
-        description="Get business contact information including address, phone, email, and social media links."
+        description="Get business contact information including address, phone, email, and social media links.",
     )
     async def get_contact_info(self) -> str:
         """Get contact info via Cloud Function."""
@@ -564,7 +557,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_upcoming_events",
-        description="Get list of upcoming events, workshops, and training sessions."
+        description="Get list of upcoming events, workshops, and training sessions.",
     )
     async def get_upcoming_events(
         self,
@@ -579,7 +572,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="chat_with_assistant",
-        description="Send a message to the business chat assistant for customer support queries."
+        description="Send a message to the business chat assistant for customer support queries.",
     )
     async def chat_with_assistant(
         self,
@@ -599,7 +592,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="init_stripe_test_payment",
-        description="Initialize a Stripe TEST payment session for development/testing purposes."
+        description="Initialize a Stripe TEST payment session for development/testing purposes.",
     )
     async def init_stripe_test_payment(
         self,
@@ -616,7 +609,7 @@ class CloudFunctionsPlugin:
                 "amount": amount,
                 "currency": currency,
                 "description": description,
-            }
+            },
         )
 
         if result["success"]:
@@ -625,7 +618,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="create_stripe_customer",
-        description="Create a new Stripe customer record for payment processing."
+        description="Create a new Stripe customer record for payment processing.",
     )
     async def create_stripe_customer(
         self,
@@ -648,7 +641,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_agent_crm_products",
-        description="Get all products formatted for CRM/agent use including courses, workshops, and services with pricing."
+        description="Get all products formatted for CRM/agent use including courses, workshops, and services with pricing.",
     )
     async def get_agent_crm_products(self) -> str:
         """Get CRM products via Cloud Function - formatted for agent analysis."""
@@ -660,7 +653,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="get_tutorials",
-        description="Get list of available tutorials and educational content."
+        description="Get list of available tutorials and educational content.",
     )
     async def get_tutorials(
         self,
@@ -680,7 +673,7 @@ class CloudFunctionsPlugin:
 
     @kernel_function(
         name="add_fcm_token",
-        description="Register a Firebase Cloud Messaging token for push notifications."
+        description="Register a Firebase Cloud Messaging token for push notifications.",
     )
     async def add_fcm_token(
         self,
@@ -695,7 +688,7 @@ class CloudFunctionsPlugin:
                 "userId": user_id,
                 "fcmToken": fcm_token,
                 "deviceType": device_type,
-            }
+            },
         )
 
         if result["success"]:

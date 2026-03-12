@@ -93,7 +93,9 @@ class BaseDataModel(KernelBaseModel):
     """Base data model with common fields."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 # Basic message class for Semantic Kernel compatibility
@@ -448,7 +450,9 @@ class SKFunctionRegistry:
         self.kernel = kernel
         self.functions = {}
 
-    def register_function(self, name: str, function_obj, description: Optional[str] = None):
+    def register_function(
+        self, name: str, function_obj, description: Optional[str] = None
+    ):
         """Register a function with the kernel."""
         self.functions[name] = {
             "function": function_obj,

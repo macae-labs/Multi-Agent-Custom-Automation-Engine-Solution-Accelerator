@@ -6,6 +6,7 @@ This module handles:
 3. Calculating aggregated metrics and trends
 4. No manual binning - uses Cosmos SQL aggregation with bucket calculation
 """
+
 import logging
 import math
 import uuid
@@ -231,13 +232,27 @@ class ObservabilitySnapshotStore:
                     timeline.append(
                         {
                             "bucket": bucket,
-                            "bucket_timestamp": datetime.utcfromtimestamp(bucket).isoformat(),
-                            "avg_health_score": float(item.get("avg_health_score", 0.0) or 0.0),
-                            "min_health_score": float(item.get("min_health_score", 0.0) or 0.0),
-                            "max_health_score": float(item.get("max_health_score", 0.0) or 0.0),
-                            "avg_error_rate": float(item.get("avg_error_rate", 0.0) or 0.0),
-                            "avg_completion_rate": float(item.get("avg_completion_rate", 0.0) or 0.0),
-                            "avg_error_count": float(item.get("avg_error_count", 0.0) or 0.0),
+                            "bucket_timestamp": datetime.utcfromtimestamp(
+                                bucket
+                            ).isoformat(),
+                            "avg_health_score": float(
+                                item.get("avg_health_score", 0.0) or 0.0
+                            ),
+                            "min_health_score": float(
+                                item.get("min_health_score", 0.0) or 0.0
+                            ),
+                            "max_health_score": float(
+                                item.get("max_health_score", 0.0) or 0.0
+                            ),
+                            "avg_error_rate": float(
+                                item.get("avg_error_rate", 0.0) or 0.0
+                            ),
+                            "avg_completion_rate": float(
+                                item.get("avg_completion_rate", 0.0) or 0.0
+                            ),
+                            "avg_error_count": float(
+                                item.get("avg_error_count", 0.0) or 0.0
+                            ),
                             "sample_count": int(item.get("sample_count", 0) or 0),
                         }
                     )
@@ -410,7 +425,9 @@ class ObservabilitySnapshotStore:
 
         health_scores = [t["avg_health_score"] for t in timeline]
         avg = sum(health_scores) / len(health_scores)
-        stddev = (sum((x - avg) ** 2 for x in health_scores) / len(health_scores)) ** 0.5
+        stddev = (
+            sum((x - avg) ** 2 for x in health_scores) / len(health_scores)
+        ) ** 0.5
 
         if math.isclose(stddev, 0.0):
             return anomalies
@@ -419,11 +436,15 @@ class ObservabilitySnapshotStore:
         for i, datapoint in enumerate(timeline):
             score = datapoint["avg_health_score"]
             if abs(score - avg) > 2 * stddev:
-                anomalies.append({
-                    "timestamp": datapoint["bucket_timestamp"],
-                    "health_score": score,
-                    "deviation": abs(score - avg) / stddev if stddev > 0 else 0,
-                    "severity": "high" if abs(score - avg) > 3 * stddev else "medium",
-                })
+                anomalies.append(
+                    {
+                        "timestamp": datapoint["bucket_timestamp"],
+                        "health_score": score,
+                        "deviation": abs(score - avg) / stddev if stddev > 0 else 0,
+                        "severity": "high"
+                        if abs(score - avg) > 3 * stddev
+                        else "medium",
+                    }
+                )
 
         return anomalies

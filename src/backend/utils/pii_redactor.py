@@ -19,6 +19,7 @@ from enum import Enum
 
 class PIIType(Enum):
     """Types of PII that can be detected and redacted."""
+
     EMAIL = "email"
     PHONE = "phone"
     SSN = "ssn"
@@ -30,6 +31,7 @@ class PIIType(Enum):
 @dataclass
 class PIIToken:
     """Represents a redacted PII value."""
+
     token: str
     original_value: str
     pii_type: PIIType
@@ -39,6 +41,7 @@ class PIIToken:
 @dataclass
 class RedactionResult:
     """Result of PII redaction."""
+
     redacted_text: str
     tokens: List[PIIToken] = field(default_factory=list)
     token_map: Dict[str, str] = field(default_factory=dict)  # token -> original
@@ -69,21 +72,14 @@ class PIIRedactor:
     # Regex patterns for PII detection
     PATTERNS = {
         PIIType.EMAIL: re.compile(
-            r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-            re.IGNORECASE
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", re.IGNORECASE
         ),
         PIIType.PHONE: re.compile(
-            r'(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b'
+            r"(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b"
         ),
-        PIIType.SSN: re.compile(
-            r'\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b'
-        ),
-        PIIType.CREDIT_CARD: re.compile(
-            r'\b(?:\d{4}[-.\s]?){3}\d{4}\b'
-        ),
-        PIIType.IP_ADDRESS: re.compile(
-            r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        ),
+        PIIType.SSN: re.compile(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b"),
+        PIIType.CREDIT_CARD: re.compile(r"\b(?:\d{4}[-.\s]?){3}\d{4}\b"),
+        PIIType.IP_ADDRESS: re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     }
 
     # Token format for each PII type
@@ -127,12 +123,9 @@ class PIIRedactor:
 
         for pii_type, pattern in self.PATTERNS.items():
             for match in pattern.finditer(text):
-                all_matches.append((
-                    match.start(),
-                    match.end(),
-                    match.group(),
-                    pii_type
-                ))
+                all_matches.append(
+                    (match.start(), match.end(), match.group(), pii_type)
+                )
 
         # Sort by position (start) to process in order
         all_matches.sort(key=lambda x: x[0])
@@ -149,12 +142,14 @@ class PIIRedactor:
             token = self._get_next_token(pii_type)
             redacted_parts.append(token)
 
-            tokens.append(PIIToken(
-                token=token,
-                original_value=value,
-                pii_type=pii_type,
-                position=(start, end)
-            ))
+            tokens.append(
+                PIIToken(
+                    token=token,
+                    original_value=value,
+                    pii_type=pii_type,
+                    position=(start, end),
+                )
+            )
             token_map[token] = value
 
             last_end = end
@@ -165,21 +160,21 @@ class PIIRedactor:
         redacted_text = "".join(redacted_parts)
 
         if tokens:
-            logging.info(f"PIIRedactor: Redacted {len(tokens)} PII items: {[t.pii_type.value for t in tokens]}")
+            logging.info(
+                f"PIIRedactor: Redacted {len(tokens)} PII items: {[t.pii_type.value for t in tokens]}"
+            )
 
         return RedactionResult(
-            redacted_text=redacted_text,
-            tokens=tokens,
-            token_map=token_map
+            redacted_text=redacted_text, tokens=tokens, token_map=token_map
         )
 
     def is_token(self, text: str) -> bool:
         """Check if text looks like a PII token."""
-        return bool(re.match(r'\{\{[A-Z]+_\d+\}\}', text))
+        return bool(re.match(r"\{\{[A-Z]+_\d+\}\}", text))
 
     def extract_tokens(self, text: str) -> List[str]:
         """Extract all PII tokens from text."""
-        return re.findall(r'\{\{[A-Z]+_\d+\}\}', text)
+        return re.findall(r"\{\{[A-Z]+_\d+\}\}", text)
 
 
 class PIIContext:

@@ -11,7 +11,7 @@ Architecture:
 
 Example usage in a tool:
     from connectors import get_graph_connector, get_database_connector
-    
+
     graph = get_graph_connector()
     await graph.send_email(to="user@company.com", subject="Welcome", body="...")
 """

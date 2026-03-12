@@ -1,4 +1,5 @@
 """Base adapter interface for all external service integrations."""
+
 from __future__ import annotations
 
 import json
@@ -95,7 +96,10 @@ class BaseAdapter(ABC):
     ) -> ToolExecutionResult:
         """Standard execution wrapper for provider operations."""
         started = time.perf_counter()
-        audit_meta: Dict[str, Any] = {"provider_id": self.provider_id, "tool_name": tool_name}
+        audit_meta: Dict[str, Any] = {
+            "provider_id": self.provider_id,
+            "tool_name": tool_name,
+        }
 
         try:
             credentials = await self._get_credentials()

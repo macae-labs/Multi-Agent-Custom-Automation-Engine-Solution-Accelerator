@@ -4,9 +4,13 @@ from typing import Any, List, Optional, cast
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
 from kernel_agents.agent_base import BaseAgent
-from models.messages_kernel import (AgentMessage, AgentType,
-                                    HumanClarification, HumanFeedback,
-                                    StepStatus)
+from models.messages_kernel import (
+    AgentMessage,
+    AgentType,
+    HumanClarification,
+    HumanFeedback,
+    StepStatus,
+)
 from semantic_kernel.functions.kernel_function import KernelFunction
 
 

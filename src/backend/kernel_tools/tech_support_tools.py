@@ -21,7 +21,9 @@ class TechSupportTools:
         result = await graph.send_welcome_email(employee_name, email_address)
 
         if not result.get("success") and not result.get("demo_mode"):
-            raise RuntimeError(f"Failed to send email: {result.get('error', 'Unknown error')}")
+            raise RuntimeError(
+                f"Failed to send email: {result.get('error', 'Unknown error')}"
+            )
 
         demo_tag = "[DEMO] " if result.get("demo_mode") else ""
 
@@ -246,9 +248,7 @@ class TechSupportTools:
         )
 
     @staticmethod
-    @kernel_function(
-        description="Set up an email signature for an employee."
-    )
+    @kernel_function(description="Set up an email signature for an employee.")
     async def set_up_email_signature(employee_name: str, signature: str) -> str:
         # Placeholder implementation since set_up_email_signature does not exist on GraphConnector
         demo_tag = "[DEMO] "
@@ -374,7 +374,9 @@ class TechSupportTools:
             definition_id = None
 
             agent_instance = cache.get(agent_type)
-            definition = getattr(agent_instance, "definition", None) if agent_instance else None
+            definition = (
+                getattr(agent_instance, "definition", None) if agent_instance else None
+            )
             if definition is not None:
                 definition_id = getattr(definition, "id", None)
             if definition_id and client:

@@ -14,8 +14,12 @@ from azure.ai.agents.models import (
 )
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
-from models.messages_kernel import (ActionRequest, ActionResponse,
-                                    AgentMessage, StepStatus)
+from models.messages_kernel import (
+    ActionRequest,
+    ActionResponse,
+    AgentMessage,
+    StepStatus,
+)
 from semantic_kernel.agents.azure_ai.agent_thread_actions import AgentThreadActions
 from semantic_kernel.agents.open_ai.run_polling_options import RunPollingOptions
 from semantic_kernel.connectors.ai.function_calling_utils import (
@@ -46,7 +50,9 @@ def _patch_tool_validation_for_prefixed_kernel_names() -> None:
                 normalized.add(name.split(sep)[-1])
         return normalized
 
-    def _validate_function_tools_registered(tools: list[Any], funcs: list[Any]) -> tuple[list[Any], set[str]]:
+    def _validate_function_tools_registered(
+        tools: list[Any], funcs: list[Any]
+    ) -> tuple[list[Any], set[str]]:
         function_tool_names: set[str] = set()
         valid_tools: list[Any] = []
         for tool in tools:
@@ -158,7 +164,9 @@ class BaseAgent(AzureAIAgent):
         # Call AzureAIAgent constructor with required client and definition
         super().__init__(
             deployment_name=None,  # Set as needed
-            plugins=cast(Any, tools),  # SK expects plugin objects; runtime accepts current list.
+            plugins=cast(
+                Any, tools
+            ),  # SK expects plugin objects; runtime accepts current list.
             endpoint=None,  # Set as needed
             api_version=None,  # Set as needed
             token=None,  # Set as needed
@@ -220,7 +228,9 @@ class BaseAgent(AzureAIAgent):
         return match.group(1) if match else None
 
     @staticmethod
-    def _extract_tool_names_from_local_tools(tools: Optional[List[KernelFunction]]) -> set[str]:
+    def _extract_tool_names_from_local_tools(
+        tools: Optional[List[KernelFunction]],
+    ) -> set[str]:
         names: set[str] = set()
         for tool in tools or []:
             metadata = getattr(tool, "metadata", None)
@@ -350,7 +360,9 @@ class BaseAgent(AzureAIAgent):
         # Build a per-invocation context window (system prompt + last 10 turns max)
         # to avoid unbounded growth of the shared chat history across cached agent reuse.
         MAX_HISTORY_TURNS = 10
-        history_tail = self._chat_history[:1] + self._chat_history[-(MAX_HISTORY_TURNS * 2):]
+        history_tail = (
+            self._chat_history[:1] + self._chat_history[-(MAX_HISTORY_TURNS * 2) :]
+        )
         history_tail.extend(
             [
                 {"role": "assistant", "content": action_request.action},
@@ -382,7 +394,9 @@ class BaseAgent(AzureAIAgent):
                 )
             )
             still_missing = [
-                fn for fn in missing_remote_functions if not self._definition_has_function(fn)
+                fn
+                for fn in missing_remote_functions
+                if not self._definition_has_function(fn)
             ]
             if still_missing:
                 logging.error(
@@ -399,7 +413,9 @@ class BaseAgent(AzureAIAgent):
                 try:
                     thread = None
                     available_tools_text = (
-                        ", ".join(sorted(local_tool_names)) if local_tool_names else "none"
+                        ", ".join(sorted(local_tool_names))
+                        if local_tool_names
+                        else "none"
                     )
                     required_fn_text = (
                         ", ".join(mentioned_functions) if mentioned_functions else ""
@@ -631,7 +647,9 @@ class BaseAgent(AzureAIAgent):
         """
         try:
             desired_tool_defs = BaseAgent._build_function_tool_definitions(tools)
-            desired_tool_names = BaseAgent._extract_function_tool_names(desired_tool_defs)
+            desired_tool_names = BaseAgent._extract_function_tool_names(
+                desired_tool_defs
+            )
 
             # Get the AIProjectClient
             if client is None:
@@ -646,17 +664,21 @@ class BaseAgent(AzureAIAgent):
                 try:
                     # Extract data from the dict sent by Semantic Kernel
                     js_data = response_format.get("json_schema", {})
-                    
+
                     # Re-package as strong objects from Azure SDK
                     response_format = ResponseFormatJsonSchemaType(
                         json_schema=ResponseFormatJsonSchema(
                             name=js_data.get("name", "PlannerSchema"),
-                            description=js_data.get("description", "Structured response"),
-                            schema=js_data.get("schema", {})
+                            description=js_data.get(
+                                "description", "Structured response"
+                            ),
+                            schema=js_data.get("schema", {}),
                         )
                     )
                 except Exception as e:
-                    logging.warning(f"Failed to convert response_format: {e}. Keeping original.")
+                    logging.warning(
+                        f"Failed to convert response_format: {e}. Keeping original."
+                    )
 
             # # First try to get an existing agent with this name as assistant_id
             try:
@@ -671,7 +693,9 @@ class BaseAgent(AzureAIAgent):
                 if agent_id is not None:
                     logging.info(f"Agent with ID {agent_id} exists.")
                     existing_definition = await client.agents.get_agent(agent_id)
-                    existing_instructions = getattr(existing_definition, "instructions", "") or ""
+                    existing_instructions = (
+                        getattr(existing_definition, "instructions", "") or ""
+                    )
                     existing_response_format = getattr(
                         existing_definition, "response_format", None
                     )

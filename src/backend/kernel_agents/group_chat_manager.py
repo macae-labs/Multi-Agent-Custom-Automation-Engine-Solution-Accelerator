@@ -7,9 +7,18 @@ from context.cosmos_memory_kernel import CosmosMemoryContext
 from event_utils import track_event_if_configured
 from kernel_agents.agent_base import BaseAgent
 from utils_date import format_date_for_user
-from models.messages_kernel import (ActionRequest, AgentMessage, AgentType,
-                                    HumanFeedback, HumanFeedbackStatus, InputTask,
-                                    Plan, Step, StepStatus)
+from models.messages_kernel import (
+    ActionRequest,
+    AgentMessage,
+    AgentType,
+    HumanFeedback,
+    HumanFeedbackStatus,
+    InputTask,
+    Plan,
+    Step,
+    StepStatus,
+)
+
 # pylint: disable=E0611
 from semantic_kernel.functions.kernel_function import KernelFunction
 
@@ -314,7 +323,9 @@ class GroupChatManager(BaseAgent):
                         plan_id=target_step.plan_id,
                         session_id=target_step.session_id,
                         user_id=target_step.user_id,
-                        action=(message.updated_action or message.human_feedback or "").strip(),
+                        action=(
+                            message.updated_action or message.human_feedback or ""
+                        ).strip(),
                         agent=target_step.agent,
                         status=StepStatus.planned,
                         planner_rationale="Follow-up user message routed in active plan context.",
@@ -328,7 +339,9 @@ class GroupChatManager(BaseAgent):
                         await self._execute_step(message.session_id, follow_up_step)
                     else:
                         follow_up_step.status = StepStatus.rejected
-                        follow_up_step.human_approval_status = HumanFeedbackStatus.rejected
+                        follow_up_step.human_approval_status = (
+                            HumanFeedbackStatus.rejected
+                        )
                         await self._memory_store.update_step(follow_up_step)
                     return
 
@@ -529,9 +542,7 @@ class GroupChatManager(BaseAgent):
             formatted_string += (
                 f"{AgentType.GROUP_CHAT_MANAGER.value}: {prior_step.action}\n"
             )
-            formatted_string += (
-                f"{prior_step.agent.value}: {prior_step.agent_reply}\n"
-            )
+            formatted_string += f"{prior_step.agent.value}: {prior_step.agent_reply}\n"
         formatted_string += "<conversation_history \\>"
 
         logging.info(f"Formatted string: {formatted_string}")

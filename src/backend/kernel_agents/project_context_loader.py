@@ -59,14 +59,12 @@ class ProjectContextLoader:
 
     @staticmethod
     async def load_project_profile(
-        memory_store: CosmosMemoryContext,
-        session_id: str
+        memory_store: CosmosMemoryContext, session_id: str
     ) -> Optional[ProjectProfile]:
         """Load project profile from Cosmos DB."""
         try:
             profile_data = await memory_store.get_data_by_type_and_session_id(
-                "project_profile",
-                session_id
+                "project_profile", session_id
             )
             if profile_data:
                 return ProjectProfile.model_validate(profile_data[-1])
@@ -107,8 +105,7 @@ class ProjectContextLoader:
             not enabled_tools or "external_api" in enabled_tools
         ):
             api_plugin = ExternalAPIPlugin(
-                base_url=profile.api_base_url,
-                api_key=profile.api_key or ""
+                base_url=profile.api_base_url, api_key=profile.api_key or ""
             )
             plugins.append(KernelFunction.from_method(api_plugin.call_api))
 
@@ -185,18 +182,25 @@ class ProjectContextLoader:
             custom_config={},
             credential_bindings=[],
         )
-        plugins: List[KernelFunction] = ProjectContextLoader.create_plugins_from_profile(
-            fallback_profile,
-            session_id=session_id,
-            user_id=user_id,
-            agent_type=agent_type,
+        plugins: List[KernelFunction] = (
+            ProjectContextLoader.create_plugins_from_profile(
+                fallback_profile,
+                session_id=session_id,
+                user_id=user_id,
+                agent_type=agent_type,
+            )
         )
         logging.info(
             "Loaded fallback project plugins for session %s: %s",
             session_id,
-            sorted(set(
-                str(getattr(getattr(p, "metadata", None), "name", None) or getattr(p, "name", ""))
-                for p in plugins
-            )),
+            sorted(
+                set(
+                    str(
+                        getattr(getattr(p, "metadata", None), "name", None)
+                        or getattr(p, "name", "")
+                    )
+                    for p in plugins
+                )
+            ),
         )
         return plugins

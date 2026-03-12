@@ -8,7 +8,6 @@ from typing import get_type_hints
 
 
 class ProcurementTools:
-
     formatting_instructions = "Instructions: returning the output of this function call verbatim to the user in markdown. Then write AGENT SUMMARY: and then include a summary of what you did."
     agent_name = AgentType.PROCUREMENT.value
 

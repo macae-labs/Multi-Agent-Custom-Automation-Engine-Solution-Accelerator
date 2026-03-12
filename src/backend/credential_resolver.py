@@ -1,4 +1,5 @@
 """Credential resolution service using Azure Key Vault."""
+
 import json
 import logging
 from typing import Dict, Optional
@@ -27,7 +28,7 @@ class CredentialResolver:
             # Use Key Vault URL from config or default
             kv_url = config._get_optional(
                 "AZURE_KEY_VAULT_URL",
-                "https://yellowstkeyvault8df0efc3.vault.azure.net/"
+                "https://yellowstkeyvault8df0efc3.vault.azure.net/",
             )
             if not kv_url:
                 raise ValueError("AZURE_KEY_VAULT_URL not configured")
@@ -38,9 +39,7 @@ class CredentialResolver:
         return self._kv_client
 
     async def resolve_credentials(
-        self,
-        project_id: str,
-        provider_id: str
+        self, project_id: str, provider_id: str
     ) -> Optional[Dict[str, str]]:
         """Resolve credentials for a project/provider from Key Vault.
 
@@ -71,7 +70,9 @@ class CredentialResolver:
             credentials = json.loads(secret.value)
             # Cache for this session
             self._cache[cache_key] = credentials
-            logging.info(f"Resolved credentials for {provider_id} in project {project_id}")
+            logging.info(
+                f"Resolved credentials for {provider_id} in project {project_id}"
+            )
             return credentials
 
         except Exception as e:
@@ -79,10 +80,7 @@ class CredentialResolver:
             return None
 
     async def store_credentials(
-        self,
-        project_id: str,
-        provider_id: str,
-        credentials: Dict[str, str]
+        self, project_id: str, provider_id: str, credentials: Dict[str, str]
     ) -> str:
         """Store credentials in Key Vault and return secret URI.
 
@@ -98,18 +96,19 @@ class CredentialResolver:
             secret_name = f"project-{project_id}-{provider_id}".replace("_", "-")
 
             kv_client = self._get_keyvault_client()
-            secret = await kv_client.set_secret(
-                secret_name,
-                json.dumps(credentials)
-            )
+            secret = await kv_client.set_secret(secret_name, json.dumps(credentials))
 
             # Invalidate cache
             cache_key = f"{project_id}:{provider_id}"
             self._cache.pop(cache_key, None)
 
-            logging.info(f"Stored credentials for {provider_id} in project {project_id}")
+            logging.info(
+                f"Stored credentials for {provider_id} in project {project_id}"
+            )
             if secret.id is None:
-                raise RuntimeError(f"Secret URI for {provider_id} in project {project_id} is None")
+                raise RuntimeError(
+                    f"Secret URI for {provider_id} in project {project_id} is None"
+                )
             return secret.id
         except Exception as e:
             logging.error(f"Failed to store credentials for {provider_id}: {e}")
@@ -122,7 +121,9 @@ class CredentialResolver:
                 await self._kv_client.close()
                 logging.info("CredentialResolver SecretClient closed successfully")
             except Exception as exc:
-                logging.warning("Error closing CredentialResolver SecretClient: %s", exc)
+                logging.warning(
+                    "Error closing CredentialResolver SecretClient: %s", exc
+                )
             finally:
                 self._kv_client = None
 

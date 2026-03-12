@@ -84,7 +84,9 @@ class ProductTools:
         start_of_month = datetime(now.year, now.month, 1)
         start_of_month_string = start_of_month.strftime("%Y-%m-%d")
         formatted_date = format_date_for_user(start_of_month_string)
-        return f"## Billing Date\nYour most recent billing date was **{formatted_date}**."
+        return (
+            f"## Billing Date\nYour most recent billing date was **{formatted_date}**."
+        )
 
     @staticmethod
     @kernel_function(

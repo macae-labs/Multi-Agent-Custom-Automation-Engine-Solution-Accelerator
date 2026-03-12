@@ -101,7 +101,10 @@ class TestPIIRedactor:
         generated = "I will send an email to {{EMAIL_1}} regarding the meeting."
         restored = result.rehydrate(generated)
 
-        assert restored == "I will send an email to john@example.com regarding the meeting."
+        assert (
+            restored
+            == "I will send an email to john@example.com regarding the meeting."
+        )
 
     def test_is_token(self):
         """Test token detection."""
@@ -236,7 +239,9 @@ class TestContentFilterScenario:
 
         # Re-hydrate for actual execution
         actual_action = ctx.rehydrate(model_response_action)
-        assert actual_action == "Send a welcome email to John at yellowstone413g@gmail.com"
+        assert (
+            actual_action == "Send a welcome email to John at yellowstone413g@gmail.com"
+        )
 
     def test_complex_pii_scenario(self):
         """Test complex scenario with multiple PII types."""

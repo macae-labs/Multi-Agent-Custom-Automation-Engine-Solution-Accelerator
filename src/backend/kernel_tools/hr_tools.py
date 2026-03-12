@@ -73,8 +73,7 @@ class HrTools:
 
         # Schedule the orientation
         result = await calendar.schedule_orientation(
-            employee_name=employee_name,
-            date=parsed_date
+            employee_name=employee_name, date=parsed_date
         )
 
         if result.get("success"):
@@ -180,7 +179,9 @@ class HrTools:
         result = await db.enroll_training(employee_name, program_name)
 
         # Schedule training session
-        training_date = datetime.now().replace(hour=10, minute=0, second=0, microsecond=0)
+        training_date = datetime.now().replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
         await calendar.schedule_training(employee_name, program_name, training_date)
 
         if result.get("success"):
@@ -198,7 +199,9 @@ class HrTools:
                 f"{HrTools.formatting_instructions}"
             )
         else:
-            return f"Failed to enroll in training: {result.get('error', 'Unknown error')}"
+            return (
+                f"Failed to enroll in training: {result.get('error', 'Unknown error')}"
+            )
 
     @staticmethod
     @kernel_function(description="Provide the employee handbook to a new employee.")
@@ -213,7 +216,9 @@ class HrTools:
 
         # Get employee info
         emp_result = await db.get_employee_by_name(employee_name)
-        employee_email = emp_result.get("employee", {}).get("email", f"{employee_name.lower().replace(' ', '.')}@company.com")
+        employee_email = emp_result.get("employee", {}).get(
+            "email", f"{employee_name.lower().replace(' ', '.')}@company.com"
+        )
 
         # Send email with handbook
         result = await graph.send_email(
@@ -230,7 +235,7 @@ class HrTools:
                 <li>Contact information</li>
             </ul>
             <p>Please review this document carefully and reach out to HR with any questions.</p>
-            """
+            """,
         )
 
         demo_tag = "[DEMO] " if result.get("demo_mode") else ""
@@ -325,7 +330,7 @@ class HrTools:
         result = await db.add_emergency_contact(
             employee_name=employee_name,
             contact_name=contact_name,
-            contact_phone=contact_phone
+            contact_phone=contact_phone,
         )
 
         if result.get("success"):
@@ -526,7 +531,9 @@ class HrTools:
         )
 
     @staticmethod
-    @kernel_function(description="Conduct an exit interview for an employee leaving the company.")
+    @kernel_function(
+        description="Conduct an exit interview for an employee leaving the company."
+    )
     async def conduct_exit_interview(employee_name: str) -> str:
         """Conduct an exit interview for a departing employee.
 
@@ -536,12 +543,14 @@ class HrTools:
         calendar = get_calendar_connector()
 
         # Schedule exit interview
-        interview_date = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
+        interview_date = datetime.now().replace(
+            hour=14, minute=0, second=0, microsecond=0
+        )
         await calendar.schedule_event(
             title=f"Exit Interview - {employee_name}",
             start_time=interview_date,
             duration_minutes=60,
-            event_type="exit_interview"
+            event_type="exit_interview",
         )
 
         demo_tag = "[DEMO] "
@@ -699,7 +708,8 @@ class HrTools:
         return (
             f"##### {demo_tag}Employee Directory\n\n"
             f"**Total Employees:** {len(employees)}\n\n"
-            + "\n".join(directory_lines) + "\n\n"
+            + "\n".join(directory_lines)
+            + "\n\n"
             f"AGENT SUMMARY: I retrieved the employee directory with {len(employees)} employees.\n"
             f"{HrTools.formatting_instructions}"
         )
@@ -776,8 +786,7 @@ class HrTools:
         emp_result = await db.get_employee_by_name(employee_name)
         if emp_result.get("success"):
             await db.update_employee(
-                emp_result["employee"]["id"],
-                department=new_department
+                emp_result["employee"]["id"], department=new_department
             )
 
         demo_tag = "[DEMO] " if emp_result.get("demo_mode") else ""
@@ -809,7 +818,7 @@ class HrTools:
             title=f"Team Building: {activity_name}",
             start_time=parsed_date,
             duration_minutes=180,  # 3 hours
-            event_type="team_building"
+            event_type="team_building",
         )
 
         demo_tag = "[DEMO] "
@@ -873,7 +882,9 @@ class HrTools:
         )
 
     @staticmethod
-    @kernel_function(description="Facilitate the setup for remote work for an employee.")
+    @kernel_function(
+        description="Facilitate the setup for remote work for an employee."
+    )
     async def facilitate_remote_work_setup(employee_name: str) -> str:
         """Facilitate remote work setup for an employee.
 
@@ -980,7 +991,10 @@ class HrTools:
         kernel_functions = {}
 
         for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
-            if name.startswith("_") or name in ["get_all_kernel_functions", "generate_tools_json_doc"]:
+            if name.startswith("_") or name in [
+                "get_all_kernel_functions",
+                "generate_tools_json_doc",
+            ]:
                 continue
 
             if hasattr(method, "__kernel_function__"):
@@ -999,7 +1013,10 @@ class HrTools:
         tools_list = []
 
         for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
-            if name.startswith("_") or name in ["generate_tools_json_doc", "get_all_kernel_functions"]:
+            if name.startswith("_") or name in [
+                "generate_tools_json_doc",
+                "get_all_kernel_functions",
+            ]:
                 continue
 
             if hasattr(method, "__kernel_function__"):

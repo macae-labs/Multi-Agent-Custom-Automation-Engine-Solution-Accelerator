@@ -31,38 +31,46 @@ def mock_env() -> Iterator[None]:
 def test_app_config_initialization(mock_env):
     """Test AppConfig initialization with environment variables."""
     from app_config import AppConfig
-    
+
     config = AppConfig()
     assert config.COSMOSDB_ENDPOINT == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
     assert config.COSMOSDB_DATABASE == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
-    assert config.AZURE_OPENAI_DEPLOYMENT_NAME == MOCK_ENV_VARS["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    assert (
+        config.AZURE_OPENAI_DEPLOYMENT_NAME
+        == MOCK_ENV_VARS["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    )
 
 
 def test_get_required_config(mock_env):
     """Test _get_required method."""
     from app_config import AppConfig
-    
+
     config = AppConfig()
-    assert config._get_required("COSMOSDB_ENDPOINT") == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
+    assert (
+        config._get_required("COSMOSDB_ENDPOINT") == MOCK_ENV_VARS["COSMOSDB_ENDPOINT"]
+    )
 
 
 def test_get_optional_config(mock_env):
     """Test _get_optional method."""
     from app_config import AppConfig
-    
+
     config = AppConfig()
     assert config._get_optional("NON_EXISTENT_VAR", "default_value") == "default_value"
-    assert config._get_optional("COSMOSDB_DATABASE", "default_db") == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
+    assert (
+        config._get_optional("COSMOSDB_DATABASE", "default_db")
+        == MOCK_ENV_VARS["COSMOSDB_DATABASE"]
+    )
 
 
 def test_get_bool_config(mock_env):
     """Test _get_bool method."""
     from app_config import AppConfig
-    
+
     with patch.dict(os.environ, {"FEATURE_ENABLED": "true"}):
         config = AppConfig()
         assert config._get_bool("FEATURE_ENABLED") is True
-    
+
     with patch.dict(os.environ, {"FEATURE_ENABLED": "false"}):
         config = AppConfig()
         assert config._get_bool("FEATURE_ENABLED") is False

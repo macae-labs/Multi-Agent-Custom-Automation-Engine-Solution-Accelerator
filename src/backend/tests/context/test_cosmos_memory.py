@@ -25,16 +25,13 @@ def mock_env_variables(monkeypatch):
 @pytest.mark.asyncio
 async def test_cosmos_memory_context_initialization(mock_env_variables):
     """Test CosmosMemoryContext initialization."""
-    with patch('app_config.AppConfig.get_cosmos_database_client') as mock_db_client:
+    with patch("app_config.AppConfig.get_cosmos_database_client") as mock_db_client:
         mock_container = AsyncMock()
         mock_database = MagicMock()
         mock_database.get_container_client.return_value = mock_container
         mock_db_client.return_value = mock_database
-        
-        context = CosmosMemoryContext(
-            session_id="test_session",
-            user_id="test_user"
-        )
-        
+
+        context = CosmosMemoryContext(session_id="test_session", user_id="test_user")
+
         assert context.session_id == "test_session"
         assert context.user_id == "test_user"

@@ -5,12 +5,13 @@ import sys
 import asyncio
 from app_config import config
 
+
 async def main():
     """Validate all observability components."""
     print("=" * 60)
     print("OBSERVABILITY COMPONENTS VALIDATION")
     print("=" * 60)
-    
+
     # Test 1: Import context injector
     print("\n1. Testing ContextInjector import...")
     try:
@@ -18,20 +19,24 @@ async def main():
             HealthAwareContextInjector,
             AgentHealthDecisionHelper,
         )
+
         print("   ✅ ContextInjector imported successfully")
     except Exception as e:
         print(f"   ❌ Failed to import ContextInjector: {e}")
         return False
-    
+
     # Test 2: Import snapshot store
     print("\n2. Testing ObservabilitySnapshotStore import...")
     try:
-        from observability.observability_snapshot_store import ObservabilitySnapshotStore
+        from observability.observability_snapshot_store import (
+            ObservabilitySnapshotStore,
+        )
+
         print("   ✅ ObservabilitySnapshotStore imported successfully")
     except Exception as e:
         print(f"   ❌ Failed to import ObservabilitySnapshotStore: {e}")
         return False
-    
+
     # Test 3: Test health context injection
     print("\n3. Testing health context injection...")
     try:
@@ -47,14 +52,14 @@ async def main():
                 "aws_s3": {
                     "is_healthy": True,
                     "response_time_ms": 50.0,
-                }
+                },
             },
             "app_kpis": {
                 "active_sessions": 5,
                 "total_sessions": 10,
                 "error_rate": 0.5,
             },
-            "errors": []
+            "errors": [],
         }
         base_msg = "You are a helpful tech support agent."
         enhanced = HealthAwareContextInjector.inject_health_snapshot(
@@ -73,9 +78,7 @@ async def main():
     print("\n4. Testing AgentHealthDecisionHelper...")
     try:
         should_proceed, reason = AgentHealthDecisionHelper.should_attempt_operation(
-            mock_snapshot,
-            ["firestore", "aws_s3"],
-            "test_operation"
+            mock_snapshot, ["firestore", "aws_s3"], "test_operation"
         )
         if should_proceed:
             print(f"   ✅ Decision helper working: {reason}")
@@ -126,6 +129,7 @@ async def main():
     print("\n6. Testing AppHealthMonitor basics...")
     try:
         from observability.app_health_monitor import AppHealthMonitor, AppHealthSnapshot
+
         _ = AppHealthMonitor  # force symbol usage for static analysis
         _ = AppHealthSnapshot
         print("   ✅ AppHealthMonitor imported successfully")
@@ -137,6 +141,7 @@ async def main():
     print("✅ ALL OBSERVABILITY COMPONENTS VALIDATED SUCCESSFULLY!")
     print("=" * 60)
     return True
+
 
 if __name__ == "__main__":
     try:

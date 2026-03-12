@@ -8,20 +8,24 @@ from adapters.base_adapter import BaseAdapter
 class FirestorePlugin:
     """Generic Firestore plugin using adapter for credential resolution."""
 
-    def __init__(self, project_id: str, collection_root: str, session_id: Optional[str] = None, user_id: Optional[str] = None):
+    def __init__(
+        self,
+        project_id: str,
+        collection_root: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ):
         self.project_id = project_id
         self.collection_root = collection_root
         self.session_id = session_id
         self.user_id = user_id
         self._adapter = FirestoreAdapter(
-            project_id=project_id,
-            session_id=session_id,
-            user_id=user_id
+            project_id=project_id, session_id=session_id, user_id=user_id
         )
 
     @kernel_function(
         name="read_firestore_doc",
-        description="Read a document from Firestore using its path (e.g., 'users/123')"
+        description="Read a document from Firestore using its path (e.g., 'users/123')",
     )
     async def read_document(
         self,
@@ -33,7 +37,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="get_document",
                 params={"full_path": doc_path.strip("/")},
-                tool_id="read_firestore_doc"
+                tool_id="read_firestore_doc",
             )
             if not result.success:
                 if result.credentials_required:
@@ -49,17 +53,21 @@ class FirestorePlugin:
 
     @kernel_function(
         name="write_firestore_doc",
-        description="Write document to Firestore collection. Use format: collection/document_id or just collection/ for auto-ID."
+        description="Write document to Firestore collection. Use format: collection/document_id or just collection/ for auto-ID.",
     )
     async def write_document(
         self,
-        doc_path: Annotated[str, "Document path as collection/document_id (e.g., 'users/user123') or just 'users/' for auto-ID or 'users/123/logs' for subcollection auto-ID"],
+        doc_path: Annotated[
+            str,
+            "Document path as collection/document_id (e.g., 'users/user123') or just 'users/' for auto-ID or 'users/123/logs' for subcollection auto-ID",
+        ],
         data: Annotated[str, "JSON data as string"],
     ) -> str:
         """Write document to Firestore using adapter. Supports auto-ID if doc_path is a collection or subcollection path (odd number of parts)."""
         try:
             import json
-            parts = [p for p in doc_path.strip('/').split('/') if p]
+
+            parts = [p for p in doc_path.strip("/").split("/") if p]
             if not parts:
                 return f"Error: doc_path must specify at least a collection, got: {doc_path}"
 
@@ -70,7 +78,7 @@ class FirestorePlugin:
                 if len(parts) == 1:
                     subpath = None
                 else:
-                    subpath = '/'.join(parts[1:])
+                    subpath = "/".join(parts[1:])
                 document_id = None
             else:
                 collection = parts[0]
@@ -79,13 +87,10 @@ class FirestorePlugin:
                     subpath = None
                 else:
                     document_id = parts[-1]
-                    subpath = '/'.join(parts[1:-1])
+                    subpath = "/".join(parts[1:-1])
 
             # Compose Firestore path for adapter
-            params = {
-                "collection": collection,
-                "data": json.loads(data)
-            }
+            params = {"collection": collection, "data": json.loads(data)}
             if document_id is not None:
                 params["document_id"] = document_id
             if subpath:
@@ -94,7 +99,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="create_document",
                 params=params,
-                tool_id="write_firestore_doc"
+                tool_id="write_firestore_doc",
             )
 
             if not result.success:
@@ -102,7 +107,7 @@ class FirestorePlugin:
                     return BaseAdapter.to_json(result)
                 return f"Error: {result.error}"
 
-            doc_id = result.result.get('document_id')
+            doc_id = result.result.get("document_id")
             return f"SUCCESS: Document '{doc_id}' written to collection '{collection}' with data: {data}"
 
         except Exception as e:
@@ -110,8 +115,7 @@ class FirestorePlugin:
             return f"Error: {str(e)}"
 
     @kernel_function(
-        name="list_firestore_collections",
-        description="List all Firestore collections"
+        name="list_firestore_collections", description="List all Firestore collections"
     )
     async def list_collections(self) -> str:
         """List all collections in Firestore."""
@@ -119,7 +123,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="list_collections",
                 params={},
-                tool_id="list_firestore_collections"
+                tool_id="list_firestore_collections",
             )
 
             if not result.success:
@@ -136,7 +140,7 @@ class FirestorePlugin:
 
     @kernel_function(
         name="list_firestore_documents",
-        description="List documents in a Firestore collection"
+        description="List documents in a Firestore collection",
     )
     async def list_documents(
         self,
@@ -164,7 +168,7 @@ class FirestorePlugin:
 
     @kernel_function(
         name="count_firestore_docs",
-        description="Count documents in a Firestore collection"
+        description="Count documents in a Firestore collection",
     )
     async def count_documents(
         self,
@@ -176,7 +180,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="count_documents",
                 params={"collection": collection},
-                tool_id="count_firestore_docs"
+                tool_id="count_firestore_docs",
             )
 
             if not result.success:
@@ -192,32 +196,34 @@ class FirestorePlugin:
 
     @kernel_function(
         name="query_firestore_docs",
-        description="Query documents from a Firestore collection with optional where clauses and limit. 'where' should be a JSON string list of clauses: [{field, operator, value}]."
+        description="Query documents from a Firestore collection with optional where clauses and limit. 'where' should be a JSON string list of clauses: [{field, operator, value}].",
     )
     async def query_documents(
         self,
         collection: Annotated[str, "Collection name (root level, no slashes)"],
-        where: Annotated[str, "JSON string list of where clauses: [{field, operator, value}]. Optional."],
-        limit: Annotated[int, "Maximum number of documents to return. Optional, default 10."] = 10,
+        where: Annotated[
+            str,
+            "JSON string list of where clauses: [{field, operator, value}]. Optional.",
+        ],
+        limit: Annotated[
+            int, "Maximum number of documents to return. Optional, default 10."
+        ] = 10,
     ) -> str:
         """Query documents in a collection with optional where clauses and limit."""
         try:
             import json
+
             where_clauses = []
             if where:
                 try:
                     where_clauses = json.loads(where)
                 except Exception as e:
                     return f"Error: Invalid 'where' JSON: {e}"
-            params = {
-                "collection": collection,
-                "limit": limit,
-                "where": where_clauses
-            }
+            params = {"collection": collection, "limit": limit, "where": where_clauses}
             result = await self._adapter.execute(
                 tool_name="query_documents",
                 params=params,
-                tool_id="query_firestore_docs"
+                tool_id="query_firestore_docs",
             )
             if not result.success:
                 if result.credentials_required:
@@ -230,29 +236,32 @@ class FirestorePlugin:
 
     @kernel_function(
         name="update_firestore_doc",
-        description="Update an existing document in Firestore. Requires collection/document_id as doc_path and data as JSON string."
+        description="Update an existing document in Firestore. Requires collection/document_id as doc_path and data as JSON string.",
     )
     async def update_document(
         self,
-        doc_path: Annotated[str, "Document path as collection/document_id (e.g., 'users/user123')"],
+        doc_path: Annotated[
+            str, "Document path as collection/document_id (e.g., 'users/user123')"
+        ],
         data: Annotated[str, "JSON data as string for fields to update"],
     ) -> str:
         """Update an existing document in Firestore using adapter."""
         try:
             import json
-            parts = [p for p in doc_path.strip('/').split('/') if p]
+
+            parts = [p for p in doc_path.strip("/").split("/") if p]
             if len(parts) != 2:
                 return f"Error: doc_path must be in the format 'collection/document_id', got: {doc_path}"
             collection, document_id = parts
             params = {
                 "collection": collection,
                 "document_id": document_id,
-                "data": json.loads(data)
+                "data": json.loads(data),
             }
             result = await self._adapter.execute(
                 tool_name="update_document",
                 params=params,
-                tool_id="update_firestore_doc"
+                tool_id="update_firestore_doc",
             )
             if not result.success:
                 if result.credentials_required:
@@ -265,26 +274,25 @@ class FirestorePlugin:
 
     @kernel_function(
         name="delete_firestore_doc",
-        description="Delete a document from Firestore. Requires collection/document_id as doc_path."
+        description="Delete a document from Firestore. Requires collection/document_id as doc_path.",
     )
     async def delete_document(
         self,
-        doc_path: Annotated[str, "Document path as collection/document_id (e.g., 'users/user123')"],
+        doc_path: Annotated[
+            str, "Document path as collection/document_id (e.g., 'users/user123')"
+        ],
     ) -> str:
         """Delete a document from Firestore using adapter."""
         try:
-            parts = [p for p in doc_path.strip('/').split('/') if p]
+            parts = [p for p in doc_path.strip("/").split("/") if p]
             if len(parts) != 2:
                 return f"Error: doc_path must be in the format 'collection/document_id', got: {doc_path}"
             collection, document_id = parts
-            params = {
-                "collection": collection,
-                "document_id": document_id
-            }
+            params = {"collection": collection, "document_id": document_id}
             result = await self._adapter.execute(
                 tool_name="delete_document",
                 params=params,
-                tool_id="delete_firestore_doc"
+                tool_id="delete_firestore_doc",
             )
             if not result.success:
                 if result.credentials_required:
@@ -297,7 +305,7 @@ class FirestorePlugin:
 
     @kernel_function(
         name="list_firestore_subcollections",
-        description="List subcollections of a Firestore document or collection. Accepts a document path (e.g., 'users/123') or a collection name (e.g., 'users') to discover subcollections from the first available document."
+        description="List subcollections of a Firestore document or collection. Accepts a document path (e.g., 'users/123') or a collection name (e.g., 'users') to discover subcollections from the first available document.",
     )
     async def list_subcollections(
         self,
@@ -308,7 +316,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="list_subcollections",
                 params={"doc_path": doc_path.strip("/")},
-                tool_id="list_firestore_subcollections"
+                tool_id="list_firestore_subcollections",
             )
             if not result.success:
                 if result.credentials_required:
@@ -324,11 +332,13 @@ class FirestorePlugin:
 
     @kernel_function(
         name="list_documents_at_path",
-        description="List documents at any Firestore path including subcollections (e.g., 'users/123/orders')"
+        description="List documents at any Firestore path including subcollections (e.g., 'users/123/orders')",
     )
     async def list_documents_at_path(
         self,
-        collection_path: Annotated[str, "Full collection path (e.g., 'users' or 'users/123/orders')"],
+        collection_path: Annotated[
+            str, "Full collection path (e.g., 'users' or 'users/123/orders')"
+        ],
         limit: Annotated[int, "Maximum documents to return"] = 25,
     ) -> str:
         """List documents at any collection path (root or subcollection)."""
@@ -336,7 +346,7 @@ class FirestorePlugin:
             result = await self._adapter.execute(
                 tool_name="list_documents_at_path",
                 params={"collection_path": collection_path.strip("/"), "limit": limit},
-                tool_id="list_documents_at_path"
+                tool_id="list_documents_at_path",
             )
             if not result.success:
                 if result.credentials_required:

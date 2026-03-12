@@ -13,7 +13,13 @@ from auth.auth_utils import get_authenticated_user_details
 from azure.monitor.opentelemetry import configure_azure_monitor
 from config_kernel import Config
 from event_utils import track_event_if_configured
-from tool_registry import ConnectToolResponse, ToolRegistry, ToolProvider, ToolDefinition, ConnectToolRequest
+from tool_registry import (
+    ConnectToolResponse,
+    ToolRegistry,
+    ToolProvider,
+    ToolDefinition,
+    ConnectToolRequest,
+)
 from credential_resolver import credential_resolver
 
 # FastAPI imports
@@ -35,12 +41,18 @@ from models.messages_kernel import (
     PlanWithSteps,
     Step,
 )
-from models.project_profile import CredentialBinding, ProjectProfile, ProjectProfileUpsert
+from models.project_profile import (
+    CredentialBinding,
+    ProjectProfile,
+    ProjectProfileUpsert,
+)
 
 from utils_kernel import initialize_runtime_and_context, rai_success
 
 # Check if the Application Insights Instrumentation Key is set in the environment variables
-connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip().strip('"').strip("'")
+connection_string = (
+    os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip().strip('"').strip("'")
+)
 if connection_string:
     try:
         configure_azure_monitor(connection_string=connection_string)
@@ -48,7 +60,9 @@ if connection_string:
     except Exception as exc:
         logging.warning(f"Application Insights configuration failed: {exc}")
 else:
-    logging.warning("Application Insights connection string not found. Telemetry disabled.")
+    logging.warning(
+        "Application Insights connection string not found. Telemetry disabled."
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -205,9 +219,7 @@ async def input_task_endpoint(input_task: InputTask, request: Request):
 
 
 @app.post("/api/project_profile")
-async def upsert_project_profile(
-    profile_input: ProjectProfileUpsert, request: Request
-):
+async def upsert_project_profile(profile_input: ProjectProfileUpsert, request: Request):
     """Upsert project profile used for dynamic plugin injection."""
     authenticated_user = get_authenticated_user_details(request_headers=request.headers)
     user_id = authenticated_user["user_principal_id"]
@@ -215,7 +227,9 @@ async def upsert_project_profile(
     if not user_id:
         raise HTTPException(status_code=400, detail="no user")
 
-    _, memory_store = await initialize_runtime_and_context(profile_input.session_id, user_id)
+    _, memory_store = await initialize_runtime_and_context(
+        profile_input.session_id, user_id
+    )
 
     # Add credential_bindings from profile_input if present, else default to None or []
     profile = ProjectProfile(
@@ -244,7 +258,9 @@ async def upsert_project_profile(
             "credential_bindings": getattr(profile_input, "credential_bindings", None),
         }
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Error saving project profile: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Error saving project profile: {exc}"
+        )
 
 
 @app.get("/api/project_profile")
@@ -256,7 +272,9 @@ async def get_project_profile(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="no user")
 
     _, memory_store = await initialize_runtime_and_context(session_id, user_id)
-    records = await memory_store.get_data_by_type_and_session_id("project_profile", session_id)
+    records = await memory_store.get_data_by_type_and_session_id(
+        "project_profile", session_id
+    )
     if not records:
         return {"project_profile": None}
     latest = records[-1]
@@ -478,9 +496,7 @@ async def human_clarification_endpoint(
         memory_store=memory_store,
         client=client,
     )
-    group_chat_manager = cast(
-        GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER]
-    )
+    group_chat_manager = cast(GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER])
 
     feedback = HumanFeedback(
         step_id=None,
@@ -583,9 +599,7 @@ async def approve_step_endpoint(
     )
 
     # Send the approval to the group chat manager
-    group_chat_manager = cast(
-        GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER]
-    )
+    group_chat_manager = cast(GroupChatManager, agents[AgentType.GROUP_CHAT_MANAGER])
 
     await group_chat_manager.handle_human_feedback(human_feedback)
 
@@ -1050,7 +1064,9 @@ async def get_tools_for_agent(agent_type: str) -> List[ToolDefinition]:
 
 
 @app.post("/api/tools/connect")
-async def connect_tool(request: ConnectToolRequest, http_request: Request) -> ConnectToolResponse:
+async def connect_tool(
+    request: ConnectToolRequest, http_request: Request
+) -> ConnectToolResponse:
     """Connect a tool by storing credentials in Key Vault."""
     provider = ToolRegistry.get_provider(request.provider_id)
     if not provider:
@@ -1058,7 +1074,9 @@ async def connect_tool(request: ConnectToolRequest, http_request: Request) -> Co
             status_code=404, detail=f"Provider {request.provider_id} not found"
         )
 
-    required_fields = {field.name for field in provider.credential_fields if field.required}
+    required_fields = {
+        field.name for field in provider.credential_fields if field.required
+    }
     provided_fields = set(request.credentials.keys())
     missing_fields = required_fields - provided_fields
 
@@ -1082,19 +1100,27 @@ async def connect_tool(request: ConnectToolRequest, http_request: Request) -> Co
             is_active=True,
         )
 
-        authenticated_user = get_authenticated_user_details(request_headers=http_request.headers)
+        authenticated_user = get_authenticated_user_details(
+            request_headers=http_request.headers
+        )
         user_id = authenticated_user["user_principal_id"]
         if not user_id:
             raise HTTPException(status_code=400, detail="no user")
 
-        _, memory_store = await initialize_runtime_and_context(request.session_id, user_id)
+        _, memory_store = await initialize_runtime_and_context(
+            request.session_id, user_id
+        )
         profiles = await memory_store.get_data_by_type_and_session_id(
             "project_profile", request.session_id
         )
         if profiles:
             profile = cast(ProjectProfile, profiles[-1])
             existing_binding = next(
-                (b for b in profile.credential_bindings if b.provider_id == request.provider_id),
+                (
+                    b
+                    for b in profile.credential_bindings
+                    if b.provider_id == request.provider_id
+                ),
                 None,
             )
             if existing_binding:
@@ -1110,7 +1136,9 @@ async def connect_tool(request: ConnectToolRequest, http_request: Request) -> Co
             message=f"Successfully connected {provider.display_name}",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to store credentials: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to store credentials: {str(e)}"
+        )
 
 
 @app.get("/api/tools/credentials/{project_id}/{provider_id}")
@@ -1122,7 +1150,7 @@ async def get_credential_status(project_id: str, provider_id: str) -> Dict[str, 
         "project_id": project_id,
         "provider_id": provider_id,
         "is_configured": credentials is not None,
-        "fields_configured": list(credentials.keys()) if credentials else []
+        "fields_configured": list(credentials.keys()) if credentials else [],
     }
 
 
@@ -1133,7 +1161,7 @@ async def disconnect_tool(project_id: str, provider_id: str) -> Dict[str, str]:
     return {
         "status": "disconnected",
         "project_id": project_id,
-        "provider_id": provider_id
+        "provider_id": provider_id,
     }
 
 

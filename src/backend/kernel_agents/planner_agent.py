@@ -2,8 +2,10 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-from azure.ai.agents.models import (ResponseFormatJsonSchema,
-                                    ResponseFormatJsonSchemaType)
+from azure.ai.agents.models import (
+    ResponseFormatJsonSchema,
+    ResponseFormatJsonSchemaType,
+)
 from context.cosmos_memory_kernel import CosmosMemoryContext
 from utils.pii_redactor import get_pii_context
 from event_utils import track_event_if_configured
@@ -133,9 +135,8 @@ class PlannerAgent(BaseAgent):
         tech_support_tools_context = self._agent_tools_list.get(
             AgentType.TECH_SUPPORT.value, "[]"
         )
-        runtime_context = (
-            "\nRuntime project tools available (dynamic): "
-            + ", ".join(sorted(set(runtime_tool_names)))
+        runtime_context = "\nRuntime project tools available (dynamic): " + ", ".join(
+            sorted(set(runtime_tool_names))
         )
         self._agent_tools_list[AgentType.TECH_SUPPORT.value] = (
             f"{tech_support_tools_context}{runtime_context}"
@@ -170,8 +171,12 @@ class PlannerAgent(BaseAgent):
         tools = cast(Optional[List[KernelFunction]], kwargs.get("tools", None))
         system_message = cast(Optional[str], kwargs.get("system_message", None))
         agent_name = cast(str, kwargs.get("agent_name", AgentType.PLANNER.value))
-        available_agents = cast(Optional[List[str]], kwargs.get("available_agents", None))
-        agent_instances = cast(Optional[Dict[str, BaseAgent]], kwargs.get("agent_instances", None))
+        available_agents = cast(
+            Optional[List[str]], kwargs.get("available_agents", None)
+        )
+        agent_instances = cast(
+            Optional[Dict[str, BaseAgent]], kwargs.get("agent_instances", None)
+        )
         client = kwargs.get("client")
 
         if not session_id or not user_id or memory_store is None:
@@ -232,11 +237,12 @@ class PlannerAgent(BaseAgent):
         redacted_description = pii_context.redact(original_description)
 
         if redacted_description != original_description:
-            logging.info(f"PII redacted from input: {len(pii_context.get_token_map())} tokens created")
+            logging.info(
+                f"PII redacted from input: {len(pii_context.get_token_map())} tokens created"
+            )
             # Create a modified input task with redacted description
             input_task = InputTask(
-                session_id=input_task.session_id,
-                description=redacted_description
+                session_id=input_task.session_id, description=redacted_description
             )
 
         plan, steps = await self._create_structured_plan(input_task)
@@ -463,7 +469,9 @@ class PlannerAgent(BaseAgent):
             # Try various parsing approaches in sequence
             try:
                 # 1. First attempt: Try to parse the raw response directly
-                parsed_result = PlannerResponsePlan.model_validate_json(response_content)
+                parsed_result = PlannerResponsePlan.model_validate_json(
+                    response_content
+                )
                 if parsed_result is None:
                     # If all parsing attempts fail, create a fallback plan from the text content
                     logging.info(
@@ -487,7 +495,9 @@ class PlannerAgent(BaseAgent):
             summary = pii_context.rehydrate(parsed_result.summary_plan_and_steps)
             human_clarification_request = parsed_result.human_clarification_request
             if human_clarification_request:
-                human_clarification_request = pii_context.rehydrate(human_clarification_request)
+                human_clarification_request = pii_context.rehydrate(
+                    human_clarification_request
+                )
 
             # Create the Plan instance
             plan = Plan(

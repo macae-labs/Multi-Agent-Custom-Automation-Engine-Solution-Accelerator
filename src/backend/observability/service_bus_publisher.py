@@ -4,6 +4,7 @@ This module is intentionally thin:
 - No business logic duplication
 - Best-effort publish with graceful degradation if Service Bus is not configured
 """
+
 import json
 import logging
 import os
@@ -33,9 +34,7 @@ class ServiceBusPublisher:
             or os.getenv("AZURE_SERVICEBUS_TOPIC", "")
             or "strategic-decisions"
         )
-        self.connection_string = (
-            resolved_connection_string
-        ).strip()
+        self.connection_string = (resolved_connection_string).strip()
         self.topic_name = resolved_topic_name.strip()
 
     def is_configured(self) -> bool:
@@ -100,7 +99,9 @@ class ServiceBusPublisher:
             )
             return True
         except Exception as exc:
-            logger.exception("Failed to publish strategic decision to Service Bus: %s", exc)
+            logger.exception(
+                "Failed to publish strategic decision to Service Bus: %s", exc
+            )
             return False
 
 

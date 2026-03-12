@@ -188,7 +188,9 @@ class AppConfig:
         )
         kernel.add_service(chat_service)
 
-        logging.info(f"Kernel created with AzureChatCompletion service: {self.AZURE_OPENAI_DEPLOYMENT_NAME}")
+        logging.info(
+            f"Kernel created with AzureChatCompletion service: {self.AZURE_OPENAI_DEPLOYMENT_NAME}"
+        )
         return kernel
 
     def _get_token_provider(self) -> Any:
@@ -198,6 +200,7 @@ class AppConfig:
             A callable that returns access tokens for Azure OpenAI
         """
         from azure.identity.aio import get_bearer_token_provider
+
         credential = self.get_azure_credentials()
         return get_bearer_token_provider(
             credential,
@@ -217,8 +220,12 @@ class AppConfig:
                 transport = getattr(transport, "_pipeline", None)
                 transport = getattr(transport, "_transport", None)
                 session_owner = getattr(transport, "_session_owner", None)
-                if session_owner is not None and getattr(session_owner, "closed", False):
-                    logging.info("Cached AIProjectClient transport is closed. Recreating client.")
+                if session_owner is not None and getattr(
+                    session_owner, "closed", False
+                ):
+                    logging.info(
+                        "Cached AIProjectClient transport is closed. Recreating client."
+                    )
                     self._ai_project_client = None
                 else:
                     return self._ai_project_client
@@ -248,12 +255,11 @@ class AppConfig:
 
             # Create client with increased timeout for agent operations
             from azure.core.pipeline.transport import AioHttpTransport
+
             transport = AioHttpTransport(connection_timeout=300, read_timeout=300)
 
             self._ai_project_client = AIProjectClient(
-                endpoint=endpoint,
-                credential=credential,
-                transport=transport
+                endpoint=endpoint, credential=credential, transport=transport
             )
 
             return self._ai_project_client

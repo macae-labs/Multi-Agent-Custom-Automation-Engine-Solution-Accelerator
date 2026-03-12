@@ -94,7 +94,10 @@ class MarketingAgent(BaseAgent):
         if not tools:
             tools_dict = MarketingTools.get_all_kernel_functions()
             # Ensure all tools are KernelFunction type
-            tools = [cast(KernelFunction, KernelFunction.from_method(func)) for func in tools_dict.values()]
+            tools = [
+                cast(KernelFunction, KernelFunction.from_method(func))
+                for func in tools_dict.values()
+            ]
             logging.info(f"Loaded {len(tools)} tools for MarketingAgent")
 
         try:

@@ -1,4 +1,5 @@
 """Firestore adapter using official Google Cloud SDK."""
+
 import json
 from typing import Any, Dict
 
@@ -144,7 +145,10 @@ class FirestoreAdapter(BaseAdapter):
             doc_ref = first.reference
         else:
             doc_ref = db.document(doc_path)
-        return [{"id": col.id, "path": f"{doc_ref.path}/{col.id}"} for col in doc_ref.collections()]
+        return [
+            {"id": col.id, "path": f"{doc_ref.path}/{col.id}"}
+            for col in doc_ref.collections()
+        ]
 
     def _sync_list_documents_at_path(self, db, params: Dict[str, Any]) -> list:
         collection_path = params.get("collection_path", "").strip("/")
@@ -153,7 +157,9 @@ class FirestoreAdapter(BaseAdapter):
             raise ValueError("collection_path is required")
         parts = collection_path.split("/")
         if len(parts) % 2 != 1:
-            raise ValueError(f"collection_path must have odd number of segments: {collection_path}")
+            raise ValueError(
+                f"collection_path must have odd number of segments: {collection_path}"
+            )
         col_ref = db.collection(parts[0])
         for i in range(1, len(parts), 2):
             if i + 1 < len(parts):

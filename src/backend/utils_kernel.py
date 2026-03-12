@@ -11,6 +11,7 @@ import semantic_kernel as sk
 # Import AppConfig from app_config
 from app_config import config
 from context.cosmos_memory_kernel import CosmosMemoryContext
+
 # Import agent factory and the new AppConfig
 from kernel_agents.agent_factory import AgentFactory
 from kernel_agents.group_chat_manager import GroupChatManager

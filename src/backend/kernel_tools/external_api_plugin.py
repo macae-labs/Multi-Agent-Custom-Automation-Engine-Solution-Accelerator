@@ -6,14 +6,13 @@ from semantic_kernel.functions import kernel_function
 
 class ExternalAPIPlugin:
     """Generic plugin to interact with external project APIs."""
-    
+
     def __init__(self, base_url: str, api_key: str = None):
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-    
+
     @kernel_function(
-        name="call_external_api",
-        description="Call an external project API endpoint"
+        name="call_external_api", description="Call an external project API endpoint"
     )
     async def call_api(
         self,
@@ -23,19 +22,19 @@ class ExternalAPIPlugin:
     ) -> str:
         """Call external API and return response."""
         import json
-        
+
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.request(
                     method=method.upper(),
                     url=url,
                     headers=headers,
-                    json=json.loads(payload) if payload else None
+                    json=json.loads(payload) if payload else None,
                 )
                 response.raise_for_status()
                 return response.text

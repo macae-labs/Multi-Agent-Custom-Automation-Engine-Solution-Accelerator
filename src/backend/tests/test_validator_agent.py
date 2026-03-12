@@ -21,7 +21,7 @@ class TestValidatorAgentNormalizeTools:
         """Create a ValidatorAgent with no planner (not needed for _normalize_tools)."""
         return ValidatorAgent(
             planner_agent=None,
-            available_agents=["Tech_Support_Agent", "Hr_Agent", "Generic_Agent"]
+            available_agents=["Tech_Support_Agent", "Hr_Agent", "Generic_Agent"],
         )
 
     # ========== Format: "function" key (local format) ==========
@@ -29,10 +29,20 @@ class TestValidatorAgentNormalizeTools:
     def test_parses_function_key_format(self, validator):
         """_normalize_tools() must extract names from 'function' key (local format)."""
         tools_data = {
-            "Tech_Support_Agent": json.dumps([
-                {"agent": "Tech_Support_Agent", "function": "send_welcome_email", "description": "Send email"},
-                {"agent": "Tech_Support_Agent", "function": "configure_laptop", "description": "Configure laptop"},
-            ])
+            "Tech_Support_Agent": json.dumps(
+                [
+                    {
+                        "agent": "Tech_Support_Agent",
+                        "function": "send_welcome_email",
+                        "description": "Send email",
+                    },
+                    {
+                        "agent": "Tech_Support_Agent",
+                        "function": "configure_laptop",
+                        "description": "Configure laptop",
+                    },
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -44,14 +54,18 @@ class TestValidatorAgentNormalizeTools:
     def test_parses_multiple_agents_function_format(self, validator):
         """_normalize_tools() must handle multiple agents with 'function' format."""
         tools_data = {
-            "Tech_Support_Agent": json.dumps([
-                {"function": "send_welcome_email"},
-                {"function": "reset_password"},
-            ]),
-            "Hr_Agent": json.dumps([
-                {"function": "onboard_employee"},
-                {"function": "process_leave_request"},
-            ])
+            "Tech_Support_Agent": json.dumps(
+                [
+                    {"function": "send_welcome_email"},
+                    {"function": "reset_password"},
+                ]
+            ),
+            "Hr_Agent": json.dumps(
+                [
+                    {"function": "onboard_employee"},
+                    {"function": "process_leave_request"},
+                ]
+            ),
         }
 
         result = validator._normalize_tools(tools_data)
@@ -64,10 +78,12 @@ class TestValidatorAgentNormalizeTools:
     def test_parses_name_key_format(self, validator):
         """_normalize_tools() must extract names from 'name' key (Azure format)."""
         tools_data = {
-            "Tech_Support_Agent": json.dumps([
-                {"name": "send_welcome_email", "description": "Send welcome email"},
-                {"name": "configure_laptop", "description": "Configure laptop"},
-            ])
+            "Tech_Support_Agent": json.dumps(
+                [
+                    {"name": "send_welcome_email", "description": "Send welcome email"},
+                    {"name": "configure_laptop", "description": "Configure laptop"},
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -78,9 +94,11 @@ class TestValidatorAgentNormalizeTools:
     def test_prefers_name_over_function_when_both_present(self, validator):
         """When both 'name' and 'function' exist, 'name' takes precedence."""
         tools_data = {
-            "Agent": json.dumps([
-                {"name": "correct_name", "function": "wrong_name"},
-            ])
+            "Agent": json.dumps(
+                [
+                    {"name": "correct_name", "function": "wrong_name"},
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -93,9 +111,11 @@ class TestValidatorAgentNormalizeTools:
     def test_no_unknown_with_valid_function_name(self, validator):
         """Must NOT return 'unknown' when 'function' key has valid value."""
         tools_data = {
-            "Tech_Support_Agent": json.dumps([
-                {"function": "valid_tool_name"},
-            ])
+            "Tech_Support_Agent": json.dumps(
+                [
+                    {"function": "valid_tool_name"},
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -106,9 +126,11 @@ class TestValidatorAgentNormalizeTools:
     def test_no_unknown_with_valid_name_key(self, validator):
         """Must NOT return 'unknown' when 'name' key has valid value."""
         tools_data = {
-            "Tech_Support_Agent": json.dumps([
-                {"name": "valid_tool_name"},
-            ])
+            "Tech_Support_Agent": json.dumps(
+                [
+                    {"name": "valid_tool_name"},
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -119,9 +141,13 @@ class TestValidatorAgentNormalizeTools:
     def test_unknown_only_when_no_name_or_function(self, validator):
         """'unknown' should only appear when neither 'name' nor 'function' exists."""
         tools_data = {
-            "Agent": json.dumps([
-                {"description": "A tool with no name"},  # Missing both name and function
-            ])
+            "Agent": json.dumps(
+                [
+                    {
+                        "description": "A tool with no name"
+                    },  # Missing both name and function
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -200,12 +226,14 @@ class TestValidatorAgentNormalizeTools:
     def test_handles_mixed_valid_invalid_entries(self, validator):
         """Must extract valid tools even when some entries are malformed."""
         tools_data = {
-            "Agent": json.dumps([
-                {"function": "valid_tool"},
-                "not a dict",  # Invalid
-                {"function": "another_valid"},
-                123,  # Invalid
-            ])
+            "Agent": json.dumps(
+                [
+                    {"function": "valid_tool"},
+                    "not a dict",  # Invalid
+                    {"function": "another_valid"},
+                    123,  # Invalid
+                ]
+            )
         }
 
         result = validator._normalize_tools(tools_data)
@@ -259,10 +287,17 @@ class TestValidatorAgentIntegration:
         from kernel_tools.procurement_tools import ProcurementTools
         from kernel_tools.generic_tools import GenericTools
 
-        validator = ValidatorAgent(None, [
-            "Tech_Support_Agent", "Hr_Agent", "Marketing_Agent",
-            "Product_Agent", "Procurement_Agent", "Generic_Agent"
-        ])
+        validator = ValidatorAgent(
+            None,
+            [
+                "Tech_Support_Agent",
+                "Hr_Agent",
+                "Marketing_Agent",
+                "Product_Agent",
+                "Procurement_Agent",
+                "Generic_Agent",
+            ],
+        )
 
         tools_data = {
             "Tech_Support_Agent": TechSupportTools.generate_tools_json_doc(),
@@ -285,4 +320,6 @@ class TestValidatorAgentIntegration:
 
         # Count "unknown" occurrences - should be minimal (only for truly unnamed tools)
         unknown_count = result.lower().count("unknown")
-        assert unknown_count == 0, f"Found {unknown_count} 'unknown' entries - tools not being parsed correctly"
+        assert unknown_count == 0, (
+            f"Found {unknown_count} 'unknown' entries - tools not being parsed correctly"
+        )

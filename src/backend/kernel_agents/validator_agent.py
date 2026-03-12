@@ -22,6 +22,7 @@ class StepValidation(KernelBaseModel):
 
 class PlanValidationResult(KernelBaseModel):
     """Batch validation result for entire plan."""
+
     validations: List[StepValidation]
 
 
@@ -35,7 +36,10 @@ class ValidatorAgent:
         self._available_agents = available_agents
 
     async def validate_plan_batch(
-        self, steps: List[Step], agent_tools: dict[Any, Any], session_id: Optional[str] = None
+        self,
+        steps: List[Step],
+        agent_tools: dict[Any, Any],
+        session_id: Optional[str] = None,
     ) -> PlanValidationResult:
         """Validate all step assignments in a single LLM call.
 
@@ -157,7 +161,7 @@ class ValidatorAgent:
                         # Show all tools (max 30 to avoid prompt bloat)
                         tool_names = all_tool_names[:30]
                         if len(all_tool_names) > 30:
-                            tool_names.append(f"...+{len(all_tool_names)-30} more")
+                            tool_names.append(f"...+{len(all_tool_names) - 30} more")
                     else:
                         tool_names = ["(see full doc)"]
                 else:
@@ -173,7 +177,10 @@ class ValidatorAgent:
     def _get_validation_schema(self):
         """Get JSON schema for batch validation response."""
 
-        from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
+        from azure.ai.agents.models import (
+            ResponseFormatJsonSchema,
+            ResponseFormatJsonSchemaType,
+        )
 
         return ResponseFormatJsonSchemaType(
             json_schema=ResponseFormatJsonSchema(
@@ -184,7 +191,9 @@ class ValidatorAgent:
         )
 
     @staticmethod
-    def apply_corrections(steps: List[Step], validation_result: PlanValidationResult) -> int:
+    def apply_corrections(
+        steps: List[Step], validation_result: PlanValidationResult
+    ) -> int:
         """Apply high-confidence corrections to steps and add audit trail.
 
         Args:

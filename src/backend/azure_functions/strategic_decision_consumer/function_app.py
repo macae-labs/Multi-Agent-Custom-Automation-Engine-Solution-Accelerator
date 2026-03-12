@@ -6,6 +6,7 @@ execution hooks (currently via optional webhook) for autonomous actions.
 Uses Managed Identity (DefaultAzureCredential) for Service Bus authentication
 to avoid storing connection strings.
 """
+
 import json
 import logging
 import os
@@ -43,11 +44,11 @@ async def _forward_to_webhook(payload: Dict[str, Any]) -> bool:
     topic_name="strategic-decisions",
     subscription_name="sub-fibroskin-strategic-handler",
     connection="SERVICE_BUS_CONNECTION_STR",
-    cardinality=func.Cardinality.ONE
+    cardinality=func.Cardinality.ONE,
 )
 async def process_strategic_decision(message: func.ServiceBusMessage) -> None:
     """Consume strategic decision messages and trigger execution hooks.
-    
+
     Note: Uses Managed Identity via SERVICEBUS_ENDPOINT environment variable.
     The Function App's system-assigned identity must have 'Azure Service Bus Data Receiver'
     permissions on the Service Bus namespace.

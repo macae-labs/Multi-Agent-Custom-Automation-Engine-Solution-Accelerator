@@ -13,9 +13,9 @@ sys.modules["azure.monitor.opentelemetry"] = MagicMock()
 os.environ["COSMOSDB_ENDPOINT"] = "https://mock-endpoint.documents.azure.com:443/"
 os.environ["COSMOSDB_DATABASE"] = "mock-database"
 os.environ["COSMOSDB_CONTAINER"] = "mock-container"
-os.environ[
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"
-] = "InstrumentationKey=mock-instrumentation-key;IngestionEndpoint=https://mock-ingestion-endpoint"
+os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = (
+    "InstrumentationKey=mock-instrumentation-key;IngestionEndpoint=https://mock-ingestion-endpoint"
+)
 os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"] = "mock-deployment-name"
 os.environ["AZURE_OPENAI_API_VERSION"] = "2024-11-20"
 os.environ["AZURE_OPENAI_ENDPOINT"] = "https://mock-openai-endpoint.azure.com/"

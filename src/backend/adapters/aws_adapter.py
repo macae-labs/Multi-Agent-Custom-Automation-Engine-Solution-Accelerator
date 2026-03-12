@@ -1,4 +1,5 @@
 """AWS adapter - proxy to existing infrastructure."""
+
 import os
 import re
 from difflib import SequenceMatcher
@@ -14,7 +15,6 @@ class AWSAdapter(BaseAdapter):
         return "aws_s3"
 
     @staticmethod
-
     def _resolve_endpoint(tool_name: str) -> str:
         """Resolve API/Lambda endpoint for each AWS operation."""
         by_tool = {
@@ -97,11 +97,15 @@ class AWSAdapter(BaseAdapter):
 
         try:
             # Bypass credential check for all S3 operations
-            if tool_name in {"get_signed_url", "s3_upload_object", "s3_upload_file", "s3_delete_object", "s3_list_objects"}:
+            if tool_name in {
+                "get_signed_url",
+                "s3_upload_object",
+                "s3_upload_file",
+                "s3_delete_object",
+                "s3_list_objects",
+            }:
                 result = await self._execute_with_credentials(
-                    tool_name=tool_name,
-                    params=params,
-                    credentials={}
+                    tool_name=tool_name, params=params, credentials={}
                 )
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 return ToolExecutionResult(
@@ -113,7 +117,9 @@ class AWSAdapter(BaseAdapter):
                     metadata={**audit_meta, "auth_mode": "public_lambda"},
                 )
 
-            return await super().execute(tool_name=tool_name, params=params, tool_id=tool_id)
+            return await super().execute(
+                tool_name=tool_name, params=params, tool_id=tool_id
+            )
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             return ToolExecutionResult(
@@ -125,7 +131,9 @@ class AWSAdapter(BaseAdapter):
                 metadata={**audit_meta, "exception": exc.__class__.__name__},
             )
 
-    async def _get_signed_url(self, params: Dict[str, Any], credentials: Dict[str, str]) -> Dict[str, Any]:
+    async def _get_signed_url(
+        self, params: Dict[str, Any], credentials: Dict[str, str]
+    ) -> Dict[str, Any]:
         """Get signed URL by calling existing Lambda firmadora."""
         from datetime import datetime, timedelta
 
@@ -138,7 +146,9 @@ class AWSAdapter(BaseAdapter):
         expires_in_seconds = int(result.get("expiresIn", 7200))
         expires_at = datetime.utcnow() + timedelta(seconds=expires_in_seconds)
 
-        cache_hit_raw = result.get("cacheHit") if "cacheHit" in result else result.get("cache_hit")
+        cache_hit_raw = (
+            result.get("cacheHit") if "cacheHit" in result else result.get("cache_hit")
+        )
         if cache_hit_raw is True:
             cache_status = "cache_hit"
         elif cache_hit_raw is False:
@@ -186,7 +196,9 @@ class AWSAdapter(BaseAdapter):
         )
         if canonical_bucket:
             norm_given = "".join(ch for ch in bucket_value.lower() if ch.isalnum())
-            norm_canonical = "".join(ch for ch in canonical_bucket.lower() if ch.isalnum())
+            norm_canonical = "".join(
+                ch for ch in canonical_bucket.lower() if ch.isalnum()
+            )
             similarity = SequenceMatcher(None, norm_given, norm_canonical).ratio()
             if norm_given == norm_canonical or similarity >= 0.82:
                 return str(canonical_bucket)
@@ -202,7 +214,9 @@ class AWSAdapter(BaseAdapter):
             or "us-east-1"
         )
 
-    async def _upload_object(self, params: Dict[str, Any], credentials: Dict[str, str]) -> Dict[str, Any]:
+    async def _upload_object(
+        self, params: Dict[str, Any], credentials: Dict[str, str]
+    ) -> Dict[str, Any]:
         key = params.get("key") or params.get("object_key") or params.get("s3_key")
         if not key:
             raise ValueError("key is required for s3_upload_object")
@@ -235,7 +249,9 @@ class AWSAdapter(BaseAdapter):
             "endpoint_used": api_endpoint,
         }
 
-    async def _delete_object(self, params: Dict[str, Any], credentials: Dict[str, str]) -> Dict[str, Any]:
+    async def _delete_object(
+        self, params: Dict[str, Any], credentials: Dict[str, str]
+    ) -> Dict[str, Any]:
         key = params.get("key") or params.get("object_key") or params.get("s3_key")
         if not key:
             raise ValueError("key is required for s3_delete_object")
@@ -254,7 +270,9 @@ class AWSAdapter(BaseAdapter):
             "endpoint_used": api_endpoint,
         }
 
-    async def _list_objects(self, params: Dict[str, Any], credentials: Dict[str, str]) -> Dict[str, Any]:
+    async def _list_objects(
+        self, params: Dict[str, Any], credentials: Dict[str, str]
+    ) -> Dict[str, Any]:
         bucket = self._resolve_bucket(params, credentials)
         prefix = str(params.get("prefix") or "")
         max_keys = int(params.get("max_keys") or 100)

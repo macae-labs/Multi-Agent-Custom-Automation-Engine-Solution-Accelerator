@@ -5,6 +5,7 @@ This module provides:
 2. Enabling agents to make decisions based on app health status
 3. Providing observability data to all agent types without manual wiring
 """
+
 import logging
 from typing import Dict, Any, Optional
 
@@ -65,9 +66,7 @@ class HealthAwareContextInjector:
 
             # Build status indicator
             status_icon = "✅" if overall_health else "⚠️"
-            health_status = (
-                "HEALTHY" if overall_health else "DEGRADED"
-            )
+            health_status = "HEALTHY" if overall_health else "DEGRADED"
 
             section = f"""
 **Status**: {status_icon} {health_status}
@@ -104,9 +103,7 @@ class HealthAwareContextInjector:
                         f"{app_kpis['plans_failed']} failed\n"
                     )
                 if "error_rate" in app_kpis:
-                    section += (
-                        f"- **Error Rate**: {app_kpis['error_rate']:.1f}%\n"
-                    )
+                    section += f"- **Error Rate**: {app_kpis['error_rate']:.1f}%\n"
                 if "completion_rate" in app_kpis:
                     section += (
                         f"- **Completion Rate**: {app_kpis['completion_rate']:.1f}%\n"
@@ -148,14 +145,10 @@ class HealthAwareContextInjector:
         base_prompt = f"{base_role}\n"
 
         if health_snapshot:
-            health_section = (
-                HealthAwareContextInjector._build_health_section(health_snapshot)
+            health_section = HealthAwareContextInjector._build_health_section(
+                health_snapshot
             )
-            return (
-                f"{base_prompt}\n"
-                f"## Current System Health\n"
-                f"{health_section}"
-            )
+            return f"{base_prompt}\n## Current System Health\n{health_section}"
 
         return base_prompt
 

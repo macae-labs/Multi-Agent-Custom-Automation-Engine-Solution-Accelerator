@@ -3,6 +3,7 @@
 This agent acts as the "Director of Operations" - it doesn't answer questions,
 it analyzes trends and generates autonomous improvement plans based on business signals.
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime
@@ -28,6 +29,7 @@ class StrategicOrchestratorAgent(BaseAgent):
         # Initialize memory_store if not provided
         if memory_store is None:
             from context.cosmos_memory_kernel import CosmosMemoryContext
+
             try:
                 memory_store = CosmosMemoryContext(
                     session_id=session_id,
@@ -36,18 +38,19 @@ class StrategicOrchestratorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"Failed to create CosmosMemoryContext: {e}")
                 memory_store = None
-        
+
         # Cast for type checking - actual memory_store might be None
         if memory_store is None:
             from typing import cast
+
             memory_store = cast(Any, None)
-        
+
         super().__init__(
             agent_name=agent_name,
             session_id=session_id,
             user_id=user_id,
             memory_store=memory_store,  # type: ignore
-            **kwargs
+            **kwargs,
         )
 
     @staticmethod
@@ -150,7 +153,8 @@ Your role is NOT to answer user questions. Instead, you analyze business metrics
                     "overall": "HEALTHY" if overall_health else "DEGRADED",
                     "provider_count": len(provider_health),
                     "unhealthy_providers": [
-                        p for p, h in provider_health.items()
+                        p
+                        for p, h in provider_health.items()
                         if not h.get("is_healthy", False)
                     ],
                 },
@@ -196,59 +200,71 @@ Your role is NOT to answer user questions. Instead, you analyze business metrics
 
         # Critical: Very low health score
         if health_score < 30:
-            issues.append({
-                "severity": "CRITICAL",
-                "category": "infrastructure",
-                "issue": "System health critically degraded",
-                "details": f"Health score {health_score:.1f}% indicates major provider failures",
-            })
+            issues.append(
+                {
+                    "severity": "CRITICAL",
+                    "category": "infrastructure",
+                    "issue": "System health critically degraded",
+                    "details": f"Health score {health_score:.1f}% indicates major provider failures",
+                }
+            )
 
         # High: Provider failures
         for provider_id, health in provider_health.items():
             if not health.get("is_healthy", False):
-                issues.append({
-                    "severity": "HIGH",
-                    "category": "provider",
-                    "issue": f"Provider {provider_id} is down",
-                    "details": health.get("error_message", "Unknown error"),
-                })
+                issues.append(
+                    {
+                        "severity": "HIGH",
+                        "category": "provider",
+                        "issue": f"Provider {provider_id} is down",
+                        "details": health.get("error_message", "Unknown error"),
+                    }
+                )
 
         # High: High error rate
         if error_rate > 5:
-            issues.append({
-                "severity": "HIGH",
-                "category": "quality",
-                "issue": "High error rate detected",
-                "details": f"Error rate {error_rate:.1f}% exceeds threshold (5%)",
-            })
+            issues.append(
+                {
+                    "severity": "HIGH",
+                    "category": "quality",
+                    "issue": "High error rate detected",
+                    "details": f"Error rate {error_rate:.1f}% exceeds threshold (5%)",
+                }
+            )
 
         # Medium: Low success rate
         if success_rate < 80 and success_rate > 0:
-            issues.append({
-                "severity": "MEDIUM",
-                "category": "quality",
-                "issue": "Success rate below target",
-                "details": f"Only {success_rate:.1f}% of operations succeed",
-            })
+            issues.append(
+                {
+                    "severity": "MEDIUM",
+                    "category": "quality",
+                    "issue": "Success rate below target",
+                    "details": f"Only {success_rate:.1f}% of operations succeed",
+                }
+            )
 
         # Medium: Low engagement
         if active_users == 0 and issues:
-            issues.append({
-                "severity": "MEDIUM",
-                "category": "engagement",
-                "issue": "No active users detected",
-                "details": "Could indicate outage or off-peak time",
-            })
+            issues.append(
+                {
+                    "severity": "MEDIUM",
+                    "category": "engagement",
+                    "issue": "No active users detected",
+                    "details": "Could indicate outage or off-peak time",
+                }
+            )
 
         # Add raw errors
         if errors:
             for error in errors[:3]:  # Top 3 errors
-                issues.append({
-                    "severity": "HIGH",
-                    "category": "error",
-                    "issue": "Provider error",
-                    "details": error,
-                })
+                issues.append(
+                    {
+                        "severity": "HIGH",
+                        "category": "error",
+                        "issue": "Provider error",
+                        "details": error,
+                    }
+                )
 
         return issues
 
@@ -290,96 +306,106 @@ Your role is NOT to answer user questions. Instead, you analyze business metrics
         # Priority 1: CRITICAL infrastructure failures
         critical_issues = [i for i in issues if i["severity"] == "CRITICAL"]
         if critical_issues:
-            actions.append({
-                "priority": "CRITICAL",
-                "action": "Infrastructure Self-Healing",
-                "description": "Attempt to recover from critical failures",
-                "steps": [
-                    "1. Rotate credentials for failing providers",
-                    "2. Clear connection pools and caches",
-                    "3. Restart health checks for each provider",
-                    "4. If recovery fails, page on-call engineer",
-                ],
-                "owner_agent": "TECH_SUPPORT",
-                "expected_impact": f"Restore health from {health_score:.1f}% to 80%+",
-                "estimated_time_minutes": 5,
-                "can_execute_autonomously": True,
-            })
+            actions.append(
+                {
+                    "priority": "CRITICAL",
+                    "action": "Infrastructure Self-Healing",
+                    "description": "Attempt to recover from critical failures",
+                    "steps": [
+                        "1. Rotate credentials for failing providers",
+                        "2. Clear connection pools and caches",
+                        "3. Restart health checks for each provider",
+                        "4. If recovery fails, page on-call engineer",
+                    ],
+                    "owner_agent": "TECH_SUPPORT",
+                    "expected_impact": f"Restore health from {health_score:.1f}% to 80%+",
+                    "estimated_time_minutes": 5,
+                    "can_execute_autonomously": True,
+                }
+            )
 
         # Priority 2: Provider-specific failures
         provider_issues = [i for i in issues if i["category"] == "provider"]
         for issue in provider_issues[:2]:  # Top 2
             provider = issue["issue"].split()[-2]
-            actions.append({
-                "priority": "HIGH",
-                "action": f"Investigate {provider} Provider Failure",
-                "description": issue["details"],
-                "steps": [
-                    f"1. Check {provider} service status",
-                    "2. Validate credentials",
-                    "3. Check network connectivity",
-                    "4. Review recent deployments",
-                ],
-                "owner_agent": "TECH_SUPPORT",
-                "expected_impact": "Restore provider availability",
-                "estimated_time_minutes": 10,
-                "can_execute_autonomously": True,
-            })
+            actions.append(
+                {
+                    "priority": "HIGH",
+                    "action": f"Investigate {provider} Provider Failure",
+                    "description": issue["details"],
+                    "steps": [
+                        f"1. Check {provider} service status",
+                        "2. Validate credentials",
+                        "3. Check network connectivity",
+                        "4. Review recent deployments",
+                    ],
+                    "owner_agent": "TECH_SUPPORT",
+                    "expected_impact": "Restore provider availability",
+                    "estimated_time_minutes": 10,
+                    "can_execute_autonomously": True,
+                }
+            )
 
         # Priority 3: High error rate
         if error_rate > 5:
-            actions.append({
-                "priority": "HIGH",
-                "action": "Error Investigation & Mitigation",
-                "description": f"Error rate {error_rate:.1f}% detected",
-                "steps": [
-                    "1. Analyze error patterns",
-                    "2. Identify affected endpoints",
-                    "3. Implement fallback strategies",
-                    "4. Log for post-mortem analysis",
-                ],
-                "owner_agent": "TECH_SUPPORT",
-                "expected_impact": "Reduce error rate to <2%",
-                "estimated_time_minutes": 15,
-                "can_execute_autonomously": False,  # Requires manual review
-            })
+            actions.append(
+                {
+                    "priority": "HIGH",
+                    "action": "Error Investigation & Mitigation",
+                    "description": f"Error rate {error_rate:.1f}% detected",
+                    "steps": [
+                        "1. Analyze error patterns",
+                        "2. Identify affected endpoints",
+                        "3. Implement fallback strategies",
+                        "4. Log for post-mortem analysis",
+                    ],
+                    "owner_agent": "TECH_SUPPORT",
+                    "expected_impact": "Reduce error rate to <2%",
+                    "estimated_time_minutes": 15,
+                    "can_execute_autonomously": False,  # Requires manual review
+                }
+            )
 
         # Priority 4: Engagement optimization
         if active_users < 5 and health_score > 50:
-            actions.append({
-                "priority": "MEDIUM",
-                "action": "Engagement Campaign",
-                "description": "Low active user count - trigger re-engagement",
-                "steps": [
-                    "1. Identify dormant users",
-                    "2. Prepare personalized emails",
-                    "3. Schedule push notifications",
-                    "4. Track re-engagement metrics",
-                ],
-                "owner_agent": "MARKETING",
-                "expected_impact": "Increase active users by 30%",
-                "estimated_time_minutes": 60,
-                "can_execute_autonomously": False,
-            })
+            actions.append(
+                {
+                    "priority": "MEDIUM",
+                    "action": "Engagement Campaign",
+                    "description": "Low active user count - trigger re-engagement",
+                    "steps": [
+                        "1. Identify dormant users",
+                        "2. Prepare personalized emails",
+                        "3. Schedule push notifications",
+                        "4. Track re-engagement metrics",
+                    ],
+                    "owner_agent": "MARKETING",
+                    "expected_impact": "Increase active users by 30%",
+                    "estimated_time_minutes": 60,
+                    "can_execute_autonomously": False,
+                }
+            )
 
         # Priority 5: Performance optimization
         completion_rate = app_kpis.get("completion_rate", 0.0)
         if completion_rate < 80:
-            actions.append({
-                "priority": "MEDIUM",
-                "action": "Optimize Video Upload Flow",
-                "description": "Implement chunked uploads for better reliability",
-                "steps": [
-                    "1. Analyze current upload failures",
-                    "2. Design chunked upload strategy",
-                    "3. Update frontend SDK",
-                    "4. Test with large files",
-                ],
-                "owner_agent": "PRODUCT",
-                "expected_impact": f"Increase completion rate from {completion_rate:.1f}% to 95%+",
-                "estimated_time_minutes": 120,
-                "can_execute_autonomously": False,
-            })
+            actions.append(
+                {
+                    "priority": "MEDIUM",
+                    "action": "Optimize Video Upload Flow",
+                    "description": "Implement chunked uploads for better reliability",
+                    "steps": [
+                        "1. Analyze current upload failures",
+                        "2. Design chunked upload strategy",
+                        "3. Update frontend SDK",
+                        "4. Test with large files",
+                    ],
+                    "owner_agent": "PRODUCT",
+                    "expected_impact": f"Increase completion rate from {completion_rate:.1f}% to 95%+",
+                    "estimated_time_minutes": 120,
+                    "can_execute_autonomously": False,
+                }
+            )
 
         return actions
 
@@ -390,7 +416,9 @@ Your role is NOT to answer user questions. Instead, you analyze business metrics
     ) -> Dict[str, Any]:
         """Decide if system should take autonomous action or escalate."""
         critical_count = len([i for i in issues if i["severity"] == "CRITICAL"])
-        autonomous_actions = [a for a in actions if a.get("can_execute_autonomously", False)]
+        autonomous_actions = [
+            a for a in actions if a.get("can_execute_autonomously", False)
+        ]
 
         if critical_count > 0:
             return {

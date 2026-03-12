@@ -8,6 +8,7 @@ from models.messages_kernel import BaseDataModel
 
 class CredentialBinding(KernelBaseModel):
     """Binding of credentials to a project."""
+
     provider_id: str
     secret_uri: str
     is_active: bool = True
@@ -16,9 +17,7 @@ class CredentialBinding(KernelBaseModel):
 class ProjectProfile(BaseDataModel):
     """Project profile persisted in Cosmos for multi-tenant plugin injection."""
 
-    data_type: Literal["project_profile"] = Field(
-        default="project_profile"
-    )
+    data_type: Literal["project_profile"] = Field(default="project_profile")
     session_id: str
     user_id: str
     project_id: str

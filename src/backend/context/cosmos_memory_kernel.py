@@ -36,14 +36,14 @@ def _clone_record_without_embedding(record: MemoryRecord) -> MemoryRecord:
     """SK 1.x stores is_reference/external_source_name/key as private attrs.
     Use getattr to access them safely across SK versions."""
     return MemoryRecord(
-        is_reference=getattr(record, '_is_reference', False),
-        external_source_name=getattr(record, '_external_source_name', None),
+        is_reference=getattr(record, "_is_reference", False),
+        external_source_name=getattr(record, "_external_source_name", None),
         id=record.id,
         description=record.description,
         text=record.text,
         additional_metadata=record.additional_metadata,
         embedding=None,
-        key=getattr(record, '_key', None),
+        key=getattr(record, "_key", None),
     )
 
 
@@ -196,7 +196,9 @@ class CosmosMemoryContext(MemoryStoreBase):
         assert self._container is not None
 
         try:
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             result_list = []
             async for item in items:
                 item["ts"] = item["_ts"]
@@ -280,9 +282,12 @@ class CosmosMemoryContext(MemoryStoreBase):
             The Plan object or None if not found
         """
         # Use the session_id as the partition key since that's how we're partitioning our data
-        return cast(Optional[Plan], await self.get_item_by_id(
-            plan_id, partition_key=self.session_id, model_class=Plan
-        ))
+        return cast(
+            Optional[Plan],
+            await self.get_item_by_id(
+                plan_id, partition_key=self.session_id, model_class=Plan
+            ),
+        )
 
     async def get_all_plans(self) -> List[Plan]:
         """Retrieve all plans."""
@@ -328,9 +333,12 @@ class CosmosMemoryContext(MemoryStoreBase):
         return await self.get_steps_by_plan(plan_id)
 
     async def get_step(self, step_id: str, session_id: str) -> Optional[Step]:
-        return cast(Optional[Step], await self.get_item_by_id(
-            step_id, partition_key=session_id, model_class=Step
-        ))
+        return cast(
+            Optional[Step],
+            await self.get_item_by_id(
+                step_id, partition_key=session_id, model_class=Step
+            ),
+        )
 
     async def add_agent_message(self, message: AgentMessage) -> None:
         """Add an agent message to Cosmos DB.
@@ -504,7 +512,9 @@ class CosmosMemoryContext(MemoryStoreBase):
             items = await self.query_items(query, parameters, model_class)
             return items[0] if items else None
         except Exception as e:
-            logging.exception(f"Failed to query latest data by type from Cosmos DB: {e}")
+            logging.exception(
+                f"Failed to query latest data by type from Cosmos DB: {e}"
+            )
             return None
 
     async def delete_item(self, item_id: str, partition_key: str) -> None:
@@ -523,7 +533,9 @@ class CosmosMemoryContext(MemoryStoreBase):
         await self.ensure_initialized()
         assert self._container is not None
         try:
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             async for item in items:
                 item_id = item["id"]
                 partition_key = item.get("session_id", None)
@@ -560,7 +572,9 @@ class CosmosMemoryContext(MemoryStoreBase):
                 {"name": "@user_id", "value": self.user_id},
                 {"name": "@limit", "value": 100},
             ]
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             async for item in items:
                 messages_list.append(item)
             return messages_list
@@ -602,8 +616,12 @@ class CosmosMemoryContext(MemoryStoreBase):
                 FROM c
                 WHERE c.data_type = 'memory' AND c.session_id = @session_id
             """
-            parameters: List[Dict[str, Any]] = [{"name": "@session_id", "value": self.session_id}]
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            parameters: List[Dict[str, Any]] = [
+                {"name": "@session_id", "value": self.session_id}
+            ]
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             collections = []
             async for item in items:
                 if "collection" in item and item["collection"] not in collections:
@@ -633,7 +651,9 @@ class CosmosMemoryContext(MemoryStoreBase):
                 {"name": "@session_id", "value": self.session_id},
             ]
 
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             async for item in items:
                 await self._container.delete_item(
                     item=item["id"], partition_key=item["session_id"]
@@ -648,9 +668,13 @@ class CosmosMemoryContext(MemoryStoreBase):
         """
         # Access attributes safely - SK 1.32.2 uses private attrs, but we need the values for storage
         # Use getattr with fallback to handle both old and new SK versions
-        key = getattr(record, 'key', None) or getattr(record, '_key', None) or ""
-        external_source_name = getattr(record, 'external_source_name', None) or getattr(record, '_external_source_name', None)
-        is_reference = getattr(record, 'is_reference', None) or getattr(record, '_is_reference', False)
+        key = getattr(record, "key", None) or getattr(record, "_key", None) or ""
+        external_source_name = getattr(record, "external_source_name", None) or getattr(
+            record, "_external_source_name", None
+        )
+        is_reference = getattr(record, "is_reference", None) or getattr(
+            record, "_is_reference", False
+        )
         memory_dict = {
             "id": record.id or str(uuid.uuid4()),
             "session_id": self.session_id,
@@ -767,7 +791,9 @@ class CosmosMemoryContext(MemoryStoreBase):
             ]
 
             assert self._container is not None
-            items = self._container.query_items(query=query, parameters=list(parameters))
+            items = self._container.query_items(
+                query=query, parameters=list(parameters)
+            )
             records: List[MemoryRecord] = []
             async for item in items:
                 embedding = None
@@ -813,7 +839,9 @@ class CosmosMemoryContext(MemoryStoreBase):
         """Get a memory record from the store."""
         record = await self.get_memory_record(collection_name, key, with_embedding)
         if record is None:
-            raise KeyError(f"Memory record not found: collection={collection_name}, key={key}")
+            raise KeyError(
+                f"Memory record not found: collection={collection_name}, key={key}"
+            )
         return record
 
     async def get_batch(
