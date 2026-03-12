@@ -94,6 +94,9 @@ jobs:
     name: Backend Integration Tests
     runs-on: ubuntu-latest
     needs: [backend-unit-tests]
+    permissions:
+      id-token: write
+      contents: read
     # Only run on push to main or scheduled runs, NOT on PRs
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
