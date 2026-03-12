@@ -35,11 +35,11 @@ class FunctionConfig:
 
 class CloudFunctionsPlugin:
     """Plugin to invoke Firebase Cloud Functions from agents.
-    
+
     Uses explicit URL mapping per function instead of assuming naming conventions.
     Each function has its own auth requirement.
     """
-    
+
     # Explicit function registry: tool_name -> FunctionConfig
     # This is the SINGLE SOURCE OF TRUTH for all Cloud Function URLs
     FUNCTION_REGISTRY: Dict[str, FunctionConfig] = {
@@ -161,7 +161,7 @@ class CloudFunctionsPlugin:
             require_auth=False,
         ),
     }
-    
+
     def __init__(
         self,
         project_id: Optional[str] = None,
@@ -174,17 +174,17 @@ class CloudFunctionsPlugin:
         self.user_id = user_id
         self.timeout = timeout
         self._logger = logging.getLogger(__name__)
-    
+
     def _get_auth_token(self, audience: str) -> Optional[str]:
         """Get Google Cloud identity token for authenticated requests."""
         if not GOOGLE_AUTH_AVAILABLE:
             return None
-        
+
         try:
             import google.auth
             from google.auth.transport.requests import Request as GoogleAuthRequest
             from google.oauth2 import id_token
-            
+
             credentials, _ = google.auth.default()
             auth_req = GoogleAuthRequest()
             credentials.refresh(auth_req)
@@ -193,14 +193,14 @@ class CloudFunctionsPlugin:
         except Exception as e:
             self._logger.error(f"Failed to get auth token for {audience}: {e}")
             return None
-    
+
     async def _call_function(
         self,
         function_name: str,
         payload: dict,
     ) -> dict:
         """Internal method to call a Cloud Function using explicit registry."""
-        
+
         # Get function config from registry
         config = self.FUNCTION_REGISTRY.get(function_name)
         if not config:
@@ -208,11 +208,11 @@ class CloudFunctionsPlugin:
                 "success": False,
                 "error": f"Unknown function '{function_name}'. Not in FUNCTION_REGISTRY."
             }
-        
+
         url = config.url
         config.method = config.method
         headers: Dict[str, str] = {"Content-Type": "application/json"}
-        
+
         # Handle authentication - FAIL IMMEDIATELY if required but unavailable
         if config.require_auth:
             token = self._get_auth_token(url)
@@ -223,7 +223,7 @@ class CloudFunctionsPlugin:
                              f"Ensure GOOGLE_APPLICATION_CREDENTIALS is set or running in GCP environment."
                 }
             headers["Authorization"] = f"Bearer {token}"
-        
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # Firebase Callable Functions always use POST with {"data": payload}
@@ -241,7 +241,7 @@ class CloudFunctionsPlugin:
                 # Firebase callable returns {"result": ...}
                 data = body.get("result", body)
                 return {"success": True, "data": data}
-                    
+
         except httpx.HTTPStatusError as e:
             error_text = e.response.text[:300] if e.response.text else "No response body"
             self._logger.error(f"Cloud Function {function_name} returned {e.response.status_code}: {error_text}")
@@ -273,12 +273,12 @@ class CloudFunctionsPlugin:
             items_list = json.loads(items) if isinstance(items, str) else items
         except Exception:
             return "Error: items must be a valid JSON array"
-        
+
         result = await self._call_function(
             "createOrder",
             {"customerId": customer_id, "items": items_list, "paymentMethod": payment_method}
         )
-        
+
         if result["success"]:
             return f"Order created successfully: {result['data']}"
         return f"Failed to create order: {result['error']}"
@@ -302,9 +302,9 @@ class CloudFunctionsPlugin:
         }
         if template:
             payload["template"] = template
-        
+
         result = await self._call_function("sendEmails", payload)
-        
+
         if result["success"]:
             return f"Emails sent successfully to {to}"
         return f"Failed to send emails: {result['error']}"
@@ -330,7 +330,7 @@ class CloudFunctionsPlugin:
                 "description": description,
             }
         )
-        
+
         if result["success"]:
             return f"Payment session created: {result['data']}"
         return f"Failed to init payment: {result['error']}"
@@ -345,7 +345,7 @@ class CloudFunctionsPlugin:
     ) -> str:
         """Trigger password reset via Cloud Function."""
         result = await self._call_function("forgotPassword", {"email": email})
-        
+
         if result["success"]:
             return f"Password reset email sent to {email}"
         return f"Failed to send reset email: {result['error']}"
@@ -364,7 +364,7 @@ class CloudFunctionsPlugin:
             "changeEmail",
             {"userId": user_id, "newEmail": new_email}
         )
-        
+
         if result["success"]:
             return f"Email changed successfully for user {user_id}"
         return f"Failed to change email: {result['error']}"
@@ -386,9 +386,9 @@ class CloudFunctionsPlugin:
         payload: dict[str, str | int] = {"limit": limit}
         if category:
             payload["category"] = category
-        
+
         result = await self._call_function("getCourses", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get courses: {result['error']}"
@@ -406,7 +406,7 @@ class CloudFunctionsPlugin:
             "getCourseDetail",
             {"courseId": course_id}
         )
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get course detail: {result['error']}"
@@ -424,9 +424,9 @@ class CloudFunctionsPlugin:
         payload: dict[str, str | int] = {"limit": limit}
         if category:
             payload["category"] = category
-        
+
         result = await self._call_function("getProducts", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get products: {result['error']}"
@@ -444,9 +444,9 @@ class CloudFunctionsPlugin:
         payload = {"customerId": customer_id}
         if status:
             payload["status"] = status
-        
+
         result = await self._call_function("getOrders", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get orders: {result['error']}"
@@ -486,9 +486,9 @@ class CloudFunctionsPlugin:
         payload = {"itemId": item_id}
         if date:
             payload["date"] = date
-        
+
         result = await self._call_function("checkAvailability", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to check availability: {result['error']}"
@@ -503,7 +503,7 @@ class CloudFunctionsPlugin:
     ) -> str:
         """Find user via Cloud Function."""
         result = await self._call_function("findUserById", {"userId": user_id})
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to find user: {result['error']}"
@@ -521,9 +521,9 @@ class CloudFunctionsPlugin:
         payload = {"email": email}
         if name:
             payload["name"] = name
-        
+
         result = await self._call_function("getOrCreateCustomer", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get/create customer: {result['error']}"
@@ -545,7 +545,7 @@ class CloudFunctionsPlugin:
             "getProductDetail",
             {"productId": product_id}
         )
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get product detail: {result['error']}"
@@ -557,7 +557,7 @@ class CloudFunctionsPlugin:
     async def get_contact_info(self) -> str:
         """Get contact info via Cloud Function."""
         result = await self._call_function("getContactInfo", {})
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get contact info: {result['error']}"
@@ -572,7 +572,7 @@ class CloudFunctionsPlugin:
     ) -> str:
         """Get upcoming events via Cloud Function."""
         result = await self._call_function("getUpcomingEvents", {"limit": limit})
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get upcoming events: {result['error']}"
@@ -590,9 +590,9 @@ class CloudFunctionsPlugin:
         payload = {"message": message}
         if session_id:
             payload["sessionId"] = session_id
-        
+
         result = await self._call_function("chat", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Chat failed: {result['error']}"
@@ -618,7 +618,7 @@ class CloudFunctionsPlugin:
                 "description": description,
             }
         )
-        
+
         if result["success"]:
             return f"Test payment session created: {result['data']}"
         return f"Failed to init test payment: {result['error']}"
@@ -639,9 +639,9 @@ class CloudFunctionsPlugin:
             payload["name"] = name
         if phone:
             payload["phone"] = phone
-        
+
         result = await self._call_function("createStripeCustomer", payload)
-        
+
         if result["success"]:
             return f"Stripe customer created: {result['data']}"
         return f"Failed to create Stripe customer: {result['error']}"
@@ -653,7 +653,7 @@ class CloudFunctionsPlugin:
     async def get_agent_crm_products(self) -> str:
         """Get CRM products via Cloud Function - formatted for agent analysis."""
         result = await self._call_function("getAgentCRMProducts", {})
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get CRM products: {result['error']}"
@@ -671,9 +671,9 @@ class CloudFunctionsPlugin:
         payload: dict = {"limit": limit}
         if category:
             payload["category"] = category
-        
+
         result = await self._call_function("getTutorials", payload)
-        
+
         if result["success"]:
             return str(result["data"])
         return f"Failed to get tutorials: {result['error']}"
@@ -697,7 +697,7 @@ class CloudFunctionsPlugin:
                 "deviceType": device_type,
             }
         )
-        
+
         if result["success"]:
             return f"FCM token registered for user {user_id}"
         return f"Failed to register FCM token: {result['error']}"

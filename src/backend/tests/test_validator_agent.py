@@ -8,7 +8,7 @@ from kernel_agents.validator_agent import ValidatorAgent
 
 class TestValidatorAgentNormalizeTools:
     """Tests for ValidatorAgent._normalize_tools() contract.
-    
+
     This function must:
     1. Parse tools with "function" key (local generate_tools_json_doc format)
     2. Parse tools with "name" key (Azure AI Agent format)
@@ -34,9 +34,9 @@ class TestValidatorAgentNormalizeTools:
                 {"agent": "Tech_Support_Agent", "function": "configure_laptop", "description": "Configure laptop"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "send_welcome_email" in result
         assert "configure_laptop" in result
         assert "- Tech_Support_Agent:" in result
@@ -53,9 +53,9 @@ class TestValidatorAgentNormalizeTools:
                 {"function": "process_leave_request"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "- Tech_Support_Agent: send_welcome_email, reset_password" in result
         assert "- Hr_Agent: onboard_employee, process_leave_request" in result
 
@@ -69,9 +69,9 @@ class TestValidatorAgentNormalizeTools:
                 {"name": "configure_laptop", "description": "Configure laptop"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "send_welcome_email" in result
         assert "configure_laptop" in result
 
@@ -82,9 +82,9 @@ class TestValidatorAgentNormalizeTools:
                 {"name": "correct_name", "function": "wrong_name"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "correct_name" in result
         assert "wrong_name" not in result
 
@@ -97,9 +97,9 @@ class TestValidatorAgentNormalizeTools:
                 {"function": "valid_tool_name"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "unknown" not in result.lower()
         assert "valid_tool_name" in result
 
@@ -110,9 +110,9 @@ class TestValidatorAgentNormalizeTools:
                 {"name": "valid_tool_name"},
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "unknown" not in result.lower()
         assert "valid_tool_name" in result
 
@@ -123,9 +123,9 @@ class TestValidatorAgentNormalizeTools:
                 {"description": "A tool with no name"},  # Missing both name and function
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # This case SHOULD produce 'unknown' because there's no name
         assert "unknown" in result.lower()
 
@@ -136,9 +136,9 @@ class TestValidatorAgentNormalizeTools:
         # Generate 50 tools
         many_tools = [{"function": f"tool_{i}"} for i in range(50)]
         tools_data = {"Agent": json.dumps(many_tools)}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Should have tool_0 through tool_29
         assert "tool_0" in result
         assert "tool_29" in result
@@ -151,9 +151,9 @@ class TestValidatorAgentNormalizeTools:
         """No '...+X more' when tools count is <= 30."""
         tools = [{"function": f"tool_{i}"} for i in range(25)]
         tools_data = {"Agent": json.dumps(tools)}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "...+" not in result
         assert "more" not in result
 
@@ -161,9 +161,9 @@ class TestValidatorAgentNormalizeTools:
         """Exactly 30 tools should not show truncation indicator."""
         tools = [{"function": f"tool_{i}"} for i in range(30)]
         tools_data = {"Agent": json.dumps(tools)}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "tool_29" in result
         assert "...+" not in result
 
@@ -172,18 +172,18 @@ class TestValidatorAgentNormalizeTools:
     def test_handles_empty_tools_list(self, validator):
         """Must handle empty tools list gracefully."""
         tools_data = {"Agent": "[]"}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Should have the agent but with empty tools
         assert "- Agent:" in result
 
     def test_handles_invalid_json(self, validator):
         """Must handle invalid JSON gracefully (fail-open)."""
         tools_data = {"Agent": "not valid json {{{"}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Should not crash, should indicate tools available
         assert "- Agent:" in result
         assert "(tools available)" in result
@@ -191,9 +191,9 @@ class TestValidatorAgentNormalizeTools:
     def test_handles_non_list_json(self, validator):
         """Must handle non-list JSON (e.g., object) gracefully."""
         tools_data = {"Agent": json.dumps({"not": "a list"})}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "- Agent:" in result
         assert "(see full doc)" in result
 
@@ -207,9 +207,9 @@ class TestValidatorAgentNormalizeTools:
                 123,  # Invalid
             ])
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         assert "valid_tool" in result
         assert "another_valid" in result
 
@@ -220,12 +220,12 @@ class TestValidatorAgentIntegration:
     def test_works_with_tech_support_tools_format(self):
         """Verify compatibility with TechSupportTools.generate_tools_json_doc() format."""
         from kernel_tools.tech_support_tools import TechSupportTools
-        
+
         validator = ValidatorAgent(None, ["Tech_Support_Agent"])
         tools_data = {"Tech_Support_Agent": TechSupportTools.generate_tools_json_doc()}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Must include real tool names, not "unknown"
         assert "send_welcome_email" in result
         assert "- Tech_Support_Agent:" in result
@@ -236,12 +236,12 @@ class TestValidatorAgentIntegration:
     def test_works_with_hr_tools_format(self):
         """Verify compatibility with HrTools.generate_tools_json_doc() format."""
         from kernel_tools.hr_tools import HrTools
-        
+
         validator = ValidatorAgent(None, ["Hr_Agent"])
         tools_data = {"Hr_Agent": HrTools.generate_tools_json_doc()}
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Must include real HR tool names
         assert "- Hr_Agent:" in result
         # Should have actual function names, not all unknowns
@@ -258,12 +258,12 @@ class TestValidatorAgentIntegration:
         from kernel_tools.product_tools import ProductTools
         from kernel_tools.procurement_tools import ProcurementTools
         from kernel_tools.generic_tools import GenericTools
-        
+
         validator = ValidatorAgent(None, [
             "Tech_Support_Agent", "Hr_Agent", "Marketing_Agent",
             "Product_Agent", "Procurement_Agent", "Generic_Agent"
         ])
-        
+
         tools_data = {
             "Tech_Support_Agent": TechSupportTools.generate_tools_json_doc(),
             "Hr_Agent": HrTools.generate_tools_json_doc(),
@@ -272,9 +272,9 @@ class TestValidatorAgentIntegration:
             "Procurement_Agent": ProcurementTools.generate_tools_json_doc(),
             "Generic_Agent": GenericTools.generate_tools_json_doc(),
         }
-        
+
         result = validator._normalize_tools(tools_data)
-        
+
         # Each agent should have a line
         assert "- Tech_Support_Agent:" in result
         assert "- Hr_Agent:" in result
@@ -282,7 +282,7 @@ class TestValidatorAgentIntegration:
         assert "- Product_Agent:" in result
         assert "- Procurement_Agent:" in result
         assert "- Generic_Agent:" in result
-        
+
         # Count "unknown" occurrences - should be minimal (only for truly unnamed tools)
         unknown_count = result.lower().count("unknown")
         assert unknown_count == 0, f"Found {unknown_count} 'unknown' entries - tools not being parsed correctly"

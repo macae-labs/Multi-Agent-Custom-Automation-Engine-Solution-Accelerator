@@ -56,7 +56,7 @@ class ProjectContextLoader:
                 if tool_id:
                     discovered[str(tool_id)] = member
         return discovered
-    
+
     @staticmethod
     async def load_project_profile(
         memory_store: CosmosMemoryContext,
@@ -65,7 +65,7 @@ class ProjectContextLoader:
         """Load project profile from Cosmos DB."""
         try:
             profile_data = await memory_store.get_data_by_type_and_session_id(
-                "project_profile", 
+                "project_profile",
                 session_id
             )
             if profile_data:
@@ -82,7 +82,7 @@ class ProjectContextLoader:
         except Exception as e:
             logging.warning(f"No project profile found: {e}")
         return None
-    
+
     @staticmethod
     def create_plugins_from_profile(
         profile: ProjectProfile,
@@ -101,7 +101,7 @@ class ProjectContextLoader:
             for binding in (profile.credential_bindings or [])
             if getattr(binding, "is_active", False)
         }
-        
+
         # External API plugin
         if profile.api_base_url and (
             not enabled_tools or "external_api" in enabled_tools

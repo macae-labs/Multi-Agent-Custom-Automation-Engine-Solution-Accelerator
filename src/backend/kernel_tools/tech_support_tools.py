@@ -24,7 +24,7 @@ class TechSupportTools:
             raise RuntimeError(f"Failed to send email: {result.get('error', 'Unknown error')}")
 
         demo_tag = "[DEMO] " if result.get("demo_mode") else ""
-        
+
         return (
             f"##### {demo_tag}Welcome Email Sent\n"
             f"**Employee Name:** {employee_name}\n"

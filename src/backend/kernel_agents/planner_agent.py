@@ -230,7 +230,7 @@ class PlannerAgent(BaseAgent):
         pii_context = get_pii_context(input_task.session_id)
         original_description = input_task.description
         redacted_description = pii_context.redact(original_description)
-        
+
         if redacted_description != original_description:
             logging.info(f"PII redacted from input: {len(pii_context.get_token_map())} tokens created")
             # Create a modified input task with redacted description
@@ -481,7 +481,7 @@ class PlannerAgent(BaseAgent):
             # The model received redacted text, so its response may contain tokens like {{EMAIL_1}}
             # We need to replace these with the actual values before storing
             pii_context = get_pii_context(input_task.session_id)
-            
+
             initial_goal = pii_context.rehydrate(parsed_result.initial_goal)
             steps_data = parsed_result.steps
             summary = pii_context.rehydrate(parsed_result.summary_plan_and_steps)
