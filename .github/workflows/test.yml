@@ -28,14 +28,22 @@ on:
       - 'src/frontend/**'
       - 'pytest.ini'
       - '.github/workflows/test.yml'
+  # Scheduled runs for integration + e2e tests
+  schedule:
+    - cron: '0 6 * * 1-5'  # Weekdays at 6 AM UTC
 
 permissions:
   contents: read
 
 jobs:
-  backend-tests:
+  # ==========================================================================
+  # Unit Tests - Run on every PR and push (fast, mocked dependencies)
+  # ==========================================================================
+  backend-unit-tests:
+    name: Backend Unit Tests
     runs-on: ubuntu-latest
     env:
+      # Mock values for unit tests - no real Azure connection
       AZURE_OPENAI_ENDPOINT: https://mock-openai-endpoint.azure.com/
       AZURE_OPENAI_API_VERSION: 2024-05-01-preview
       AZURE_OPENAI_DEPLOYMENT_NAME: mock-deployment
@@ -68,29 +76,94 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r src/backend/requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-asyncio
 
-      - name: Check if test files exist
-        id: check_tests
-        run: |
-          if [ -z "$(find src/backend -type f -name 'test_*.py')" ]; then
-            echo "No test files found, skipping tests."
-            echo "skip_tests=true" >> $GITHUB_OUTPUT
-          else
-            echo "Test files found, running tests."
-            echo "skip_tests=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Run tests with coverage
-        if: steps.check_tests.outputs.skip_tests != 'true'
+      - name: Run unit tests (excluding integration)
         run: |
           cd src/backend
-          pytest --cov=. --cov-report=term-missing --cov-report=xml
+          pytest -m "not integration and not e2e" \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -v --tb=short
 
-      - name: Skip coverage report if no tests
-        if: steps.check_tests.outputs.skip_tests == 'true'
+  # ==========================================================================
+  # Integration Tests - Only on push to main (requires real Azure services)
+  # ==========================================================================
+  backend-integration-tests:
+    name: Backend Integration Tests
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests]
+    # Only run on push to main or scheduled runs, NOT on PRs
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule'
+    environment: integration  # Uses secrets from 'integration' environment
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
         run: |
-          echo "Skipping coverage report because no tests were found."
+          python -m pip install --upgrade pip
+          pip install -r src/backend/requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate integration secrets
+        env:
+          AZURE_AI_AGENT_ENDPOINT: ${{ secrets.AZURE_AI_AGENT_ENDPOINT }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          COSMOSDB_ENDPOINT: ${{ secrets.COSMOSDB_ENDPOINT }}
+          COSMOSDB_DATABASE: ${{ secrets.COSMOSDB_DATABASE }}
+          COSMOSDB_CONTAINER: ${{ secrets.COSMOSDB_CONTAINER }}
+        run: |
+          set -euo pipefail
+          for name in \
+            AZURE_AI_AGENT_ENDPOINT \
+            AZURE_OPENAI_ENDPOINT \
+            AZURE_OPENAI_DEPLOYMENT_NAME \
+            COSMOSDB_ENDPOINT \
+            COSMOSDB_DATABASE \
+            COSMOSDB_CONTAINER; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "Missing required secret: $name"
+              exit 1
+            fi
+            lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+            if printf '%s' "$lower" | grep -q "mock"; then
+              echo "Invalid mock value detected for $name"
+              exit 1
+            fi
+          done
+
+      - name: Run integration tests
+        env:
+          AZURE_AI_AGENT_ENDPOINT: ${{ secrets.AZURE_AI_AGENT_ENDPOINT }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          COSMOSDB_ENDPOINT: ${{ secrets.COSMOSDB_ENDPOINT }}
+          COSMOSDB_DATABASE: ${{ secrets.COSMOSDB_DATABASE }}
+          COSMOSDB_CONTAINER: ${{ secrets.COSMOSDB_CONTAINER }}
+
+        run: |
+          cd src/backend
+          pytest -m "integration" \
+            -v --tb=short --maxfail=3
 
   frontend-tests:
     runs-on: ubuntu-latest

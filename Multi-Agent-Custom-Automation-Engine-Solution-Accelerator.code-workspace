@@ -13,6 +13,7 @@
     "settings": {
         "terminal.integrated.suggest.suggestOnTriggerCharacters": true,
         "terminal.integrated.suggest.selectionMode": "never",
-        "debug.internalConsoleOptions": "neverOpen"
+        "debug.internalConsoleOptions": "neverOpen",
+        "remote.autoForwardPortsFallback": 0
     }
 }

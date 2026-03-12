@@ -109,6 +109,4 @@ def rename_duration_column():
 
 
 # Register the report modification function to run after tests
-
 atexit.register(rename_duration_column)
-
