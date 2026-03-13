@@ -1,43 +1,42 @@
 name: Test Automation Macae v4
 
 on:
-    workflow_call:
-        inputs:
-          MACAE_WEB_URL:
-            required: false
-            type: string
-            description: "Web URL for MACAE (overrides environment variable)"
-          MACAE_URL_API:
-            required: false
-            type: string
-            description: "API URL for MACAE (overrides environment variable)"
-          MACAE_RG:
-            required: false
-            type: string
-          TEST_SUITE:
-            required: false
-            type: string
-            default: "GoldenPath-Testing"
-            description: "Test suite to run: 'Smoke-Testing', 'GoldenPath-Testing' "
-        outputs:
-          TEST_SUCCESS:
-            description: "Whether tests passed"
-            value: ${{ jobs.test.outputs.TEST_SUCCESS }}
-          TEST_REPORT_URL:
-            description: "URL to test report artifact"
-            value: ${{ jobs.test.outputs.TEST_REPORT_URL }}
+  workflow_call:
+    inputs:
+      MACAE_WEB_URL:
+        required: false
+        type: string
+        description: "Web URL for MACAE (overrides environment variable)"
+      MACAE_URL_API:
+        required: false
+        type: string
+        description: "API URL for MACAE (overrides environment variable)"
+      MACAE_RG:
+        required: false
+        type: string
+      TEST_SUITE:
+        required: false
+        type: string
+        default: "GoldenPath-Testing"
+        description: "Test suite to run: 'Smoke-Testing', 'GoldenPath-Testing' "
+    outputs:
+      TEST_SUCCESS:
+        description: "Whether tests passed"
+        value: ${{ jobs.test.outputs.TEST_SUCCESS }}
+      TEST_REPORT_URL:
+        description: "URL to test report artifact"
+        value: ${{ jobs.test.outputs.TEST_REPORT_URL }}
 
 env:
-    MACAE_WEB_URL: ${{ inputs.MACAE_WEB_URL }}
-    MACAE_URL_API: ${{ inputs.MACAE_URL_API }}
-    MACAE_RG: ${{ inputs.MACAE_RG }}
-    TEST_SUITE: ${{ inputs.TEST_SUITE }}
-    accelerator_name: "MACAE v4"
+  MACAE_WEB_URL: ${{ inputs.MACAE_WEB_URL }}
+  MACAE_URL_API: ${{ inputs.MACAE_URL_API }}
+  MACAE_RG: ${{ inputs.MACAE_RG }}
+  TEST_SUITE: ${{ inputs.TEST_SUITE }}
+  accelerator_name: "MACAE v4"
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    environment: production
     outputs:
       TEST_SUCCESS: ${{ steps.test1.outcome == 'success' || steps.test2.outcome == 'success' || steps.test3.outcome == 'success' }}
       TEST_REPORT_URL: ${{ steps.upload_report.outputs.artifact-url }}
@@ -156,7 +155,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          
+
           # Determine overall test result
           OVERALL_SUCCESS="${{ steps.test1.outcome == 'success' || steps.test2.outcome == 'success' || steps.test3.outcome == 'success' }}"
           if [[ "$OVERALL_SUCCESS" == "true" ]]; then
@@ -164,27 +163,27 @@ jobs:
           else
             echo "| **Job Status** | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "| **Target URL** | [${{ env.MACAE_WEB_URL }}](${{ env.MACAE_WEB_URL }}) |" >> $GITHUB_STEP_SUMMARY
           echo "| **Test Suite** | \`${{ env.TEST_SUITE }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Test Report** | [Download Artifact](${{ steps.upload_report.outputs.artifact-url }}) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "### 📋 Test Execution Details" >> $GITHUB_STEP_SUMMARY
           echo "| Attempt | Status | Notes |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **Test Run 1** | ${{ steps.test1.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Initial test execution |" >> $GITHUB_STEP_SUMMARY
-          
+
           if [[ "${{ steps.test1.outcome }}" == "failure" ]]; then
             echo "| **Test Run 2** | ${{ steps.test2.outcome == 'success' && '✅ Passed' || steps.test2.outcome == 'failure' && '❌ Failed' || '⏸️ Skipped' }} | Retry after 30s delay |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           if [[ "${{ steps.test2.outcome }}" == "failure" ]]; then
             echo "| **Test Run 3** | ${{ steps.test3.outcome == 'success' && '✅ Passed' || steps.test3.outcome == 'failure' && '❌ Failed' || '⏸️ Skipped' }} | Final retry after 60s delay |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           if [[ "$OVERALL_SUCCESS" == "true" ]]; then
             echo "### ✅ Test Results" >> $GITHUB_STEP_SUMMARY
             echo "- End-to-end tests completed successfully" >> $GITHUB_STEP_SUMMARY
