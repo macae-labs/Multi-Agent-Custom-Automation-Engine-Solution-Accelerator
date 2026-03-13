@@ -134,6 +134,7 @@ jobs:
           COSMOSDB_ENDPOINT: ${{ secrets.COSMOSDB_ENDPOINT }}
           COSMOSDB_DATABASE: ${{ secrets.COSMOSDB_DATABASE }}
           COSMOSDB_CONTAINER: ${{ secrets.COSMOSDB_CONTAINER }}
+          COSMOS_CONNECTION_STRING: ${{ secrets.COSMOS_CONNECTION_STRING }}
         run: |
           set -euo pipefail
           for name in \
@@ -142,7 +143,8 @@ jobs:
             AZURE_OPENAI_DEPLOYMENT_NAME \
             COSMOSDB_ENDPOINT \
             COSMOSDB_DATABASE \
-            COSMOSDB_CONTAINER; do
+            COSMOSDB_CONTAINER \
+            COSMOS_CONNECTION_STRING; do
             value="${!name:-}"
             if [ -z "$value" ]; then
               echo "Missing required secret: $name"
@@ -157,17 +159,22 @@ jobs:
 
       - name: Run integration tests
         env:
+          # Azure AI / Foundry
           AZURE_AI_AGENT_ENDPOINT: ${{ secrets.AZURE_AI_AGENT_ENDPOINT }}
+          AZURE_AI_PROJECT_NAME: ${{ secrets.AZURE_AI_PROJECT_NAME }}
+          # OpenAI
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          # Cosmos DB
           COSMOSDB_ENDPOINT: ${{ secrets.COSMOSDB_ENDPOINT }}
           COSMOSDB_DATABASE: ${{ secrets.COSMOSDB_DATABASE }}
           COSMOSDB_CONTAINER: ${{ secrets.COSMOSDB_CONTAINER }}
+          COSMOS_CONNECTION_STRING: ${{ secrets.COSMOS_CONNECTION_STRING }}
 
         run: |
           cd src/backend
           pytest -m "integration" \
-            -v --tb=short --maxfail=3
+            -v -rs --tb=short --maxfail=3
 
   frontend-tests:
     runs-on: ubuntu-latest
