@@ -96,7 +96,7 @@ jobs:
         run: |
           echo "✅ Docker image successfully built and pushed"
           echo "Image tag: ${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}"
-      
+
       - name: Generate Docker Build Summary
         if: always()
         shell: bash
