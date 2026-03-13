@@ -380,7 +380,7 @@ jobs:
             echo "#### 🎯 Post-Deployment Actions Completed:" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ Azure resources provisioned and configured" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ Agent team configurations uploaded" >> $GITHUB_STEP_SUMMARY
-            echo "- ✅ Sample datasets processed and indexed" >> $GITHUB_STEP_SUMMARY            
+            echo "- ✅ Sample datasets processed and indexed" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
