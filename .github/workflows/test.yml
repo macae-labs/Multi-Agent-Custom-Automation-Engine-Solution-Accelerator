@@ -28,7 +28,8 @@ on:
       - 'src/frontend/**'
       - 'pytest.ini'
       - '.github/workflows/test.yml'
-  # Scheduled runs for integration + e2e tests
+  workflow_dispatch:
+  # Scheduled runs for integration tests
   schedule:
     - cron: '0 6 * * 1-5'  # Weekdays at 6 AM UTC
 
