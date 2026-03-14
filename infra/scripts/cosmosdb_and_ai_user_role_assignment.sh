@@ -75,7 +75,7 @@ azSubscriptionId=$(azd env get-value AZURE_SUBSCRIPTION_ID)
 env_principal_ids=$(azd env get-value PRINCIPAL_IDS)
 
 # Merge principal IDs from parameter and environment variable
-principal_ids=$(merge_principal_ids "$principal_ids" "$env_principal_ids")
+principal_ids=$(merge_principal_ids "$principal_ids_param" "$env_principal_ids")
 
 # Check if all required arguments are provided
 if [ -z "$principal_ids" ] || [ -z "$cosmosDbAccountName" ] || [ -z "$resourceGroupName" ] || [ -z "$aif_resource_id" ] ; then
@@ -104,7 +104,7 @@ fi
 #check if user has selected the correct subscription
 currentSubscriptionId=$(az account show --query id -o tsv)
 currentSubscriptionName=$(az account show --query name -o tsv)
-if [ -n "$azSubscriptionId" ] && [ "$currentSubscriptionId" != "$azSubscriptionId" ]; then
+if [ "$currentSubscriptionId" != "$azSubscriptionId" ]; then
     echo "Current selected subscription is $currentSubscriptionName ( $currentSubscriptionId )."
     read -rp "Do you want to continue with this subscription?(y/n): " confirmation
     if [[ "$confirmation" != "y" && "$confirmation" != "Y" ]]; then

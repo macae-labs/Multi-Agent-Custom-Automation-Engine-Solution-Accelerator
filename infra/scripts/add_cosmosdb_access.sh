@@ -4,7 +4,6 @@
 resource_group="$1"
 account_name="$2"
 principal_ids="$3"
-managedIdentityClientId="$4"
 
 # Authenticate with Azure
 if az account show &> /dev/null; then
@@ -37,9 +36,9 @@ for principal_id in "${principal_ids_array[@]}"; do
 
     # Check if the role exists
     if [ -n "$roleExists" ]; then
-        echo "User - ${principal_id} already has the Cosmos DB Built-in Data Contributor role."
+        echo "User - ${principal_id} already has the Cosmos DB Built-in Data Contributer role."
     else
-        echo "User - ${principal_id} does not have the Cosmos DB Built-in Data Contributor role. Assigning the role."
+        echo "User - ${principal_id} does not have the Cosmos DB Built-in Data Contributer role. Assigning the role."
         MSYS_NO_PATHCONV=1 az cosmosdb sql role assignment create \
             --resource-group $resource_group \
             --account-name $account_name \
@@ -48,9 +47,9 @@ for principal_id in "${principal_ids_array[@]}"; do
             --scope "/" \
             --output none
         if [ $? -eq 0 ]; then
-            echo "Cosmos DB Built-in Data Contributor role assigned successfully."
+            echo "Cosmos DB Built-in Data Contributer role assigned successfully."
         else
-            echo "Failed to assign Cosmos DB Built-in Data Contributor role."
+            echo "Failed to assign Cosmos DB Built-in Data Contributer role."
         fi
     fi
 done

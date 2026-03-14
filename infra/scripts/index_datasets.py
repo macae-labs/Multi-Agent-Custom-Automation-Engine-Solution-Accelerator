@@ -131,9 +131,9 @@ for idx, blob in enumerate(blob_list, start=1):
     title = title.replace(".pdf", "")
     title = title.replace(".docx", "")
     title = title.replace(".pptx", "")
+    data = container_client.download_blob(blob.name).readall()
     
     try:
-        data = container_client.download_blob(blob.name).readall()
         print(f"Reading data from blob: {blob.name}...")
         #text = data.decode('utf-8')
         # Check if this is a PDF file and process accordingly
