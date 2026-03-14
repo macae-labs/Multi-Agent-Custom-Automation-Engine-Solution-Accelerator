@@ -4,7 +4,7 @@
 resource_group="$1"
 aif_resource_id="$2"
 principal_ids="$3"
-managedIdentityClientId="$4"
+
 
 # Authenticate with Azure
 if az account show &> /dev/null; then
@@ -23,9 +23,9 @@ else
 fi
 
 
-IFS=',' read -r -a principal_ids_array <<< "$principal_ids"
+IFS=',' read -r -a principal_ids_array <<< $principal_ids
 
-echo "Assigning Azure AI User role to users"
+echo "Assigning Azure AI User role role to users"
 
 echo "Using provided Azure AI resource id: $aif_resource_id"
 
@@ -33,10 +33,10 @@ for principal_id in "${principal_ids_array[@]}"; do
 
     # Check if the user has the Azure AI User role
     echo "Checking if user - ${principal_id} has the Azure AI User role"
-    role_assignment=$(MSYS_NO_PATHCONV=1 az role assignment list --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope "$aif_resource_id" --assignee "$principal_id" --query "[].roleDefinitionId" -o tsv)
+    role_assignment=$(MSYS_NO_PATHCONV=1 az role assignment list --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope $aif_resource_id --assignee $principal_id --query "[].roleDefinitionId" -o tsv)
     if [ -z "$role_assignment" ]; then
         echo "User - ${principal_id} does not have the Azure AI User role. Assigning the role."
-        MSYS_NO_PATHCONV=1 az role assignment create --assignee "$principal_id" --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope "$aif_resource_id" --output none
+        MSYS_NO_PATHCONV=1 az role assignment create --assignee $principal_id --role 53ca6127-db72-4b80-b1b0-d745d6d5456d --scope $aif_resource_id --output none
         if [ $? -eq 0 ]; then
             echo "Azure AI User role assigned successfully."
         else

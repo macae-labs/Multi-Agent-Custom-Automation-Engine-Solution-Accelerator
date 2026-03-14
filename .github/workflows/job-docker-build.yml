@@ -80,7 +80,19 @@ jobs:
           tags: |
             ${{ secrets.ACR_TEST_LOGIN_SERVER }}/macaefrontend:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}
             ${{ secrets.ACR_TEST_LOGIN_SERVER }}/macaefrontend:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}_${{ github.run_number }}
+
+      - name: Check MCP server path
+        id: mcp_path
+        shell: bash
+        run: |
+          if [[ -d "./src/mcp_server" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and optionally push MCP Docker image
+        if: steps.mcp_path.outputs.exists == 'true'
         uses: docker/build-push-action@v6
         env:
           DOCKER_BUILD_SUMMARY: false
@@ -117,7 +129,11 @@ jobs:
             echo "**Built Images:**" >> $GITHUB_STEP_SUMMARY
             echo "- \`${ACR_NAME}/macaebackend:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
             echo "- \`${ACR_NAME}/macaefrontend:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- \`${ACR_NAME}/macaemcp:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ steps.mcp_path.outputs.exists }}" == "true" ]]; then
+              echo "- \`${ACR_NAME}/macaemcp:${{ steps.generate_docker_tag.outputs.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- MCP image skipped (src/mcp_server not present)" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
             echo "- Docker build process encountered an error" >> $GITHUB_STEP_SUMMARY

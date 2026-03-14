@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "",
+    "STRATEGIC_TIMER_SCHEDULE": "0 */15 * * * *",
+    "ACCELERATOR_API_BASE_URL": "https://<your-api>.azurewebsites.net",
+    "ACCELERATOR_API_BEARER_TOKEN": "",
+    "STRATEGIC_PROJECT_ID": "",
+    "AZURE_SERVICE_BUS_CONNECTION_STRING": "",
+    "AZURE_SERVICE_BUS_TOPIC": "strategic-decisions",
+    "AZURE_SERVICE_BUS_SUBSCRIPTION": "critical-failure-handler",
+    "STRATEGIC_ACTION_WEBHOOK_URL": "",
+    "STRATEGIC_ACTION_WEBHOOK_BEARER_TOKEN": ""
+  }
+}

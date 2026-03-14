@@ -5,31 +5,14 @@ IFS=', ' read -ra REGIONS <<< "$AZURE_REGIONS"
 
 SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}"
 GPT_MIN_CAPACITY="${GPT_MIN_CAPACITY}"
-AZURE_CLIENT_ID="${AZURE_CLIENT_ID}"
-AZURE_TENANT_ID="${AZURE_TENANT_ID}"
-AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}"
-
-# Authenticate with service principal only when full credentials are provided.
-# Otherwise, rely on an existing login context (OIDC/managed identity).
-echo "🔐 Authenticating with Azure..."
-if [[ -n "$AZURE_CLIENT_ID" && -n "$AZURE_TENANT_ID" && -n "$AZURE_CLIENT_SECRET" ]]; then
-    echo "Using service principal credentials from environment."
-    if ! az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null; then
-        echo "❌ Error: Failed to login using service principal credentials."
-        exit 1
-    fi
-else
-    echo "Using existing Azure session (OIDC/managed identity)."
-    if ! az account show >/dev/null 2>&1; then
-        echo "❌ Error: No active Azure session found."
-        echo "Run azure/login in workflow before quota check or provide AZURE_CLIENT_* secrets."
-        exit 1
-    fi
-fi
+O4_MINI_MIN_CAPACITY="${O4_MINI_MIN_CAPACITY}"
+GPT41_MINI_MIN_CAPACITY="${GPT41_MINI_MIN_CAPACITY}"
 
 echo "🔄 Validating required environment variables..."
-if [[ -z "$SUBSCRIPTION_ID" || -z "$GPT_MIN_CAPACITY" || -z "$REGIONS" ]]; then
+if [[ -z "$SUBSCRIPTION_ID" || -z "$REGIONS" ]]; then
     echo "❌ ERROR: Missing required environment variables."
+    echo "Required: AZURE_SUBSCRIPTION_ID, AZURE_REGIONS"
+    echo "Optional: O4_MINI_MIN_CAPACITY (default: 50), GPT41_MINI_MIN_CAPACITY (default: 50)"
     exit 1
 fi
 
@@ -42,7 +25,9 @@ echo "✅ Azure subscription set successfully."
 
 # Define models and their minimum required capacities
 declare -A MIN_CAPACITY=(
-    ["OpenAI.GlobalStandard.gpt-4o"]=$GPT_MIN_CAPACITY
+    ["OpenAI.GlobalStandard.o4-mini"]="${O4_MINI_MIN_CAPACITY}"
+    ["OpenAI.GlobalStandard.gpt4.1"]="${GPT_MIN_CAPACITY}"
+    ["OpenAI.GlobalStandard.gpt4.1-mini"]="${GPT41_MINI_MIN_CAPACITY}"
 )
 
 VALID_REGION=""
@@ -65,6 +50,7 @@ for REGION in "${REGIONS[@]}"; do
 
         if [ -z "$MODEL_INFO" ]; then
             echo "⚠️ WARNING: No quota information found for model: $MODEL in $REGION. Skipping."
+            INSUFFICIENT_QUOTA=true
             continue
         fi
 

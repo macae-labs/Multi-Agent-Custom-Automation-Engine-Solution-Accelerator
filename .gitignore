@@ -6,6 +6,7 @@ __pycache__/
 # C extensions
 *.so
 .env
+.env_*
 appsettings.json
 # Distribution / packaging
 .Python
@@ -48,19 +49,6 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-
-# Backup and sensitive files
-*.backup
-*.bak
-.env.backup
-.env.*.backup
-
-# VS Code local settings (user-specific)
-.vscode/
-!.vscode/extensions.json
-
-# Azure Functions local settings
-src/backend/azure_functions/local.settings.json
 .hypothesis/
 .pytest_cache/
 cover/
@@ -138,6 +126,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+scriptenv
 env/
 venv/
 ENV/
@@ -228,6 +217,7 @@ artifacts/
 **/Properties/launchSettings.json
 
 # VS Code
+.vscode/
 
 *_i.c
 *_p.c
@@ -347,7 +337,7 @@ PublishScripts/
 !**/packages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/packages/repositories.config
-# NuGet v3's project.json files produces more ignorable files
+# NuGet v4's project.json files produces more ignorable files
 *.nuget.props
 *.nuget.targets
 
@@ -470,11 +460,8 @@ __pycache__/
 *.whl
 .azure
 .github/copilot-instructions.md
-infra/scripts/generar_token_azure.ps1
-infra/scripts/test_ai_foundry_connection.ps1
-infra/scripts/token_helper.ps1
-keys/
-
-# Azure Functions local settings
-local.settings.json
-local.settings.*.json
+# Ignore sample code folder
+data/sample_code/
+# Bicep local files
+*.local*.bicepparam
+*.local*.parameters.json
