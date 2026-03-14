@@ -46,8 +46,6 @@ jobs:
   deploy-linux:
     runs-on: ubuntu-latest
     environment: production
-    env:
-      AZURE_DEV_COLLECT_TELEMETRY: ${{ vars.AZURE_DEV_COLLECT_TELEMETRY }}
     outputs:
       WEBAPP_URL: ${{ steps.get_output_linux.outputs.WEBAPP_URL }}
       MACAE_URL_API: ${{ steps.get_output_linux.outputs.BACKEND_URL }}
@@ -202,6 +200,8 @@ jobs:
 
       - name: Install azd
         uses: Azure/setup-azd@v2
+        env:
+          AZURE_DEV_COLLECT_TELEMETRY: 'no'
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -391,3 +391,4 @@ jobs:
         run: |
           az logout || true
           echo "Logged out from Azure."
+
