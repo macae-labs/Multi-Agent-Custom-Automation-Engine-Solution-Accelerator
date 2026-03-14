@@ -92,7 +92,7 @@ jobs:
         run: |
           echo "🔍 Validating workflow input parameters..."
           VALIDATION_FAILED=false
-
+          
           # Validate trigger_type (required)
           if [[ -z "$INPUT_TRIGGER_TYPE" ]]; then
             echo "❌ ERROR: trigger_type is required but not provided"
@@ -100,7 +100,7 @@ jobs:
           else
             echo "✅ trigger_type: '$INPUT_TRIGGER_TYPE' is valid"
           fi
-
+          
           # Validate waf_enabled (boolean)
           if [[ "$INPUT_WAF_ENABLED" != "true" && "$INPUT_WAF_ENABLED" != "false" ]]; then
             echo "❌ ERROR: waf_enabled must be 'true' or 'false', got: '$INPUT_WAF_ENABLED'"
@@ -108,7 +108,7 @@ jobs:
           else
             echo "✅ waf_enabled: '$INPUT_WAF_ENABLED' is valid"
           fi
-
+          
           # Validate EXP (boolean)
           if [[ "$INPUT_EXP" != "true" && "$INPUT_EXP" != "false" ]]; then
             echo "❌ ERROR: EXP must be 'true' or 'false', got: '$INPUT_EXP'"
@@ -116,7 +116,7 @@ jobs:
           else
             echo "✅ EXP: '$INPUT_EXP' is valid"
           fi
-
+          
           # Validate run_e2e_tests (specific allowed values)
           if [[ -n "$INPUT_RUN_E2E_TESTS" ]]; then
             ALLOWED_VALUES=("None" "GoldenPath-Testing" "Smoke-Testing")
@@ -127,7 +127,7 @@ jobs:
               echo "✅ run_e2e_tests: '$INPUT_RUN_E2E_TESTS' is valid"
             fi
           fi
-
+          
           # Validate existing_webapp_url (must start with https if provided)
           if [[ -n "$INPUT_EXISTING_WEBAPP_URL" ]]; then
             if [[ ! "$INPUT_EXISTING_WEBAPP_URL" =~ ^https:// ]]; then
@@ -137,7 +137,7 @@ jobs:
               echo "✅ existing_webapp_url: '$INPUT_EXISTING_WEBAPP_URL' is valid"
             fi
           fi
-
+          
           # Validate deploy_result (must be specific values if provided)
           if [[ -n "$INPUT_DEPLOY_RESULT" ]]; then
             ALLOWED_DEPLOY_RESULTS=("success" "failure" "skipped")
@@ -148,7 +148,7 @@ jobs:
               echo "✅ deploy_result: '$INPUT_DEPLOY_RESULT' is valid"
             fi
           fi
-
+          
           # Validate e2e_test_result (must be specific values if provided)
           if [[ -n "$INPUT_E2E_TEST_RESULT" ]]; then
             ALLOWED_TEST_RESULTS=("success" "failure" "skipped")
@@ -159,7 +159,7 @@ jobs:
               echo "✅ e2e_test_result: '$INPUT_E2E_TEST_RESULT' is valid"
             fi
           fi
-
+          
           # Validate CONTAINER_WEB_APPURL (must start with https if provided)
           if [[ -n "$INPUT_CONTAINER_WEB_APPURL" ]]; then
             if [[ ! "$INPUT_CONTAINER_WEB_APPURL" =~ ^https:// ]]; then
@@ -169,7 +169,7 @@ jobs:
               echo "✅ CONTAINER_WEB_APPURL: '$INPUT_CONTAINER_WEB_APPURL' is valid"
             fi
           fi
-
+          
           # Validate RESOURCE_GROUP_NAME (Azure resource group naming convention if provided)
           if [[ -n "$INPUT_RESOURCE_GROUP_NAME" ]]; then
             if [[ ! "$INPUT_RESOURCE_GROUP_NAME" =~ ^[a-zA-Z0-9._\(\)-]+$ ]] || [[ "$INPUT_RESOURCE_GROUP_NAME" =~ \.$ ]]; then
@@ -182,7 +182,7 @@ jobs:
               echo "✅ RESOURCE_GROUP_NAME: '$INPUT_RESOURCE_GROUP_NAME' is valid"
             fi
           fi
-
+          
           # Validate QUOTA_FAILED (must be 'true', 'false', or empty string)
           if [[ "$INPUT_QUOTA_FAILED" != "true" && "$INPUT_QUOTA_FAILED" != "false" && "$INPUT_QUOTA_FAILED" != "" ]]; then
             echo "❌ ERROR: QUOTA_FAILED must be 'true', 'false', or empty string, got: '$INPUT_QUOTA_FAILED'"
@@ -190,7 +190,7 @@ jobs:
           else
             echo "✅ QUOTA_FAILED: '$INPUT_QUOTA_FAILED' is valid"
           fi
-
+          
           # Validate TEST_SUCCESS (must be 'true' or 'false' or empty)
           if [[ -n "$INPUT_TEST_SUCCESS" ]]; then
             if [[ "$INPUT_TEST_SUCCESS" != "true" && "$INPUT_TEST_SUCCESS" != "false" ]]; then
@@ -200,7 +200,7 @@ jobs:
               echo "✅ TEST_SUCCESS: '$INPUT_TEST_SUCCESS' is valid"
             fi
           fi
-
+          
           # Validate TEST_REPORT_URL (must start with https if provided)
           if [[ -n "$INPUT_TEST_REPORT_URL" ]]; then
             if [[ ! "$INPUT_TEST_REPORT_URL" =~ ^https:// ]]; then
@@ -210,14 +210,14 @@ jobs:
               echo "✅ TEST_REPORT_URL: '$INPUT_TEST_REPORT_URL' is valid"
             fi
           fi
-
+          
           # Fail workflow if any validation failed
           if [[ "$VALIDATION_FAILED" == "true" ]]; then
             echo ""
             echo "❌ Parameter validation failed. Please correct the errors above and try again."
             exit 1
           fi
-
+          
           echo ""
           echo "✅ All input parameters validated successfully!"
 
@@ -262,7 +262,7 @@ jobs:
         run: |
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           RESOURCE_GROUP="$INPUT_RESOURCE_GROUP_NAME"
-
+          
           EMAIL_BODY=$(cat <<EOF
           {
             "body": "<p>Dear Team,</p><p>We would like to inform you that the ${{ env.accelerator_name }} deployment process has encountered an issue and has failed to complete successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• WAF Enabled: ${{ env.WAF_ENABLED }}<br>• EXP Enabled: ${{ env.EXP }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Please investigate the deployment failure at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>",
@@ -270,7 +270,7 @@ jobs:
           }
           EOF
           )
-
+          
           curl -X POST "${{ secrets.EMAILNOTIFICATION_LOGICAPP_URL_TA }}" \
             -H "Content-Type: application/json" \
             -d "$EMAIL_BODY" || echo "Failed to send deployment failure notification"
@@ -290,7 +290,7 @@ jobs:
           RESOURCE_GROUP="$INPUT_RESOURCE_GROUP_NAME"
           TEST_REPORT_URL="$INPUT_TEST_REPORT_URL"
           TEST_SUITE_NAME="${{ steps.test_suite.outputs.TEST_SUITE_NAME }}"
-
+          
           if [ "$INPUT_E2E_TEST_RESULT" = "skipped" ]; then
             EMAIL_BODY=$(cat <<EOF
           {
@@ -308,7 +308,7 @@ jobs:
           EOF
             )
           fi
-
+          
           curl -X POST "${{ secrets.EMAILNOTIFICATION_LOGICAPP_URL_TA }}" \
             -H "Content-Type: application/json" \
             -d "$EMAIL_BODY" || echo "Failed to send success notification"
@@ -327,7 +327,7 @@ jobs:
           WEBAPP_URL="${INPUT_CONTAINER_WEB_APPURL:-$INPUT_EXISTING_WEBAPP_URL}"
           RESOURCE_GROUP="$INPUT_RESOURCE_GROUP_NAME"
           TEST_SUITE_NAME="${{ steps.test_suite.outputs.TEST_SUITE_NAME }}"
-
+          
           EMAIL_BODY=$(cat <<EOF
           {
             "body": "<p>Dear Team,</p><p>We would like to inform you that ${{ env.accelerator_name }} accelerator test automation process has encountered issues and failed to complete successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• Web App URL: <a href='${WEBAPP_URL}'>${WEBAPP_URL}</a><br>• Deployment Status: ✅ Success<br>• E2E Tests: ❌ Failed<br>• Test Suite: ${TEST_SUITE_NAME}</p><p><strong>Test Details:</strong><br>• Test Report: <a href='${TEST_REPORT_URL}'>View Report</a></p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Please investigate the matter at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>",
@@ -351,7 +351,7 @@ jobs:
           EXISTING_URL="$INPUT_EXISTING_WEBAPP_URL"
           TEST_REPORT_URL="$INPUT_TEST_REPORT_URL"
           TEST_SUITE_NAME="${{ steps.test_suite.outputs.TEST_SUITE_NAME }}"
-
+          
           EMAIL_BODY=$(cat <<EOF
           {
             "body": "<p>Dear Team,</p><p>The ${{ env.accelerator_name }} pipeline executed against the <strong>specified target URL</strong> and testing process has completed successfully.</p><p><strong>Test Results:</strong><br>• Status: ✅ Passed<br>• Test Suite: ${TEST_SUITE_NAME}<br>${TEST_REPORT_URL:+• Test Report: <a href='${TEST_REPORT_URL}'>View Report</a>}<br>• Target URL: <a href='${EXISTING_URL}'>${EXISTING_URL}</a></p><p><strong>Deployment:</strong> Skipped</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
@@ -375,7 +375,7 @@ jobs:
           EXISTING_URL="$INPUT_EXISTING_WEBAPP_URL"
           TEST_REPORT_URL="$INPUT_TEST_REPORT_URL"
           TEST_SUITE_NAME="${{ steps.test_suite.outputs.TEST_SUITE_NAME }}"
-
+          
           EMAIL_BODY=$(cat <<EOF
           {
             "body": "<p>Dear Team,</p><p>The ${{ env.accelerator_name }} pipeline executed against the <strong>specified target URL</strong> and the test automation has encountered issues and failed to complete successfully.</p><p><strong>Failure Details:</strong><br>• Target URL: <a href='${EXISTING_URL}'>${EXISTING_URL}</a><br>${TEST_REPORT_URL:+• Test Report: <a href='${TEST_REPORT_URL}'>View Report</a>}<br>• Test Suite: ${TEST_SUITE_NAME}<br>• Deployment: Skipped</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",

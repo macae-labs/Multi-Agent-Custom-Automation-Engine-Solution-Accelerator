@@ -1,32 +1,31 @@
-name: Validate Deployment
-
-on:
-  workflow_dispatch:
-    inputs:
-      target_env:
-        description: 'GitHub Environment to use'
-        required: false
-        type: choice
-        default: dev
-        options:
-          - dev
-          - prod
-env:
-  GPT_MIN_CAPACITY: 150
-  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-  QUOTA_FAILED: 'false'
-  RESOURCE_GROUP_NAME: ''
-  AZURE_LOCATION: ''
-  OPENAI_RESOURCE_NAME: ''
+name: Validate Deployment v4
 
 permissions:
   id-token: write
   contents: read
+  actions: read
+on:
+  workflow_run:
+    workflows: ["Build Docker and Optional Push v4"]
+    types:
+      - completed
+    branches:
+      - main
+      - dev-v4
+      - hotfix
+  schedule:
+    - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
+  workflow_dispatch: #Allow manual triggering
+env:
+  GPT_MIN_CAPACITY: 150
+  O4_MINI_MIN_CAPACITY: 50
+  GPT41_MINI_MIN_CAPACITY: 50
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.target_env || 'dev' }}
+    environment: production
     outputs:
       RESOURCE_GROUP_NAME: ${{ steps.check_create_rg.outputs.RESOURCE_GROUP_NAME }}
       WEBAPP_URL: ${{ steps.get_output.outputs.WEBAPP_URL }}
@@ -35,9 +34,9 @@ jobs:
       CONTAINER_APP: ${{steps.get_backend_url.outputs.CONTAINER_APP}}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Login to Azure (OIDC)
+      - name: Login to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -46,48 +45,45 @@ jobs:
 
       - name: Run Quota Check
         id: quota-check
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          GPT_MIN_CAPACITY: ${{ env.GPT_MIN_CAPACITY }}
+          O4_MINI_MIN_CAPACITY: ${{ env.O4_MINI_MIN_CAPACITY }}
+          GPT41_MINI_MIN_CAPACITY: ${{ env.GPT41_MINI_MIN_CAPACITY }}
+          AZURE_REGIONS: ${{ vars.AZURE_REGIONS }}
         run: |
-          set -o pipefail
-          export AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          export GPT_MIN_CAPACITY="150"
-          export AZURE_REGIONS="${{ vars.AZURE_REGIONS }}"
-
           chmod +x infra/scripts/checkquota.sh
-          if ! infra/scripts/checkquota.sh 2>&1 | tee /tmp/quota-check.log; then
+          if ! infra/scripts/checkquota.sh; then
             # If quota check fails due to insufficient quota, set the flag
-            if grep -q "No region with sufficient quota found" /tmp/quota-check.log; then
-              echo "quota_failed=true" >> $GITHUB_OUTPUT
-              exit 1
+            if grep -q "No region with sufficient quota found" infra/scripts/checkquota.sh; then
+              echo "QUOTA_FAILED=true" >> $GITHUB_ENV
             fi
             exit 1  # Fail the pipeline if any other failure occurs
           fi
-          echo "quota_failed=false" >> $GITHUB_OUTPUT
 
       - name: Send Notification on Quota Failure
-        if: failure() && steps.quota-check.outputs.quota_failed == 'true'
+        if: env.QUOTA_FAILED == 'true'
         run: |
-          curl -X POST "${{ secrets.ALERT_LOGIC_APP_URL }}" \
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EMAIL_BODY=$(cat <<EOF
+          {
+            "body": "<p>Dear Team,</p><p>The quota check has failed, and the pipeline cannot proceed.</p><p><strong>Build URL:</strong> ${RUN_URL}</p><p>Please take necessary action.</p><p>Best regards,<br>Your Automation Team</p>"
+          }
+          EOF
+          )
+
+          curl -X POST "${{ secrets.AUTO_LOGIC_APP_URL }}" \
             -H "Content-Type: application/json" \
-            -d '{"context":"quota","severity":"error","workflow":"deploy.yml","message":"Quota check failed. Pipeline cannot proceed.","run_url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
-            || echo "Failed to send notification"
+            -d "$EMAIL_BODY" || echo "Failed to send notification"
 
       - name: Fail Pipeline if Quota Check Fails
-        if: steps.quota-check.outputs.quota_failed == 'true'
+        if: env.QUOTA_FAILED == 'true'
         run: exit 1
 
       - name: Set Deployment Region
         run: |
-          if [ -z "$VALID_REGION" ]; then
-            VALID_REGION="${{ vars.AZURE_LOCATION }}"
-          fi
-          if [ -z "$VALID_REGION" ]; then
-            VALID_REGION="eastus2"
-          fi
           echo "Selected Region: $VALID_REGION"
           echo "AZURE_LOCATION=$VALID_REGION" >> $GITHUB_ENV
-
-      - name: Setup Azure CLI
-        run: az --version
 
       - name: Install Bicep CLI
         run: az bicep install
@@ -118,39 +114,39 @@ jobs:
           TIMESTAMP=$(date +%s)
           UPDATED_TIMESTAMP=$(echo $TIMESTAMP | tail -c 6)
           UNIQUE_SOLUTION_PREFIX="${COMMON_PART}${UPDATED_TIMESTAMP}"
-          echo "SOLUTION_PREFIX=${UNIQUE_SOLUTION_PREFIX}" >> $GITHUB_OUTPUT
           echo "SOLUTION_PREFIX=${UNIQUE_SOLUTION_PREFIX}" >> $GITHUB_ENV
 
       - name: Deploy Bicep Template
         id: deploy
         run: |
           if [[ "${{ env.BRANCH_NAME }}" == "main" ]]; then
-            IMAGE_TAG="latest"
-          elif [[ "${{ env.BRANCH_NAME }}" == "dev" ]]; then
-            IMAGE_TAG="dev"
+            IMAGE_TAG="latest_v4"
+          elif [[ "${{ env.BRANCH_NAME }}" == "dev-v4" ]]; then
+            IMAGE_TAG="dev_v4"
           elif [[ "${{ env.BRANCH_NAME }}" == "hotfix" ]]; then
             IMAGE_TAG="hotfix"
           else
-            IMAGE_TAG="latest"
+            IMAGE_TAG="latest_v4"
           fi
+
+          # Generate current timestamp in desired format: YYYY-MM-DDTHH:MM:SS.SSSSSSSZ
+            current_date=$(date -u +"%Y-%m-%dT%H:%M:%S.%7NZ")
 
           az deployment group create \
             --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
             --template-file infra/main.bicep \
             --parameters \
-              environmentName=${{ steps.generate_solution_prefix.outputs.SOLUTION_PREFIX }} \
-              solutionLocation="${{ env.AZURE_LOCATION }}" \
-              modelDeploymentType="GlobalStandard" \
-              gptModelName="gpt-4o" \
-              gptModelVersion="2024-08-06" \
-              imageTag="${IMAGE_TAG}" \
-              useWafAlignedArchitecture=false \
-              aiDeploymentsLocation='${{ env.AZURE_LOCATION }}' \
-              gptModelCapacity=150 \
-              logAnalyticsWorkspaceConfiguration='{"dataRetentionInDays": 30, "existingWorkspaceResourceId": ""}' \
-              applicationInsightsConfiguration='{"retentionInDays": 30}' \
-              virtualNetworkConfiguration='{"enabled": false}' \
-              webServerFarmConfiguration='{"skuCapacity": 1, "skuName": "B2"}' \
+              solutionName=${{ env.SOLUTION_PREFIX }} \
+              location="${{ env.AZURE_LOCATION }}" \
+              gptModelDeploymentType="GlobalStandard" \
+              gptModelName="gpt-4.1-mini" \
+              gptModelVersion="2025-04-14" \
+              backendContainerImageTag="${IMAGE_TAG}" \
+              frontendContainerImageTag="${IMAGE_TAG}" \
+              azureAiServiceLocation='${{ env.AZURE_LOCATION }}' \
+              gptModelCapacity=50 \
+              createdBy="Pipeline" \
+              tags="{'Purpose':'Deploying and Cleaning Up Resources for Validation','CreatedDate':'$current_date'}" \
             --output json
 
       - name: Extract Web App and API App URLs
@@ -167,9 +163,10 @@ jobs:
       - name: Get Container App Backend URL
         id: get_backend_url
         run: |
+          # Get specifically the backend container app (not the MCP container app)
           CONTAINER_APP_NAME=$(az containerapp list \
             --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
-            --query "[0].name" -o tsv)
+            --query "[?starts_with(name, 'ca-') && !contains(name, 'mcp')].name" -o tsv)
 
           MACAE_URL_API=$(az containerapp show \
             --name "$CONTAINER_APP_NAME" \
@@ -178,6 +175,19 @@ jobs:
 
           echo "MACAE_URL_API=https://${MACAE_URL_API}" >> $GITHUB_OUTPUT
           echo "CONTAINER_APP=${CONTAINER_APP_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Run Post deployment scripts
+        run: |
+          set -e
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+          echo "Running post-deployment script..."
+          
+          # Run PowerShell script with 'All' use case automatically selected
+          # Provide two inputs: '1' for keeping current subscription, '5' for All use cases
+          echo -e "1\n5" | pwsh -File infra/scripts/Selecting-Team-Config-And-Data.ps1 -ResourceGroup "${{ env.RESOURCE_GROUP_NAME }}"
+
+          echo "=== Post-Deployment Script Completed Successfully ==="
 
       - name: Set Deployment Status
         id: deployment_status
@@ -204,20 +214,19 @@ jobs:
     if: always() && needs.deploy.outputs.RESOURCE_GROUP_NAME != ''
     needs: [deploy, e2e-test]
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.target_env || 'dev' }}
+    environment: production
     env:
       RESOURCE_GROUP_NAME: ${{ needs.deploy.outputs.RESOURCE_GROUP_NAME }}
-      OPENAI_RESOURCE_NAME: ''
     steps:
-      - name: Setup Azure CLI
-        run: az --version
-
-      - name: Login to Azure (OIDC)
+      - name: Login to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Azure Subscription
+        run: az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
 
       - name: Extract AI Services and Key Vault Names
         if: always()
@@ -341,10 +350,20 @@ jobs:
       - name: Send Notification on Failure
         if: failure()
         run: |
-          curl -X POST "${{ secrets.ALERT_LOGIC_APP_URL }}" \
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Construct the email body
+          EMAIL_BODY=$(cat <<EOF
+          {
+            "body": "<p>Dear Team,</p><p>We would like to inform you that the Multi-Agent-Custom-Automation-Engine-Solution-Accelerator Automation process has encountered an issue and has failed to complete successfully.</p><p><strong>Build URL:</strong> ${RUN_URL}<br> ${OUTPUT}</p><p>Please investigate the matter at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>"
+          }
+          EOF
+          )
+
+          # Send the notification
+          curl -X POST "${{ secrets.LOGIC_APP_URL }}" \
             -H "Content-Type: application/json" \
-            -d '{"context":"cleanup","severity":"error","workflow":"deploy.yml","message":"Cleanup deployment failed.","run_url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
-            || echo "Failed to send notification"
+            -d "$EMAIL_BODY" || echo "Failed to send notification"
       - name: Logout from Azure
         if: always()
         run: |
