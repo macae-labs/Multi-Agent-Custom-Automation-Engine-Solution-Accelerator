@@ -124,6 +124,15 @@ param enableRedundancy bool = false
 @description('Optional. Enable private networking for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enablePrivateNetworking bool = false
 
+@description('Optional. Enable encryption at host for the virtual machine. Requires Microsoft.Compute/EncryptionAtHost feature to be registered in the subscription. Defaults to false.')
+param enableEncryptionAtHost bool = false
+
+@description('Optional. Enable proximity placement group for the virtual machine. Defaults to false.')
+param enableProximityPlacement bool = false
+
+@description('Optional. Enable maintenance configuration for the virtual machine. Defaults to false.')
+param enableMaintenanceConfig bool = false
+
 @secure()
 @description('Optional. The user name for the administrator account of the virtual machine. Allows to customize credentials if `enablePrivateNetworking` is set to true.')
 param virtualMachineAdminUsername string?
@@ -437,7 +446,7 @@ module bastionHost 'br/public:avm/res/network/bastion-host:0.7.0' = if (enablePr
 // ========== Virtual machine ========== //
 // WAF best practices for virtual machines: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/virtual-machines
 var maintenanceConfigurationResourceName = 'mc-${solutionSuffix}'
-module maintenanceConfiguration 'br/public:avm/res/maintenance/maintenance-configuration:0.3.1' = if (enablePrivateNetworking) {
+module maintenanceConfiguration 'br/public:avm/res/maintenance/maintenance-configuration:0.3.1' = if (enablePrivateNetworking && enableMaintenanceConfig) {
   name: take('avm.res.compute.virtual-machine.${maintenanceConfigurationResourceName}', 64)
   params: {
     name: maintenanceConfigurationResourceName
@@ -590,7 +599,7 @@ module windowsVmDataCollectionRules 'br/public:avm/res/insights/data-collection-
 }
 
 var proximityPlacementGroupResourceName = 'ppg-${solutionSuffix}'
-module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-group:0.4.0' = if (enablePrivateNetworking) {
+module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-group:0.4.0' = if (enablePrivateNetworking && enableProximityPlacement) {
   name: take('avm.res.compute.proximity-placement-group.${proximityPlacementGroupResourceName}', 64)
   params: {
     name: proximityPlacementGroupResourceName
@@ -605,7 +614,8 @@ module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-gr
 var virtualMachineResourceName = 'vm-${solutionSuffix}'
 var virtualMachineAvailabilityZone = 1
 var virtualMachineSize = 'Standard_D2s_v4'
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (enablePrivateNetworking) {
+// VM only deploys when enablePrivateNetworking=true AND virtualMachineAdminPassword is provided
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (enablePrivateNetworking && virtualMachineAdminPassword != null) {
   name: take('avm.res.compute.virtual-machine.${virtualMachineResourceName}', 64)
   params: {
     name: virtualMachineResourceName
@@ -616,14 +626,14 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (e
     osType: 'Windows'
     vmSize: virtualMachineSize
     adminUsername: virtualMachineAdminUsername ?? 'JumpboxAdminUser'
-    adminPassword: virtualMachineAdminPassword ?? 'JumpboxAdminP@ssw0rd1234!'
+    adminPassword: virtualMachineAdminPassword!
     patchMode: 'AutomaticByPlatform'
     bypassPlatformSafetyChecksOnUserSchedule: true
-    maintenanceConfigurationResourceId: maintenanceConfiguration!.outputs.resourceId
+    maintenanceConfigurationResourceId: enableMaintenanceConfig ? maintenanceConfiguration!.outputs.resourceId : null
     enableAutomaticUpdates: true
-    encryptionAtHost: true
+    encryptionAtHost: enableEncryptionAtHost
     availabilityZone: virtualMachineAvailabilityZone
-    proximityPlacementGroupResourceId: proximityPlacementGroup!.outputs.resourceId
+    proximityPlacementGroupResourceId: enableProximityPlacement ? proximityPlacementGroup!.outputs.resourceId : null
     imageReference: {
       publisher: 'microsoft-dsvm'
       offer: 'dsvm-win-2022'
