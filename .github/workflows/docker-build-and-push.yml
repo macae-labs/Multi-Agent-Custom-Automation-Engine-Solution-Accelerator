@@ -123,8 +123,18 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.TAG }}
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.HISTORICAL_TAG }}
-      
+
+      - name: Check MCP server path
+        id: mcp_path
+        run: |
+          if [[ -d "./src/mcp_server" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and optionally push MCP Docker image
+        if: steps.mcp_path.outputs.exists == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./src/mcp_server
