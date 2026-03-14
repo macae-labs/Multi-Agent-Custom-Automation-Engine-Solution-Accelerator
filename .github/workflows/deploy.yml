@@ -183,9 +183,8 @@ jobs:
 
           echo "Running post-deployment script..."
 
-          # Run PowerShell script with 'All' use case automatically selected
-          # Provide two inputs: '1' for keeping current subscription, '5' for All use cases
-          echo -e "1\n5" | pwsh -File infra/scripts/Selecting-Team-Config-And-Data.ps1 -ResourceGroup "${{ env.RESOURCE_GROUP_NAME }}"
+          # Run PowerShell script non-interactively with "All" use cases
+          pwsh -File infra/scripts/Selecting-Team-Config-And-Data.ps1 -ResourceGroup "${{ env.RESOURCE_GROUP_NAME }}" -UseCaseSelection "6"
 
           echo "=== Post-Deployment Script Completed Successfully ==="
 

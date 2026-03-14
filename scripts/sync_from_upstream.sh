@@ -25,6 +25,7 @@ SAFE_PATHS=(
   "infra/"
   "scripts/"
   "docs/"
+  "data/"
   "azure.yaml"
   "README.md"
   ".gitignore"

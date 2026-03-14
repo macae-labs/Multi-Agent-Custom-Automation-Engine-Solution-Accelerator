@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 
 param(
-    [string]$ResourceGroup
+    [string]$ResourceGroup,
+    [string]$UseCaseSelection
 )
 
 # Variables
@@ -34,12 +35,12 @@ function Restore-NetworkAccess {
     if ($script:ResourceGroup -and $script:storageAccount -and $script:aiSearch) {
         # Check resource group tag
         $rgTypeTag = (az group show --name $script:ResourceGroup --query "tags.Type" -o tsv 2>$null)
-        
+
         if ($rgTypeTag -eq "WAF") {
             if ($script:stIsPublicAccessDisabled -eq $true -or $script:srchIsPublicAccessDisabled -eq $true) {
                 Write-Host "=== Restoring network access settings ==="
             }
-            
+
             if ($script:stIsPublicAccessDisabled -eq $true) {
                 $currentAccess = $(az storage account show --name $script:storageAccount --resource-group $script:ResourceGroup --query "publicNetworkAccess" -o tsv 2>$null)
                 if ($currentAccess -eq "Enabled") {
@@ -60,7 +61,7 @@ function Restore-NetworkAccess {
                     }
                 }
             }
-            
+
             if ($script:srchIsPublicAccessDisabled -eq $true) {
                 $currentAccess = $(az search service show --name $script:aiSearch --resource-group $script:ResourceGroup --query "publicNetworkAccess" -o tsv 2>$null)
                 if ($currentAccess -eq "Enabled") {
@@ -78,7 +79,7 @@ function Restore-NetworkAccess {
                     }
                 }
             }
-            
+
             if ($script:stIsPublicAccessDisabled -eq $true -or $script:srchIsPublicAccessDisabled -eq $true) {
                 Write-Host "=========================================="
             } else {
@@ -109,7 +110,7 @@ function Get-ValuesFromAzdEnv {
     }
 
     Write-Host "Getting values from azd environment..."
-    
+
     $script:directoryPath = "data/agent_teams"
     $script:backendUrl = $(azd env get-value BACKEND_URL)
     $script:storageAccount = $(azd env get-value AZURE_STORAGE_ACCOUNT_NAME)
@@ -131,13 +132,13 @@ function Get-ValuesFromAzdEnv {
     $script:aiSearchIndexForContractRisk = $(azd env get-value AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_RISK)
     $script:aiSearchIndexForContractCompliance = $(azd env get-value AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_COMPLIANCE)
     $script:ResourceGroup = $(azd env get-value AZURE_RESOURCE_GROUP)
-    
+
     # Validate that we got all required values
     if (-not $script:backendUrl -or -not $script:storageAccount -or -not $script:blobContainerForRetailCustomer -or -not $script:aiSearch -or -not $script:aiSearchIndexForRetailOrder -or -not $script:ResourceGroup) {
         Write-Host "Error: Could not retrieve all required values from azd environment."
         return $false
     }
-    
+
     Write-Host "Successfully retrieved values from azd environment."
     return $true
 }
@@ -148,41 +149,41 @@ function Get-DeploymentValue {
         [string]$PrimaryKey,
         [string]$FallbackKey
     )
-    
+
     $value = $null
-    
+
     # Try primary key first
     if ($DeploymentOutputs.PSObject.Properties[$PrimaryKey]) {
         $value = $DeploymentOutputs.$PrimaryKey.value
     }
-    
+
     # If primary key failed, try fallback key
     if (-not $value -and $DeploymentOutputs.PSObject.Properties[$FallbackKey]) {
         $value = $DeploymentOutputs.$FallbackKey.value
     }
-    
+
     return $value
 }
 
 function Get-ValuesFromAzDeployment {
     Write-Host "Getting values from Azure deployment outputs..."
-    
+
     $script:directoryPath = "data/agent_teams"
-    
+
     Write-Host "Fetching deployment name..."
     $deploymentName = az group show --name $ResourceGroup --query "tags.DeploymentName" -o tsv
     if (-not $deploymentName) {
         Write-Host "Error: Could not find deployment name in resource group tags."
         return $false
     }
-    
+
     Write-Host "Fetching deployment outputs for deployment: $deploymentName"
     $deploymentOutputs = az deployment group show --resource-group $ResourceGroup --name $deploymentName --query "properties.outputs" -o json | ConvertFrom-Json
     if (-not $deploymentOutputs) {
         Write-Host "Error: Could not fetch deployment outputs."
         return $false
     }
-    
+
     # Extract specific outputs with fallback logic
     $script:storageAccount = Get-DeploymentValue -DeploymentOutputs $deploymentOutputs -PrimaryKey "azurE_STORAGE_ACCOUNT_NAME" -FallbackKey "azureStorageAccountName"
     $script:blobContainerForRetailCustomer = Get-DeploymentValue -DeploymentOutputs $deploymentOutputs -PrimaryKey "azurE_STORAGE_CONTAINER_NAME_RETAIL_CUSTOMER" -FallbackKey "azureStorageContainerNameRetailCustomer"
@@ -203,34 +204,34 @@ function Get-ValuesFromAzDeployment {
     $script:aiSearchIndexForContractCompliance = Get-DeploymentValue -DeploymentOutputs $deploymentOutputs -PrimaryKey "azurE_AI_SEARCH_INDEX_NAME_CONTRACT_COMPLIANCE" -FallbackKey "azureAiSearchIndexNameContractCompliance"
     $script:aiSearch = Get-DeploymentValue -DeploymentOutputs $deploymentOutputs -PrimaryKey "azurE_AI_SEARCH_NAME" -FallbackKey "azureAiSearchName"
     $script:backendUrl = Get-DeploymentValue -DeploymentOutputs $deploymentOutputs -PrimaryKey "backenD_URL" -FallbackKey "backendUrl"
-    
+
     # Validate that we extracted all required values
     if (-not $script:storageAccount -or -not $script:aiSearch -or -not $script:backendUrl) {
         Write-Host "Error: Could not extract all required values from deployment outputs."
         return $false
     }
-    
+
     Write-Host "Successfully retrieved values from deployment outputs."
     return $true
 }
 
 function Get-ValuesUsingSolutionSuffix {
     Write-Host "Getting values from resource naming convention using solution suffix..."
-    
+
     # Get the solution suffix from resource group tags
     $solutionSuffix = az group show --name $ResourceGroup --query "tags.SolutionSuffix" -o tsv
     if (-not $solutionSuffix) {
         Write-Host "Error: Could not find SolutionSuffix tag in resource group."
         return $false
     }
-    
+
     Write-Host "Found solution suffix: $solutionSuffix"
-    
+
     # Reconstruct resource names using same naming convention as Bicep
     $script:storageAccount = "st$solutionSuffix" -replace '-', ''  # Remove dashes like Bicep does
     $script:aiSearch = "srch-$solutionSuffix"
     $containerAppName = "ca-$solutionSuffix"
-    
+
     # Query dynamic value (backend URL) from Container App
     Write-Host "Querying backend URL from Container App..."
     $backendFqdn = az containerapp show `
@@ -238,14 +239,14 @@ function Get-ValuesUsingSolutionSuffix {
       --resource-group $ResourceGroup `
       --query "properties.configuration.ingress.fqdn" `
       -o tsv 2>$null
-    
+
     if (-not $backendFqdn) {
         Write-Host "Error: Could not get Container App FQDN. Container App may not be deployed yet."
         return $false
     }
-    
+
     $script:backendUrl = "https://$backendFqdn"
-    
+
     # Hardcoded container names (These don't follow the suffix pattern in Bicep, hence need to be changed here if changed in Bicep)
     $script:blobContainerForRetailCustomer = "retail-dataset-customer"
     $script:blobContainerForRetailOrder = "retail-dataset-order"
@@ -255,7 +256,7 @@ function Get-ValuesUsingSolutionSuffix {
     $script:blobContainerForContractSummary = "contract-summary-dataset"
     $script:blobContainerForContractRisk = "contract-risk-dataset"
     $script:blobContainerForContractCompliance = "contract-compliance-dataset"
-    
+
     # Hardcoded index names (These don't follow the suffix pattern in Bicep, hence need to be changed here if changed in Bicep)
     $script:aiSearchIndexForRetailCustomer = "macae-retail-customer-index"
     $script:aiSearchIndexForRetailOrder = "macae-retail-order-index"
@@ -265,15 +266,15 @@ function Get-ValuesUsingSolutionSuffix {
     $script:aiSearchIndexForContractSummary = "contract-summary-doc-index"
     $script:aiSearchIndexForContractRisk = "contract-risk-doc-index"
     $script:aiSearchIndexForContractCompliance = "contract-compliance-doc-index"
-    
+
     $script:directoryPath = "data/agent_teams"
-    
+
     # Validate that we got all critical values
     if (-not $script:storageAccount -or -not $script:aiSearch -or -not $script:backendUrl) {
         Write-Host "Error: Failed to reconstruct all required resource names."
         return $false
     }
-    
+
     Write-Host "Successfully reconstructed values from resource naming convention."
     return $true
 }
@@ -308,12 +309,17 @@ $currentSubscriptionName = az account show --query name -o tsv
 
 if ($currentSubscriptionId -ne $azSubscriptionId -and $azSubscriptionId) {
     Write-Host "Current selected subscription is $currentSubscriptionName ( $currentSubscriptionId )."
-    $confirmation = Read-Host "Do you want to continue with this subscription?(y/n)"
+    # In GitHub Actions, avoid interactive prompts and keep current subscription.
+    if ($env:GITHUB_ACTIONS -eq "true") {
+        $confirmation = "y"
+    } else {
+        $confirmation = Read-Host "Do you want to continue with this subscription?(y/n)"
+    }
     if ($confirmation -notin @("y", "Y")) {
         Write-Host "Fetching available subscriptions..."
         $availableSubscriptions = az account list --query "[?state=='Enabled'].[name,id]" --output tsv
         $subscriptions = $availableSubscriptions -split "`n" | ForEach-Object { $_.Split("`t") }
-        
+
         do {
             Write-Host ""
             Write-Host "Available Subscriptions:"
@@ -324,14 +330,14 @@ if ($currentSubscriptionId -ne $azSubscriptionId -and $azSubscriptionId) {
             }
             Write-Host "========================"
             Write-Host ""
-            
+
             $subscriptionIndex = Read-Host "Enter the number of the subscription (1-$(($subscriptions.Count / 2))) to use"
-            
+
             if ($subscriptionIndex -match '^\d+$' -and [int]$subscriptionIndex -ge 1 -and [int]$subscriptionIndex -le ($subscriptions.Count / 2)) {
                 $selectedIndex = ([int]$subscriptionIndex - 1) * 2
                 $selectedSubscriptionName = $subscriptions[$selectedIndex]
                 $selectedSubscriptionId = $subscriptions[$selectedIndex + 1]
-                
+
                 try {
                     az account set --subscription $selectedSubscriptionId
                     Write-Host "Switched to subscription: $selectedSubscriptionName ( $selectedSubscriptionId )"
@@ -367,13 +373,13 @@ if (-not $ResourceGroup) {
 } else {
     # Resource group provided - try deployment outputs first, then fallback to naming convention
     Write-Host "Resource group provided: $ResourceGroup"
-    
+
     if (-not (Get-ValuesFromAzDeployment)) {
         Write-Host ""
         Write-Host "Warning: Could not retrieve values from deployment outputs (deployment may be deleted)."
         Write-Host "Attempting fallback method: reconstructing values from resource naming convention..."
         Write-Host ""
-        
+
         if (-not (Get-ValuesUsingSolutionSuffix)) {
             Write-Host ""
             Write-Host "Error: Both methods failed to retrieve configuration values."
@@ -399,10 +405,15 @@ Write-Host "6. All"
 Write-Host "==============================================="
 Write-Host ""
 
-# Prompt user for use case selection
+# Prompt user for use case selection (or use provided parameter in non-interactive contexts)
 do {
-    $useCaseSelection = Read-Host "Please enter the number of the use case you would like to install."
-    
+    if ($UseCaseSelection) {
+        $useCaseSelection = $UseCaseSelection
+        Write-Host "Use case selection provided via parameter: $useCaseSelection"
+    } else {
+        $useCaseSelection = Read-Host "Please enter the number of the use case you would like to install."
+    }
+
     # Handle both numeric and text input for 'all'
     if ($useCaseSelection -eq "all" -or $useCaseSelection -eq "6") {
         $selectedUseCase = "All"
@@ -442,6 +453,9 @@ do {
     else {
         $useCaseValid = $false
         Write-Host "Invalid selection. Please enter a number from 1-6." -ForegroundColor Red
+        if ($UseCaseSelection) {
+            exit 1
+        }
     }
 } while (-not $useCaseValid)
 
@@ -460,7 +474,15 @@ Write-Host "==============================================="
 Write-Host ""
 
 
-$userPrincipalId = $(az ad signed-in-user show --query id -o tsv)
+try {
+    $userPrincipalId = $(az ad signed-in-user show --query id -o tsv 2>$null)
+} catch {
+    $userPrincipalId = ""
+}
+if (-not $userPrincipalId) {
+    Write-Host "Warning: Could not resolve delegated user principal id; using default principal id for automation."
+    $userPrincipalId = "00000000-0000-0000-0000-000000000000"
+}
 
 # Determine the correct Python command
 $pythonCmd = $null
@@ -470,7 +492,7 @@ try {
     if ($pythonVersion -match "Python \d") {
         $pythonCmd = "python"
     }
-} 
+}
 catch {
     # Do nothing, try python3 next
 }
@@ -570,7 +592,7 @@ if($useCaseSelection -eq "1"-or $useCaseSelection -eq "2" -or $useCaseSelection 
     if ($ResourceGroup) {
         # Check if resource group has Type=WAF tag
         $rgTypeTag = (az group show --name $ResourceGroup --query "tags.Type" -o tsv 2>$null)
-        
+
         if ($rgTypeTag -eq "WAF") {
             Write-Host ""
             Write-Host "=== Temporarily enabling public network access for services ==="
@@ -583,11 +605,11 @@ if($useCaseSelection -eq "1"-or $useCaseSelection -eq "2" -or $useCaseSelection 
                     Write-Host "Error: Failed to enable public access for storage account."
                     exit 1
                 }
-                
+
                 # Wait 30 seconds for the change to propagate
                 Write-Host "Waiting 30 seconds for public access to be enabled..."
                 Start-Sleep -Seconds 30
-                
+
                 # Verify public access is enabled in a loop
                 Write-Host "Verifying public access is enabled..."
                 $maxRetries = 10
@@ -603,7 +625,7 @@ if($useCaseSelection -eq "1"-or $useCaseSelection -eq "2" -or $useCaseSelection 
                         $retryCount++
                     }
                 }
-                
+
                 if ($retryCount -eq $maxRetries) {
                     Write-Host "Warning: Public access verification timed out for storage account."
                 }
@@ -623,11 +645,11 @@ if($useCaseSelection -eq "1"-or $useCaseSelection -eq "2" -or $useCaseSelection 
                     exit 1
                 }
                 Write-Host "Public access enabled"
-                
+
                 # Wait 30 seconds for the change to propagate
                 Write-Host "Waiting 30 seconds for public access to be enabled..."
                 Start-Sleep -Seconds 30
-                
+
                 # Verify public access is enabled in a loop
                 Write-Host "Verifying public access is enabled..."
                 $maxRetries = 10
@@ -643,7 +665,7 @@ if($useCaseSelection -eq "1"-or $useCaseSelection -eq "2" -or $useCaseSelection 
                         $retryCount++
                     }
                 }
-                
+
                 if ($retryCount -eq $maxRetries) {
                     Write-Host "Warning: Public access verification timed out for search service."
                 }
@@ -871,7 +893,7 @@ if ($isTeamConfigFailed -or $isSampleDataFailed) {
     }else {
         Write-Host "`nTeam configuration upload completed successfully."
     }
-    
+
 }
 
 } finally {
