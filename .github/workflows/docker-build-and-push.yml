@@ -143,3 +143,4 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ env.TAG }}
             ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ env.HISTORICAL_TAG }}
+# retrigger build-and-push after MCP guard (2026-03-14T02:53:27Z)
