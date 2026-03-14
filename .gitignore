@@ -465,3 +465,6 @@ data/sample_code/
 # Bicep local files
 *.local*.bicepparam
 *.local*.parameters.json
+# Azure Functions local configuration (machine-specific, do not commit)
+src/backend/azure_functions/local.settings.json
+src/backend/azure_functions/**/local.settings.json

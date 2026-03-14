@@ -225,7 +225,7 @@ var allTags = union(
   },
   tags
 )
-var existingTags = resourceGroup().tags ?? {}
+var existingTags = resourceGroup().?tags ?? {}
 @description('Tag, Created by user name')
 param createdBy string = contains(deployer(), 'userPrincipalName')
   ? split(deployer().userPrincipalName, '@')[0]
@@ -342,7 +342,7 @@ module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0
       : null
   }
 }
-// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new) 
+// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new)
 var logAnalyticsWorkspaceName = useExistingLogAnalytics
   ? existingLogAnalyticsWorkspace!.name
   : logAnalyticsWorkspace!.outputs.name
@@ -706,7 +706,7 @@ var privateDnsZones = [
   'privatelink.openai.azure.com'
   'privatelink.services.ai.azure.com'
   'privatelink.documents.azure.com'
-  'privatelink.blob.core.windows.net'
+  'privatelink.blob.${environment().suffixes.storage}'
   'privatelink.search.windows.net'
   keyVaultPrivateDNSZone
 ]
@@ -1445,11 +1445,11 @@ module containerAppMcp 'br/public:avm/res/app/container-app:0.18.1' = {
           }
           {
             name: 'JWKS_URI'
-            value: 'https://login.microsoftonline.com/${tenant().tenantId}/discovery/v2.0/keys'
+            value: '${environment().authentication.loginEndpoint}${tenant().tenantId}/discovery/v2.0/keys'
           }
           {
             name: 'ISSUER'
-            value: 'https://sts.windows.net/${tenant().tenantId}/'
+            value: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
           }
           {
             name: 'AUDIENCE'
@@ -1534,7 +1534,6 @@ module webSite 'modules/web-sites.bicep' = {
 // ========== Storage Account ========== //
 
 var storageAccountName = replace('st${solutionSuffix}', '-', '')
-param storageContainerName string = 'sample-dataset'
 param storageContainerNameRetailCustomer string = 'retail-dataset-customer'
 param storageContainerNameRetailOrder string = 'retail-dataset-order'
 param storageContainerNameRFPSummary string = 'rfp-summary-dataset'
@@ -1708,7 +1707,7 @@ module searchServiceUpdate 'br/public:avm/res/search/search-service:0.11.1' = {
     //Removing the Private endpoints as we are facing the issue with connecting to search service while comminicating with agents
 
     privateEndpoints: []
-    // privateEndpoints: enablePrivateNetworking 
+    // privateEndpoints: enablePrivateNetworking
     //   ? [
     //       {
     //         name: 'pep-search-${solutionSuffix}'
@@ -1745,9 +1744,6 @@ module aiSearchFoundryConnection 'modules/aifp-connections.bicep' = {
     searchServiceLocation: searchService.location
     searchServiceName: searchService.name
   }
-  dependsOn: [
-    aiFoundryAiServices
-  ]
 }
 
 // ========== KeyVault ========== //
@@ -1831,11 +1827,11 @@ output AZURE_AI_PROJECT_NAME string = aiFoundryAiProjectName
 output AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME string = aiFoundryAiServicesModelDeployment.name
 // output AZURE_AI_AGENT_ENDPOINT string = aiFoundryAiProjectEndpoint
 output APP_ENV string = 'Prod'
-output AI_FOUNDRY_RESOURCE_ID string = !useExistingAiFoundryAiProject
-  ? aiFoundryAiServices.outputs.resourceId
-  : existingAiFoundryAiProjectResourceId
+output AI_FOUNDRY_RESOURCE_ID string = useExistingAiFoundryAiProject
+  ? existingAiFoundryAiProjectResourceId
+  : aiFoundryAiServices!.outputs.resourceId
 output COSMOSDB_ACCOUNT_NAME string = cosmosDbResourceName
-output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint  
+output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint
 output AZURE_CLIENT_ID string = userAssignedIdentity!.outputs.clientId
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_AI_SEARCH_CONNECTION_NAME string = aiSearchConnectionName
@@ -1867,4 +1863,3 @@ output AZURE_AI_SEARCH_INDEX_NAME_RFP_COMPLIANCE string = aiSearchIndexNameForRF
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_SUMMARY string = aiSearchIndexNameForContractSummary
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_RISK string = aiSearchIndexNameForContractRisk
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_COMPLIANCE string = aiSearchIndexNameForContractCompliance
-
