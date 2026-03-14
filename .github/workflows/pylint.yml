@@ -1,46 +1,35 @@
 name: PyLint
 
-on:
+on: 
   push:
-    branches: [main, dev, demo, hotfix]
     paths:
-      - 'src/backend/**'
-      - '.flake8'
-      - '.github/workflows/pylint.yml'
-  pull_request:
-    branches: [main, dev, demo, hotfix]
-    paths:
-      - 'src/backend/**'
+      - 'src/backend/**/*.py'
+      - 'src/mcp_server/**/*.py'
+      - 'src/backend/requirements.txt'
       - '.flake8'
       - '.github/workflows/pylint.yml'
 
-permissions:
-  contents: read
 
 jobs:
-  lint:
+  build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.11']
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r src/backend/requirements.txt
-          pip install ruff flake8
-
-      - name: Run ruff (critical rules)
+          pip install flake8  # Ensure flake8 is installed explicitly
+      
+      - name: Run flake8 and pylint
         run: |
-          ruff check src/backend --select E9,F63,F7,F82 --exclude tests
-
-      - name: Run flake8
-        run: |
-          flake8 --config=.flake8 --exclude=tests src/backend
+          flake8 --config=.flake8 src/backend 
