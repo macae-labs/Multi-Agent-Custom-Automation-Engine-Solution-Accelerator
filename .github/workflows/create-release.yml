@@ -18,10 +18,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          fetch-tags: true
 
-      - name: Ensure full tag history is available
-        run: git fetch --force --tags origin
+      - name: Fetch all tags
+        run: |
+          git fetch --force --tags origin
+          echo "Latest tag: $(git describe --tags --abbrev=0 2>/dev/null || echo 'none')"
+          git tag -l 'v*' | sort -V | tail -5
 
       - uses: codfish/semantic-release-action@v3
         id: semantic
