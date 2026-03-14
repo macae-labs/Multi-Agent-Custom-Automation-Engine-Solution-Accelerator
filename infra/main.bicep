@@ -225,7 +225,7 @@ var allTags = union(
   },
   tags
 )
-var existingTags = resourceGroup().tags ?? {}
+var existingTags = resourceGroup().?tags ?? {}
 @description('Tag, Created by user name')
 param createdBy string = contains(deployer(), 'userPrincipalName')
   ? split(deployer().userPrincipalName, '@')[0]
@@ -342,7 +342,7 @@ module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0
       : null
   }
 }
-// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new) 
+// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new)
 var logAnalyticsWorkspaceName = useExistingLogAnalytics
   ? existingLogAnalyticsWorkspace!.name
   : logAnalyticsWorkspace!.outputs.name
@@ -1708,7 +1708,7 @@ module searchServiceUpdate 'br/public:avm/res/search/search-service:0.11.1' = {
     //Removing the Private endpoints as we are facing the issue with connecting to search service while comminicating with agents
 
     privateEndpoints: []
-    // privateEndpoints: enablePrivateNetworking 
+    // privateEndpoints: enablePrivateNetworking
     //   ? [
     //       {
     //         name: 'pep-search-${solutionSuffix}'
@@ -1835,7 +1835,7 @@ output AI_FOUNDRY_RESOURCE_ID string = !useExistingAiFoundryAiProject
   ? aiFoundryAiServices.outputs.resourceId
   : existingAiFoundryAiProjectResourceId
 output COSMOSDB_ACCOUNT_NAME string = cosmosDbResourceName
-output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint  
+output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint
 output AZURE_CLIENT_ID string = userAssignedIdentity!.outputs.clientId
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_AI_SEARCH_CONNECTION_NAME string = aiSearchConnectionName
