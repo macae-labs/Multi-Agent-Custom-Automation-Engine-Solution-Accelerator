@@ -127,8 +127,11 @@ jobs:
               gptReasoningModelCapacity=${{ env.O4_MINI_MIN_CAPACITY }} \
               enableTelemetry=true \
               enableMonitoring=true \
-              enablePrivateNetworking=true \
-              enableScalability=true \
+              enablePrivateNetworking=false \
+              enableScalability=false \
+              enableEncryptionAtHost=false \
+              enableProximityPlacement=false \
+              enableMaintenanceConfig=false \
               createdBy="Pipeline" \
               tags="{'Purpose':'Deploying and Cleaning Up Resources for Validation','CreatedDate':'$current_date'}"
 

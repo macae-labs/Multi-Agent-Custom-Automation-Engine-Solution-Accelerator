@@ -62,6 +62,7 @@ test_cases = [
 test_ids = [f"{i + 1:02d}. {case[0]}" for i, case in enumerate(test_cases)]
 
 
+@pytest.mark.gp
 @pytest.mark.parametrize("prompt, action", test_cases, ids=test_ids)
 def test_biab_prompt_case(login_logout, prompt, action, request):
     """Each BIAB prompt runs as an individual test case with execution time logging and meaningful test step titles."""
@@ -85,4 +86,3 @@ def test_biab_prompt_case(login_logout, prompt, action, request):
     request.node._report_sections.append(
         ("call", "log", f"Execution time: {duration:.2f}s")
     )
-
