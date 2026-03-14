@@ -73,12 +73,12 @@ jobs:
           set -e
           echo "🗑️ Starting optimized resource cleanup..."
           echo "Deleting resource group: ${{ env.RESOURCE_GROUP_NAME }}"
-          
+
           az group delete \
             --name "${{ env.RESOURCE_GROUP_NAME }}" \
             --yes \
             --no-wait
-          
+
           echo "✅ Resource group deletion initiated (running asynchronously)"
           echo "Note: Resources will be cleaned up in the background"
 
@@ -89,7 +89,7 @@ jobs:
           azd auth logout || true
           az logout || echo "Warning: Failed to logout from Azure CLI"
           echo "Logged out from Azure."
-      
+
       - name: Generate Cleanup Job Summary
         if: always()
         shell: bash
