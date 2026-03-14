@@ -76,7 +76,7 @@ jobs:
       - name: Get current date
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-      
+
       - name: Get registry
         id: registry
         run: |
@@ -113,7 +113,7 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.TAG }}
             ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.HISTORICAL_TAG }}
-  
+
       - name: Build and optionally push Frontend Docker image
         uses: docker/build-push-action@v6
         with:
@@ -123,8 +123,19 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.TAG }}
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.HISTORICAL_TAG }}
-      
+
+      - name: Check MCP server path exists
+        id: check_mcp
+        run: |
+          if [ -d "./src/mcp_server" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ MCP server path not found - skipping MCP build"
+          fi
+
       - name: Build and optionally push MCP Docker image
+        if: steps.check_mcp.outputs.exists == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./src/mcp_server
