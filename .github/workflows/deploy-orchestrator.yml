@@ -63,7 +63,7 @@ on:
         type: string
 
 env:
-  AZURE_DEV_COLLECT_TELEMETRY: ${{ vars.AZURE_DEV_COLLECT_TELEMETRY }}
+  AZURE_DEV_COLLECT_TELEMETRY: ${{ vars.AZURE_DEV_COLLECT_TELEMETRY || 'false' }}
 
 jobs:
   docker-build:

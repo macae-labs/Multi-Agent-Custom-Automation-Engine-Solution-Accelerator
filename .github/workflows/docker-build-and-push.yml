@@ -114,6 +114,7 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ steps.determine_tag.outputs.tag }}
             ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ steps.historical_tag.outputs.historical_tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ github.sha }}
 
       - name: Build and optionally push Frontend Docker image
         uses: docker/build-push-action@v6
@@ -124,6 +125,7 @@ jobs:
           tags: |
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ steps.determine_tag.outputs.tag }}
             ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ steps.historical_tag.outputs.historical_tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ github.sha }}
 
       - name: Check MCP server path exists
         id: check_mcp
