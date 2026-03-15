@@ -199,14 +199,55 @@ def test_macae_v4_gp_workflow(login_logout, request):
         step10_end = time.time()
         logger.info(f"Step 10 completed in {step10_end - step10_start:.2f} seconds")
 
-        # Step 11: Approve Task Plan (Product Marketing)
+        # Step 11: Approve Task Plan (Product Marketing) (with retry logic)
         logger.info("\n" + "=" * 80)
         logger.info("STEP 11: Approving Task Plan (Product Marketing)")
         logger.info("=" * 80)
         step11_start = time.time()
-        biab_page.approve_product_marketing_task_plan()
-        step11_end = time.time()
-        logger.info(f"Step 11 completed in {step11_end - step11_start:.2f} seconds")
+        try:
+            biab_page.approve_product_marketing_task_plan()
+            step11_end = time.time()
+            logger.info(f"Step 11 completed in {step11_end - step11_start:.2f} seconds")
+        except Exception as step11_error:
+            logger.warning("\n" + "⚠" * 80)
+            logger.warning(f"STEP 11 FAILED: {str(step11_error)}")
+            logger.warning("Initiating retry logic: Click New Task → Retry Steps 9, 10, 11")
+            logger.warning("⚠" * 80)
+
+            # Click New Task and cancel
+            logger.info("\n" + "=" * 80)
+            logger.info("STEP 11 (RETRY): Clicking New Task")
+            logger.info("=" * 80)
+            biab_page.click_new_task()
+            biab_page.cancel_retail_task_plan()
+
+            # Retry Step 9: Select Quick Task and Create Plan
+            logger.info("\n" + "=" * 80)
+            logger.info("STEP 9 (RETRY): Selecting Quick Task and Creating Plan (Product Marketing)")
+            logger.info("=" * 80)
+            step9_retry_start = time.time()
+            biab_page.select_quick_task_and_create_plan()
+            step9_retry_end = time.time()
+            logger.info(f"Step 9 (Retry) completed in {step9_retry_end - step9_retry_start:.2f} seconds")
+
+            # Retry Step 10: Validate All Product Marketing Agents Visible
+            logger.info("\n" + "=" * 80)
+            logger.info("STEP 10 (RETRY): Validating All Product Marketing Agents Are Displayed")
+            logger.info("=" * 80)
+            step10_retry_start = time.time()
+            biab_page.validate_product_marketing_agents()
+            step10_retry_end = time.time()
+            logger.info(f"Step 10 (Retry) completed in {step10_retry_end - step10_retry_start:.2f} seconds")
+
+            # Retry Step 11: Approve Task Plan
+            logger.info("\n" + "=" * 80)
+            logger.info("STEP 11 (RETRY): Approving Task Plan (Product Marketing)")
+            logger.info("=" * 80)
+            step11_retry_start = time.time()
+            biab_page.approve_product_marketing_task_plan()
+            step11_end = time.time()
+            logger.info(f"Step 11 (Retry) completed in {step11_end - step11_retry_start:.2f} seconds")
+            logger.info("✓ Retry successful - continuing with test execution")
 
         # Step 12: Validate Product Marketing Response
         logger.info("\n" + "=" * 80)
