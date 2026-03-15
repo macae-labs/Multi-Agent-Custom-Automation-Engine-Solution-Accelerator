@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 sys.modules["azure.monitor"] = MagicMock()
 sys.modules["azure.monitor.events.extension"] = MagicMock()
 sys.modules["azure.monitor.opentelemetry"] = MagicMock()
+# Mock SK OpenAI connector import used by app_config to avoid SDK mismatch at collection time
+sys.modules["semantic_kernel.connectors.ai.open_ai"] = MagicMock()
 
 # Mock environment variables before importing app
 os.environ["COSMOSDB_ENDPOINT"] = "https://mock-endpoint.documents.azure.com:443/"
