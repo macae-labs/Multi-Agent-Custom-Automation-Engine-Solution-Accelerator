@@ -5,6 +5,7 @@ azure-cosmos
 azure-monitor-opentelemetry
 azure-monitor-events-extension
 azure-identity
+azure-keyvault-secrets>=4.4.0
 python-dotenv
 python-multipart
 opentelemetry-api
