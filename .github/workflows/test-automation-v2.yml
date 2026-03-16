@@ -67,10 +67,21 @@ jobs:
 
       - name: Validate Inputs
         run: |
-          if [ -z "${{ env.MACAE_WEB_URL }}" ]; then
+          RAW_URL="${{ env.MACAE_WEB_URL }}"
+          if [ -z "$RAW_URL" ]; then
             echo "ERROR: No Web URL provided for testing"
             exit 1
           fi
+
+          # Normalize URL so Playwright/curl always receive a valid absolute URL.
+          if [[ "$RAW_URL" =~ ^https?:// ]]; then
+            NORMALIZED_URL="$RAW_URL"
+          else
+            NORMALIZED_URL="https://$RAW_URL"
+          fi
+
+          echo "MACAE_WEB_URL=$NORMALIZED_URL" >> "$GITHUB_ENV"
+          echo "Using MACAE_WEB_URL=$NORMALIZED_URL"
 
       - name: Wait for Application to be Ready
         run: |
