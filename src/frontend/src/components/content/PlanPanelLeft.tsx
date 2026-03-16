@@ -27,6 +27,7 @@ import TeamSelector from "../common/TeamSelector";
 import { TeamConfig } from "../../models/Team";
 import TeamSelected from "../common/TeamSelected";
 
+/* eslint-disable react/prop-types */
 const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
   reloadTasks,
   onNewTaskButton,
@@ -61,7 +62,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
       setPlansError(null);
       const plansData = await apiService.getPlans(undefined, !forceRefresh); // Invert forceRefresh for useCache
       setPlans(plansData);
-      
+
       // Reset the reload flag after successful load
       if (forceRefresh && restReload) {
         restReload();
@@ -71,7 +72,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
       setPlansError(
         error instanceof Error ? error : new Error("Failed to load plans")
       );
-      
+
       // Reset the reload flag even on error to prevent infinite loops
       if (forceRefresh && restReload) {
         restReload();

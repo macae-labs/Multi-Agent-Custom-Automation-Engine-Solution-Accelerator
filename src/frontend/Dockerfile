@@ -14,11 +14,13 @@ RUN npm ci --silent
 # Copy source files
 COPY . ./
 
+RUN rm -rf node_modules && npm ci && npm rebuild esbuild --force
+
 # Build the React app
 RUN npm run build
 
 # Stage 2: Python build environment with UV
-FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm AS python-builder
+FROM python:3.11-slim-bullseye AS python-builder
 
 # Copy UV from official image
 COPY --from=ghcr.io/astral-sh/uv:0.6.3 /uv /uvx /bin/
@@ -32,14 +34,15 @@ WORKDIR /app
 COPY pyproject.toml requirements.txt* uv.lock* ./
 
 # Install Python dependencies using UV
-RUN if [ -f "requirements.txt" ]; then \
-      uv pip install --system -r requirements.txt && uv pip install --system "uvicorn[standard]"; \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f "requirements.txt" ]; then \
+      uv pip install --system -r requirements.txt && uv pip install --system "uvicorn[standard]";  \
     else \
       uv pip install --system pyproject.toml && uv pip install --system "uvicorn[standard]"; \
     fi
 
 # Stage 3: Final production image
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-bullseye
 
 # Set production environment
 ENV NODE_ENV=production \

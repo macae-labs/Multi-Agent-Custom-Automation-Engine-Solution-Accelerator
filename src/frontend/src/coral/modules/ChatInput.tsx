@@ -1,15 +1,11 @@
 import React, {
   useRef,
   useState,
-  useEffect,
   forwardRef,
   useImperativeHandle,
+  useLayoutEffect,
 } from "react";
-import {
-  Tag,
-  Tooltip as FluentTooltip,
-  Caption1,
-} from "@fluentui/react-components";
+import { Caption1 } from "@fluentui/react-components";
 import HeaderTools from "../components/Header/HeaderTools";
 
 // ✅ Props definition
@@ -20,6 +16,7 @@ interface ChatInputProps {
   placeholder?: string;
   children?: React.ReactNode;
   disabledChat?: boolean;
+  style?: React.CSSProperties;
 }
 
 // ✅ ForwardRef component
@@ -32,6 +29,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
       placeholder = "Type a message...",
       children,
       disabledChat,
+      style,
     },
     ref
   ) => {
@@ -42,19 +40,27 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
     // ✅ Allow parent to access textarea DOM node
     useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement);
 
-    useEffect(() => {
+    // ✅ Use useLayoutEffect to prevent visual jumping
+    useLayoutEffect(() => {
       if (textareaRef.current) {
+        // Store the current scroll position to prevent jumping
+        const scrollTop = textareaRef.current.scrollTop;
+
         textareaRef.current.style.height = "auto";
-        textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        const newHeight = Math.max(textareaRef.current.scrollHeight, 24);
+        textareaRef.current.style.height = `${newHeight}px`;
+
+        // Restore scroll position
+        textareaRef.current.scrollTop = scrollTop;
       }
     }, [value]);
 
     return (
-      <div style={{ width: "100%", margin: "0 auto" }}>
+      <div style={{ width: "100%", margin: "0 auto", ...style }}>
         <div
           ref={inputContainerRef}
           style={{
-            display: "inline-flex",
+            display: "flex",
             flexDirection: "column",
             gap: "8px",
             alignItems: "stretch",
@@ -62,9 +68,9 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
             padding: "8px",
             borderRadius: "var(--borderRadiusLarge)",
             backgroundColor: "var(--colorNeutralBackground1)",
-            borderColor: isFocused
-              ? "var(--colorNeutralStroke1Pressed)"
-              : "var(--colorNeutralStroke1)",
+            // border: `1px solid ${isFocused
+            //   ? "var(--colorNeutralStroke1Pressed)"
+            //   : "var(--colorNeutralStroke1)"}`,
             transition: "border-color 0.2s ease-in-out",
             position: "relative",
             boxSizing: "border-box",
@@ -91,8 +97,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
             rows={1}
             style={{
               resize: "none",
-              overflowY: "scroll",
-              height: "auto",
+              overflowY: "auto",
+              height: "24px", // Set initial height
               minHeight: "24px",
               maxHeight: "150px",
               padding: "8px",
@@ -105,6 +111,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
               color: "var(--colorNeutralForeground1)",
               lineHeight: 1.5,
               boxSizing: "border-box",
+              verticalAlign: "top", // Ensure text starts at top
+              textAlign: "left", // Ensure text alignment is consistent
             }}
           />
 
@@ -113,7 +121,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              maxHeight: "32px",
+              minHeight: "32px", // Use minHeight instead of maxHeight
+              flexShrink: 0, // Prevent this div from shrinking
             }}
           >
             <span
@@ -125,6 +134,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
             >
               {value.length}/5000
             </span>
+
             <HeaderTools>{children}</HeaderTools>
           </div>
 
@@ -138,12 +148,9 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
               backgroundColor: "var(--colorCompoundBrandStroke)",
               transform: isFocused ? "scaleX(1)" : "scaleX(0)",
               transition: "transform 0.2s ease-in-out",
-              textAlign: "center",
             }}
           />
         </div>
-
-        <br />
 
         <div
           style={{
@@ -160,7 +167,6 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
   }
 );
 
-// Add a display name for the forwardRef component to satisfy eslint/react rules
-ChatInput.displayName = "ChatInput";
+ChatInput.displayName = 'ChatInput';
 
 export default ChatInput;

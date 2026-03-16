@@ -1,26 +1,7 @@
-import { AgentType, StepStatus, PlanStatus } from './enums';
+import { AgentType, StepStatus, PlanStatus, WebsocketMessageType } from './enums';
+import { MPlanData } from './plan';
 
-/**
- * Message roles compatible with Semantic Kernel
- */
-export enum MessageRole {
-    SYSTEM = "system",
-    USER = "user",
-    ASSISTANT = "assistant",
-    FUNCTION = "function"
-}
 
-/**
- * Base class for chat messages
- */
-export interface ChatMessage {
-    /** Role of the message sender */
-    role: MessageRole;
-    /** Content of the message */
-    content: string;
-    /** Additional metadata */
-    metadata: Record<string, any>;
-}
 
 /**
  * Message sent to request approval for a step
@@ -62,12 +43,10 @@ export interface HumanFeedback {
  * Message containing human clarification on a plan
  */
 export interface HumanClarification {
-    /** Plan identifier */
+    request_id: string;
+    answer: string;
     plan_id: string;
-    /** Session identifier */
-    session_id: string;
-    /** Clarification from human */
-    human_clarification: string;
+    m_plan_id: string;
 }
 
 /**
@@ -112,4 +91,63 @@ export interface PlanStateUpdate {
     session_id: string;
     /** Overall status of the plan */
     overall_status: PlanStatus;
+}
+
+
+
+export interface StreamMessage {
+    type: WebsocketMessageType
+    plan_id?: string;
+    session_id?: string;
+    data?: any;
+    timestamp?: string | number;
+}
+
+export interface StreamingPlanUpdate {
+    plan_id: string;
+    session_id?: string;
+    step_id?: string;
+    agent_name?: string;
+    content?: string;
+    status?: 'in_progress' | 'completed' | 'error' | 'creating_plan' | 'pending_approval';
+    message_type?: 'thinking' | 'action' | 'result' | 'clarification_needed' | 'plan_approval_request';
+    timestamp?: number;
+    is_final?: boolean;
+}
+
+export interface PlanApprovalRequestData {
+    plan_id: string;
+    session_id: string;
+    plan: {
+        steps: Array<{
+            id: string;
+            description: string;
+            agent: string;
+            estimated_duration?: string;
+        }>;
+        total_steps: number;
+        estimated_completion?: string;
+    };
+    status: 'PENDING_APPROVAL';
+}
+
+export interface PlanApprovalResponseData {
+    plan_id: string;
+    session_id: string;
+    approved: boolean;
+    feedback?: string;
+}
+
+// Structured plan approval request
+export interface ParsedPlanApprovalRequest {
+    type: WebsocketMessageType.PLAN_APPROVAL_REQUEST;
+    plan_id: string;
+    parsedData: MPlanData;
+    rawData: string;
+}
+
+export interface ParsedUserClarification {
+    type: WebsocketMessageType.USER_CLARIFICATION_REQUEST;
+    question: string;
+    request_id: string;
 }

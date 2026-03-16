@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types, react/no-unescaped-entities */
 import React, { useState } from 'react';
 import {
   Button,

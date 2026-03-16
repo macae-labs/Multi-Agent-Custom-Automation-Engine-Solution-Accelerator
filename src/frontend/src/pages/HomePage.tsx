@@ -88,7 +88,7 @@ const HomePage: React.FC = () => {
         };
 
         initTeam();
-    }, []);
+    }, [showToast]);
 
     /**
     * Handle new task creation from the "New task" button

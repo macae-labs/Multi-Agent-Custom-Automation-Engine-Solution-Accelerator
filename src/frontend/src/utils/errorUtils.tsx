@@ -8,21 +8,31 @@ export const getErrorMessage = (error: unknown): string => {
         // Check error message patterns for different types of errors
         const message = error.message.toLowerCase();
 
-        if (message.includes('400') || message.includes('bad request')) {
-            return `Bad request: ${error.message}`;
+          if (message.includes('400') || message.includes('bad request')) {
+            return 'Invalid request. Please check your input and try again.';
         } else if (message.includes('401') || message.includes('unauthorized')) {
             return 'You are not authorized to perform this action. Please sign in again.';
         } else if (message.includes('404') || message.includes('not found')) {
-            return `Resource not found: ${error.message}`;
+            return 'The requested resource was not found.';
+        } else if (message.includes('429') || message.includes('too many requests')) {
+            return 'Too many requests. Please wait a moment and try again.';
         } else if (message.includes('500') || message.includes('server error')) {
-            return `Server error: ${error.message}. Please try again later.`;
+            return 'A server error occurred. Please try again later.';
         } else if (message.includes('network') || message.includes('fetch')) {
             return 'Network error. Please check your connection and try again.';
+        } else if (message.includes('timeout')) {
+            return 'Request timed out. Please try again.';
+        } else if (message.includes('quota') || message.includes('limit')) {
+            return 'Service limit reached. Please try again later.';
         }
 
-        return error.message;
+        // Return original message if it's already user-friendly (doesn't contain technical terms)
+        if (!message.includes('exception') && !message.includes('stack') && 
+            !message.includes('undefined') && !message.includes('null')) {
+            return error.message;
+        }
     }
-    return 'An unknown error occurred. Please try again.';
+    return 'An unexpected error occurred. Please try again.';
 };
 
 /**

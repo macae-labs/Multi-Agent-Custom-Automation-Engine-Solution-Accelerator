@@ -14,8 +14,8 @@ import {
     Clipboard20Regular,
     WindowConsole20Regular,
 } from '@fluentui/react-icons';
-import { TeamConfig } from './Team';
 
+import { TeamConfig } from './Team';
 export interface QuickTask {
     id: string;
     title: string;

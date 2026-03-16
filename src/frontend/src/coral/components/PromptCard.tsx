@@ -8,7 +8,7 @@ type PromptCardProps = {
   description: string;
   icon?: React.ReactNode;
   onClick?: () => void;
-  disabled?: boolean; // ✅ New prop for disabling the card
+  disabled?: boolean; 
 };
 
 const PromptCard: React.FC<PromptCardProps> = ({
@@ -16,11 +16,11 @@ const PromptCard: React.FC<PromptCardProps> = ({
   description,
   icon,
   onClick,
-  disabled = false, // 🔧 Default is false (enabled)
+  disabled = false,
 }) => {
   return (
     <Card
-      onClick={!disabled ? onClick : undefined} // 🚫 Block click if disabled
+      onClick={!disabled ? onClick : undefined} 
       style={{
         flex: "1",
         display: "flex",
@@ -29,41 +29,46 @@ const PromptCard: React.FC<PromptCardProps> = ({
         backgroundColor: disabled
           ? "var(--colorNeutralBackgroundDisabled)"
           : "var(--colorNeutralBackground3)",
-        border: "1px solid var(--colorNeutralStroke2)",
+        border: "1px solid var(--colorNeutralStroke1)",
         borderRadius: "8px",
         cursor: disabled ? "not-allowed" : "pointer",
         boxShadow: "none",
-        opacity: disabled ? 0.4 : 1, // 🧼 Matches Fluent disabled visual
+        opacity: disabled ? 0.4 : 1, // 
         transition: "background-color 0.2s ease-in-out",
       }}
       // 🧠 Only apply hover if not disabled
-      onMouseOver={(e) => {
+      onMouseOver={(e: React.MouseEvent<HTMLDivElement>) => {
         if (!disabled) {
           e.currentTarget.style.backgroundColor =
-            "var(--colorNeutralBackground4Hover)";
+            "var(--colorNeutralBackground3Hover)";
+            e.currentTarget.style.border = "1px solid var(--colorNeutralStroke1)"; // subtle shadow on hover
         }
       }}
-      onMouseOut={(e) => {
+      onMouseOut={(e: React.MouseEvent<HTMLDivElement>) => {
         if (!disabled) {
           e.currentTarget.style.backgroundColor =
             "var(--colorNeutralBackground3)";
+            e.currentTarget.style.border = "1px solid var(--colorNeutralStroke1)";
         }
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        {icon && (
-          <div
-            style={{
-              fontSize: "20px",
-              color: "var(--colorBrandForeground1)",
-              marginTop: "2px",
-            }}
-          >
-            {icon}
-          </div>
-        )}
         <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <Body1Strong>{title}</Body1Strong>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {icon && (
+              <div
+                style={{
+                  fontSize: "20px",
+                  color: "var(--colorBrandForeground1)",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                {icon}
+              </div>
+            )}
+            <Body1Strong>{title}</Body1Strong>
+          </div>
           <Body1 style={{ color: "var(--colorNeutralForeground3)" }}>
             {description}
           </Body1>

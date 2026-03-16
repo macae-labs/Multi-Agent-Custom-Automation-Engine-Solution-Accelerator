@@ -5,7 +5,7 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { FluentProvider, teamsLightTheme, teamsDarkTheme } from "@fluentui/react-components";
 import { setEnvData, setApiUrl, config as defaultConfig, toBoolean, getUserInfo, setUserInfoGlobal } from './api/config';
-import { UserInfo } from './models';
+import { apiService } from './api';
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 
 const AppWrapper = () => {
@@ -16,33 +16,35 @@ const AppWrapper = () => {
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
   type ConfigType = typeof defaultConfig;
-  const [config, setConfig] = useState<ConfigType>(defaultConfig);
+  const [, setConfig] = useState<ConfigType>(defaultConfig);
   useEffect(() => {
     const initConfig = async () => {
-      // Load runtime config from frontend server (/config) and fallback to defaults.
-      let runtimeConfig = { ...defaultConfig };
+      // Use defaultConfig for initial setup (config === defaultConfig at this point)
+      window.appConfig = defaultConfig;
+      setEnvData(defaultConfig);
+      setApiUrl(defaultConfig.API_URL);
       try {
-        const response = await fetch("/config");
+        const response = await fetch('/config');
+        let fetchedConfig = defaultConfig;
         if (response.ok) {
-          const configFromServer = await response.json();
-          runtimeConfig = { ...runtimeConfig, ...configFromServer };
+          fetchedConfig = await response.json();
+          fetchedConfig.ENABLE_AUTH = toBoolean(fetchedConfig.ENABLE_AUTH);
         }
-      } catch {
-        // keep default config in local/dev fallback
-      }
-      runtimeConfig.ENABLE_AUTH = toBoolean(runtimeConfig.ENABLE_AUTH as any);
 
-      window.appConfig = runtimeConfig;
-      setEnvData(runtimeConfig);
-      setApiUrl(runtimeConfig.API_URL);
-      setConfig(runtimeConfig);
-      
-      let defaultUserInfo = runtimeConfig.ENABLE_AUTH ? await getUserInfo() : ({} as UserInfo);
-      window.userInfo = defaultUserInfo;
-      setUserInfoGlobal(defaultUserInfo);
-      
-      setIsConfigLoaded(true);
-      setIsUserInfoLoaded(true);
+        window.appConfig = fetchedConfig;
+        setEnvData(fetchedConfig);
+        setApiUrl(fetchedConfig.API_URL);
+        setConfig(fetchedConfig);
+        const defaultUserInfo = await getUserInfo();
+        window.userInfo = defaultUserInfo;
+        setUserInfoGlobal(defaultUserInfo);
+        await apiService.sendUserBrowserLanguage();
+      } catch (error) {
+        console.info("frontend config did not load from python", error);
+      } finally {
+        setIsConfigLoaded(true);
+        setIsUserInfoLoaded(true);
+      }
     };
 
     initConfig(); // Call the async function inside useEffect
@@ -61,7 +63,7 @@ const AppWrapper = () => {
 
     mediaQuery.addEventListener("change", handleThemeChange);
     return () => mediaQuery.removeEventListener("change", handleThemeChange);
-  }, []);
+  }, [isDarkMode]);
   if (!isConfigLoaded || !isUserInfoLoaded) return <div>Loading...</div>;
   return (
     <StrictMode>

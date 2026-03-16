@@ -1,6 +1,4 @@
-/* eslint-disable react/prop-types */
-import React from 'react';
-/* eslint-disable react/prop-types */
+import PropTypes from 'prop-types';
 import { TeamConfig } from "@/models";
 import { Body1, Caption1 } from "@fluentui/react-components";
 import styles from '../../styles/TeamSelector.module.css';
@@ -19,6 +17,12 @@ const TeamSelected: React.FC<TeamSelectedProps> = ({ selectedTeam }) => {
             </Body1>
         </div>
     );
+};
+
+TeamSelected.propTypes = {
+    selectedTeam: PropTypes.shape({
+        name: PropTypes.string
+    })
 };
 
 export default TeamSelected;
