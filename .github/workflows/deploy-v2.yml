@@ -293,6 +293,6 @@ jobs:
       run_e2e_tests: ${{ needs.validate-inputs.outputs.run_e2e_tests || 'GoldenPath-Testing' }}
       AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID: ${{ needs.validate-inputs.outputs.azure_env_log_analytics_workspace_id || '' }}
       AZURE_EXISTING_AI_PROJECT_RESOURCE_ID: ${{ needs.validate-inputs.outputs.azure_existing_ai_project_resource_id || '' }}
-      existing_webapp_url: ${{ needs.validate-inputs.outputs.existing_webapp_url || '' }}
+      existing_webapp_url: ${{ needs.validate-inputs.outputs.existing_webapp_url || vars.EXISTING_WEBAPP_URL || '' }}
       trigger_type: ${{ github.event_name }}
     secrets: inherit
