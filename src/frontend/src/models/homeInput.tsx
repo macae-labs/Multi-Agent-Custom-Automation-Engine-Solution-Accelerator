@@ -14,6 +14,8 @@ import {
     Clipboard20Regular,
     WindowConsole20Regular,
 } from '@fluentui/react-icons';
+import { TeamConfig } from './Team';
+
 export interface QuickTask {
     id: string;
     title: string;
@@ -47,5 +49,3 @@ export const iconMap: Record<string, React.ReactNode> = {
     '📋': <Clipboard20Regular />,
     'default': <Clipboard20Regular />,
 };
-
-import { TeamConfig } from './Team';
