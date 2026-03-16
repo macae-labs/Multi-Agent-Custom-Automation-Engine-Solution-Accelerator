@@ -83,6 +83,38 @@ jobs:
           echo "MACAE_WEB_URL=$NORMALIZED_URL" >> "$GITHUB_ENV"
           echo "Using MACAE_WEB_URL=$NORMALIZED_URL"
 
+      - name: Reset test user state (delete messages/plans)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RAW_API_URL="${{ env.MACAE_URL_API }}"
+          if [ -n "$RAW_API_URL" ]; then
+            if [[ "$RAW_API_URL" =~ ^https?:// ]]; then
+              API_BASE_URL="$RAW_API_URL"
+            else
+              API_BASE_URL="https://$RAW_API_URL"
+            fi
+          else
+            API_BASE_URL="${{ env.MACAE_WEB_URL }}"
+          fi
+
+          CLEANUP_URL="${API_BASE_URL%/}/api/messages"
+          echo "Resetting test state via: $CLEANUP_URL"
+
+          HTTP_CODE=$(curl -sS -o /tmp/e2e_cleanup_response.json -w "%{http_code}" -X DELETE \
+            "$CLEANUP_URL" \
+            -H "X-MS-CLIENT-PRINCIPAL-ID: 00000000-0000-0000-0000-000000000000" \
+            -H "X-MS-CLIENT-PRINCIPAL-NAME: test")
+
+          echo "Cleanup HTTP status: $HTTP_CODE"
+          cat /tmp/e2e_cleanup_response.json || true
+
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "ERROR: Failed to reset test state before E2E run"
+            exit 1
+          fi
+
       - name: Wait for Application to be Ready
         run: |
           echo "Waiting for application to be ready at ${{ env.MACAE_WEB_URL }}"
