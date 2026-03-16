@@ -1,40 +1,51 @@
-import { DocumentEdit20Regular, Person20Regular, Phone20Regular, ShoppingBag20Regular } from "@fluentui/react-icons";
-
+import {
+    Desktop20Regular,
+    BookmarkMultiple20Regular,
+    Search20Regular,
+    Wrench20Regular,
+    Person20Regular,
+    Building20Regular,
+    Document20Regular,
+    Database20Regular,
+    Code20Regular,
+    Play20Regular,
+    Shield20Regular,
+    Globe20Regular,
+    Clipboard20Regular,
+    WindowConsole20Regular,
+} from '@fluentui/react-icons';
 export interface QuickTask {
     id: string;
     title: string;
     description: string;
-    icon: React.ReactNode;
+    icon: React.ReactNode | string;
 }
-
-export const quickTasks: QuickTask[] = [
-    {
-        id: "onboard",
-        title: "Onboard employee",
-        description: "Onboard a new employee, Jessica Smith.",
-        icon: <Person20Regular />,
-    },
-    {
-        id: "mobile",
-        title: "Mobile plan query",
-        description: "Ask about roaming plans prior to heading overseas.",
-        icon: <Phone20Regular />,
-    },
-    {
-        id: "addon",
-        title: "Buy add-on",
-        description: "Enable roaming on mobile plan, starting next week.",
-        icon: <ShoppingBag20Regular />,
-    },
-    {
-        id: "press",
-        title: "Draft a press release",
-        description: "Write a press release about our current products.",
-        icon: <DocumentEdit20Regular />,
-    },
-];
 
 export interface HomeInputProps {
-    onInputSubmit: (input: string) => void;
-    onQuickTaskSelect: (taskDescription: string) => void;
+    selectedTeam?: TeamConfig | null;
 }
+export const iconMap: Record<string, React.ReactNode> = {
+    // Task/Logo icons
+    'Wrench': <Wrench20Regular />,
+    'TestTube': <Clipboard20Regular />, // Fallback since TestTube20Regular doesn't exist
+    'Terminal': <WindowConsole20Regular />,
+    'MonitorCog': <Desktop20Regular />,
+    'BookMarked': <BookmarkMultiple20Regular />,
+    'Search': <Search20Regular />,
+    'Robot': <Person20Regular />, // Fallback since Robot20Regular doesn't exist
+    'Code': <Code20Regular />,
+    'Play': <Play20Regular />,
+    'Shield': <Shield20Regular />,
+    'Globe': <Globe20Regular />,
+    'Person': <Person20Regular />,
+    'Database': <Database20Regular />,
+    'Document': <Document20Regular />,
+    'Building': <Building20Regular />,
+    'Desktop': <Desktop20Regular />,
+
+    // Default fallback
+    '📋': <Clipboard20Regular />,
+    'default': <Clipboard20Regular />,
+};
+
+import { TeamConfig } from './Team';
