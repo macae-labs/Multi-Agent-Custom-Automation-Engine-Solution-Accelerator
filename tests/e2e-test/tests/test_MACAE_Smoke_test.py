@@ -681,7 +681,7 @@ def test_rai_validation_unable_to_create_plan(login_logout, request):
         biab_page.select_retail_customer_success_team()
 
         logger.info(f"Entering RAI prompt: {RAI_PROMPT}")
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
 
         logger.info("Validating 'Unable to create plan' message is visible...")
         biab_page.validate_rai_error_message()
@@ -702,7 +702,7 @@ def test_rai_validation_unable_to_create_plan(login_logout, request):
         biab_page.select_product_marketing_team()
 
         logger.info(f"Entering RAI prompt: {RAI_PROMPT}")
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
 
         logger.info("Validating 'Unable to create plan' message is visible...")
         biab_page.validate_rai_error_message()
@@ -723,7 +723,7 @@ def test_rai_validation_unable_to_create_plan(login_logout, request):
         biab_page.select_human_resources_team()
 
         logger.info(f"Entering RAI prompt: {RAI_PROMPT}")
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
 
         logger.info("Validating 'Unable to create plan' message is visible...")
         biab_page.validate_rai_error_message()
@@ -744,7 +744,7 @@ def test_rai_validation_unable_to_create_plan(login_logout, request):
         biab_page.select_rfp_team()
 
         logger.info(f"Entering RAI prompt: {RAI_PROMPT}")
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
 
         logger.info("Validating 'Unable to create plan' message is visible...")
         biab_page.validate_rai_error_message()
@@ -765,7 +765,7 @@ def test_rai_validation_unable_to_create_plan(login_logout, request):
         biab_page.select_contract_compliance_team()
 
         logger.info(f"Entering RAI prompt: {RAI_PROMPT}")
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
 
         logger.info("Validating 'Unable to create plan' message is visible...")
         biab_page.validate_rai_error_message()
@@ -1437,7 +1437,7 @@ def test_rai_prompts_all_teams(login_logout, request):
         step2_start = time.time()
 
         biab_page.select_human_resources_team()
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
         biab_page.validate_rai_error_message()
 
         step2_end = time.time()
@@ -1450,7 +1450,7 @@ def test_rai_prompts_all_teams(login_logout, request):
         step3_start = time.time()
 
         biab_page.select_product_marketing_team()
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
         biab_page.validate_rai_error_message()
 
         step3_end = time.time()
@@ -1463,7 +1463,7 @@ def test_rai_prompts_all_teams(login_logout, request):
         step4_start = time.time()
 
         biab_page.select_retail_customer_success_team()
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
         biab_page.validate_rai_error_message()
 
         step4_end = time.time()
@@ -1476,7 +1476,7 @@ def test_rai_prompts_all_teams(login_logout, request):
         step5_start = time.time()
 
         biab_page.select_rfp_team()
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
         biab_page.validate_rai_error_message()
 
         step5_end = time.time()
@@ -1489,7 +1489,7 @@ def test_rai_prompts_all_teams(login_logout, request):
         step6_start = time.time()
 
         biab_page.select_contract_compliance_team()
-        biab_page.input_RAI_PROMPT_and_send(RAI_PROMPT)
+        biab_page.input_rai_prompt_and_send(RAI_PROMPT)
         biab_page.validate_rai_error_message()
 
         step6_end = time.time()
@@ -1593,7 +1593,7 @@ def test_chat_input_validation(login_logout, request):
 
         # Create a long query (>5000 characters)
         long_query = "a" * 5001
-        biab_page.input_RAI_PROMPT_and_send(long_query)
+        biab_page.input_rai_prompt_and_send(long_query)
         biab_page.validate_rai_error_message()
 
         step5_end = time.time()
