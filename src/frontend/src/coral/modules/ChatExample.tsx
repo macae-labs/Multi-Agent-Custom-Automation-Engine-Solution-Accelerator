@@ -108,7 +108,7 @@ const ChatExample: React.FC = () => {
       {/* Input area */}
       <div className="input-wrapper">
         <div className="input-container">
-          <textarea 
+          <textarea
             className="input-field"
             placeholder="Describe what you'd like to do or use / to reference files, people, and more"
             rows={1}
@@ -124,4 +124,4 @@ const ChatExample: React.FC = () => {
   );
 };
 
-export default ChatExample; 
+export default ChatExample;

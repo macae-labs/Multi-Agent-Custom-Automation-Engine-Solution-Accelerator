@@ -1,8 +1,7 @@
-import { PlanWithSteps, PlanStatus } from "../models";
+import { Plan, PlanStatus } from "../models";
 import { Task } from "../models/taskList";
 import { apiService } from "../api/apiService";
 import { InputTask, InputTaskResponse } from "../models/inputTask";
-import { formatDate } from "@/utils/utils";
 
 /**
  * TaskService - Service for handling task-related operations and transformations
@@ -13,7 +12,7 @@ export class TaskService {
    * @param plansData Array of PlanWithSteps to transform
    * @returns Object containing inProgress and completed task arrays
    */
-  static transformPlansToTasks(plansData: PlanWithSteps[]): {
+  static transformPlansToTasks(plansData: Plan[]): {
     inProgress: Task[];
     completed: Task[];
   } {
@@ -28,9 +27,7 @@ export class TaskService {
       const task: Task = {
         id: plan.session_id,
         name: plan.initial_goal,
-        completed_steps: plan.completed,
-        total_steps: plan.total_steps,
-        status: apiService.isPlanComplete(plan) ? "completed" : "inprogress",
+        status: plan.overall_status === PlanStatus.COMPLETED ? "completed" : "inprogress",
         date: new Intl.DateTimeFormat(undefined, {
           dateStyle: "long",
           // timeStyle: "short",
@@ -39,8 +36,7 @@ export class TaskService {
 
       // Categorize based on plan status and completion
       if (
-        plan.overall_status === PlanStatus.COMPLETED ||
-        apiService.isPlanComplete(plan)
+        plan.overall_status === PlanStatus.COMPLETED
       ) {
         completed.push(task);
       } else {
@@ -145,14 +141,24 @@ export class TaskService {
    */
   static cleanTextToSpaces(text: string): string {
     if (!text) return "";
-    // Replace any non-alphanumeric character with a space
+
     let cleanedText = text
-      .replace("Hr_Agent", "HR_Agent")
-      .trim()
-      .replace(/[^a-zA-Z0-9]/g, " ");
+      .replace("Hr_Agent", "HR Agent")
+      .replace("Hr Agent", "HR Agent")
+      .trim();
+
+    // Convert camelCase and PascalCase to spaces
+    // This regex finds lowercase letter followed by uppercase letter
+    cleanedText = cleanedText.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+    // Replace any remaining non-alphanumeric characters with spaces
+    cleanedText = cleanedText.replace(/[^a-zA-Z0-9]/g, ' ');
 
     // Clean up multiple spaces and trim
-    cleanedText = cleanedText.replace(/\s+/g, " ").trim();
+    cleanedText = cleanedText.replace(/\s+/g, ' ').trim();
+
+    // Capitalize each word for better readability
+    cleanedText = cleanedText.replace(/\b\w/g, (char) => char.toUpperCase());
 
     return cleanedText;
   }
@@ -167,32 +173,32 @@ export class TaskService {
 
     return cleanedText;
   }
+
   /**
-   * Submit an input task to create a new plan
+   * Create a new plan with RAI validation
    * @param description Task description
-   * @returns Promise with the response containing session and plan IDs
+   * @param teamId Optional team ID to use for this plan
+   * @returns Promise with the response containing plan ID and status
    */
-  static async submitInputTask(
-    description: string
+  static async createPlan(
+    description: string,
+    teamId?: string
   ): Promise<InputTaskResponse> {
     const sessionId = this.generateSessionId();
 
     const inputTask: InputTask = {
       session_id: sessionId,
       description: description,
+      team_id: teamId,
     };
 
     try {
-      return await apiService.submitInputTask(inputTask);
+      return await apiService.createPlan(inputTask);
     } catch (error: any) {
+
       // You can customize this logic as needed
-      let message = "Failed to create task.";
-      if (error?.response?.data?.message) {
-        message = error.response.data.message;
-      } else if (error?.message) {
-        message = error.message;
-      }
-      // Throw a new error with a user-friendly message
+      let message = "Unable to create plan. Please try again.";
+
       throw new Error(message);
     }
   }

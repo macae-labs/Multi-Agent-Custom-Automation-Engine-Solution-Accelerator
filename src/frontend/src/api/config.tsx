@@ -16,7 +16,6 @@ export let USER_ID: string | null = null;
 export let USER_INFO: UserInfo | null = null;
 
 export let config = {
-    // Port 8000 inside devcontainer is forwarded to 3001 on host
     API_URL: "http://localhost:8000/api",
     ENABLE_AUTH: false,
 };
@@ -52,8 +51,6 @@ export function getConfigData() {
 export async function getUserInfo(): Promise<UserInfo> {
     try {
         const response = await fetch("/.auth/me");
-        console.log("Fetching user info from: ", "/.auth/me");
-        console.log("Response ", response);
         if (!response.ok) {
             console.log(
                 "No identity provider found. Access to chat will be blocked."
@@ -61,7 +58,6 @@ export async function getUserInfo(): Promise<UserInfo> {
             return {} as UserInfo;
         }
         const payload = await response.json();
-        console.log("User info payload: ", payload[0]);
         const userInfo: UserInfo = {
             access_token: payload[0].access_token || "",
             expires_on: payload[0].expires_on || "",
@@ -72,7 +68,6 @@ export async function getUserInfo(): Promise<UserInfo> {
             user_first_last_name: payload[0].user_claims?.find((claim: claim) => claim.typ === 'name')?.val || "",
             user_id: payload[0].user_claims?.find((claim: claim) => claim.typ === 'http://schemas.microsoft.com/identity/claims/objectidentifier')?.val || '',
         };
-        console.log("User info: ", userInfo);
         return userInfo;
     } catch (e) {
         return {} as UserInfo;
@@ -102,7 +97,7 @@ export function getUserInfoGlobal() {
     }
 
     if (!USER_INFO) {
-        console.info('User info not yet configured');
+        // console.info('User info not yet configured');
         return null;
     }
 
@@ -125,21 +120,25 @@ export function getUserId(): string {
  */
 export function headerBuilder(headers?: Record<string, string>): Record<string, string> {
     let userId = getUserId();
+    //console.log('headerBuilder: Using user ID:', userId);
     let defaultHeaders = {
         "x-ms-client-principal-id": String(userId) || "",  // Custom header
     };
+    //console.log('headerBuilder: Created headers:', defaultHeaders);
     return {
         ...defaultHeaders,
         ...(headers ? headers : {})
     };
 }
+
 export const toBoolean = (value: any): boolean => {
     if (typeof value !== 'string') {
         return false;
     }
     return value.trim().toLowerCase() === 'true';
 };
-const exportedConfig = {
+
+const configExports = {
     setApiUrl,
     getApiUrl,
     toBoolean,
@@ -148,7 +147,7 @@ const exportedConfig = {
     setEnvData,
     config,
     USER_ID,
-    API_URL
+    API_URL,
 };
 
-export default exportedConfig;
+export default configExports;

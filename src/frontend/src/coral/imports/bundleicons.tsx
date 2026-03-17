@@ -134,5 +134,6 @@ import {
   export const WeatherMoon = bundleIcon(WeatherMoonFilled, WeatherMoonRegular);
   export const WeatherSunny = bundleIcon(WeatherSunnyFilled, WeatherSunnyRegular);
   
-  export default {bundleIcon}
+  const bundleIconExport = { bundleIcon };
+  export default bundleIconExport;
   

@@ -6,7 +6,6 @@ import {
   Body1,
   Button,
   Tag,
-  Tooltip as FluentTooltip,
   ToolbarDivider,
 } from "@fluentui/react-components";
 import { Copy, Send } from "../imports/bundleicons";
@@ -14,7 +13,7 @@ import { ChatDismiss20Regular, HeartRegular } from "@fluentui/react-icons";
 import ChatInput from "./ChatInput";
 import "./Chat.css";
 import "./prism-material-oceanic.css";
-// import { chatService } from "../services/chatService";
+// import { chatService } from "../services/chatService"; // TODO: Re-enable when chatService integration is complete
 import HeaderTools from "../components/Header/HeaderTools";
 
 interface ChatProps {
@@ -47,7 +46,6 @@ const Chat: React.FC<ChatProps> = ({
   const [isTyping, setIsTyping] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [inputHeight, setInputHeight] = useState(0);
-  const [currentConversationId, setCurrentConversationId] = useState<string | undefined>(undefined);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
@@ -127,19 +125,23 @@ const Chat: React.FC<ChatProps> = ({
         const response = onSendMessage(input, updatedMessages);
 
         if (isAsyncIterable(response)) {
-          let assistantContent = "";
           for await (const chunk of response) {
-            assistantContent += chunk;
             setMessages((prev) => {
               const updated = [...prev];
+              const lastMsg = updated[updated.length - 1];
               updated[updated.length - 1] = {
                 role: "assistant",
-                content: assistantContent,
+                content: (lastMsg?.content || "") + chunk,
               };
               return updated;
             });
           }
-          onSaveMessage?.(userId, [...updatedMessages, { role: "assistant", content: assistantContent }]);
+          // Get final content from state for saving
+          setMessages((prev) => {
+            const finalContent = prev[prev.length - 1]?.content || "";
+            onSaveMessage?.(userId, [...updatedMessages, { role: "assistant", content: finalContent }]);
+            return prev;
+          });
         } else {
           const assistantResponse = await response;
           const newHistory = [...updatedMessages, { role: "assistant", content: assistantResponse }];
@@ -147,10 +149,12 @@ const Chat: React.FC<ChatProps> = ({
           onSaveMessage?.(userId, newHistory);
         }
       } else {
+        // TODO: Implement chatService integration when not using onSendMessage
         // const response = await chatService.sendMessage(userId, input, currentConversationId);
         // setCurrentConversationId(response.conversation_id);
         // const assistantMessage = { role: "assistant", content: response.assistant_response };
         // setMessages([...updatedMessages, assistantMessage]);
+        console.warn("No onSendMessage handler provided, message not sent");
       }
     } catch (err) {
       console.log("Send Message Error:", err);
@@ -171,7 +175,6 @@ const Chat: React.FC<ChatProps> = ({
         // await chatService.clearChatHistory(userId);
       }
       setMessages([]);
-      setCurrentConversationId(undefined);
     } catch (err) {
       console.log("Failed to clear chat history:", err);
     }

@@ -325,12 +325,12 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-identity", specifier = ">=1.25.2" },
-    { name = "fastapi", specifier = ">=0.129.0" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "python-multipart", specifier = ">=0.0.22" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.40.0" },
+    { name = "azure-identity" },
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "python-dotenv" },
+    { name = "python-multipart" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
 ]
 
 [[package]]

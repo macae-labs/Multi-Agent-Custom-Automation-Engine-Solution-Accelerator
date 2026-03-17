@@ -1,4 +1,4 @@
-import { ProcessedPlanData, Step } from "./plan";
+import { MPlanData, ProcessedPlanData } from "./plan";
 
 export interface SubTask {
     id: string;
@@ -20,10 +20,8 @@ export interface Human {
     avatarUrl?: string;
 }
 
-export interface TaskDetailsProps {
+export interface PlanDetailsProps {
     planData: ProcessedPlanData;
     loading: boolean;
-    submittingChatDisableInput: boolean;
-    processingSubtaskId: string | null;
-    OnApproveStep: (step: Step, total: number, completed: number, approve: boolean) => void;
+    planApprovalRequest: MPlanData | null;
 }

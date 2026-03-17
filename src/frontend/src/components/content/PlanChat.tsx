@@ -1,191 +1,119 @@
-import HeaderTools from "@/coral/components/Header/HeaderTools";
-import { Copy, Send } from "@/coral/imports/bundleicons";
-import ChatInput from "@/coral/modules/ChatInput";
-import remarkGfm from "remark-gfm";
-import rehypePrism from "rehype-prism";
-import { AgentType, PlanChatProps, role } from "@/models";
-import {
-  Body1,
-  Button,
-  Spinner,
-  Tag,
-  ToolbarDivider,
-} from "@fluentui/react-components";
-import { DiamondRegular, HeartRegular } from "@fluentui/react-icons";
-import { useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
-import ReactMarkdown from "react-markdown";
-import "../../styles/PlanChat.css";
-import "../../styles/Chat.css";
-import "../../styles/prism-material-oceanic.css";
-import { TaskService } from "@/services/TaskService";
+import { PlanChatProps, MPlanData } from "../../models/plan";
 import InlineToaster from "../toast/InlineToaster";
+import { AgentMessageData } from "@/models";
+import renderUserPlanMessage from "./streaming/StreamingUserPlanMessage";
+import StreamingPlanResponse from "./streaming/StreamingPlanResponse";
+import { renderPlanExecutionMessage, renderThinkingState } from "./streaming/StreamingPlanState";
 import ContentNotFound from "../NotFound/ContentNotFound";
+import PlanChatBody from "./PlanChatBody";
+import StreamingAgentMessages from "./streaming/StreamingAgentMessage";
+import StreamingBufferMessage from "./streaming/StreamingBufferMessage";
 
-const PlanChat: React.FC<PlanChatProps> = ({
+interface SimplifiedPlanChatProps extends PlanChatProps {
+  onPlanReceived?: (planData: MPlanData) => void;
+  initialTask?: string;
+  planApprovalRequest: MPlanData | null;
+  waitingForPlan: boolean;
+  messagesContainerRef: React.RefObject<HTMLDivElement>;
+  streamingMessageBuffer: string;
+  showBufferingText: boolean;
+  agentMessages: AgentMessageData[];
+  showProcessingPlanSpinner: boolean;
+  showApprovalButtons: boolean;
+  handleApprovePlan: () => Promise<void>;
+  handleRejectPlan: () => Promise<void>;
+  processingApproval: boolean;
+
+}
+
+const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
   planData,
   input,
-  loading,
   setInput,
   submittingChatDisableInput,
   OnChatSubmit,
+  onPlanApproval,
+  onPlanReceived,
+  initialTask,
+  planApprovalRequest,
+  waitingForPlan,
+  messagesContainerRef,
+  streamingMessageBuffer,
+  showBufferingText,
+  agentMessages,
+  showProcessingPlanSpinner,
+  showApprovalButtons,
+  handleApprovePlan,
+  handleRejectPlan,
+  processingApproval
 }) => {
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  const [inputHeight, setInputHeight] = useState(0);
-
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
-
-  // Scroll to Bottom useEffect
-
-const messages = useMemo(() => {
-  return planData?.messages || [];
-}, [planData?.messages]);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  //Scroll to Bottom Buttom
-
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      setShowScrollButton(scrollTop + clientHeight < scrollHeight - 100);
-    };
-
-    container.addEventListener("scroll", handleScroll);
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  useEffect(() => {
-    if (inputContainerRef.current) {
-      setInputHeight(inputContainerRef.current.offsetHeight);
-    }
-  }, [input]); // or [inputValue, submittingChatDisableInput]
-
-  const scrollToBottom = () => {
-    messagesContainerRef.current?.scrollTo({
-      top: messagesContainerRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-    setShowScrollButton(false);
-  };
+  // States
 
   if (!planData)
     return (
       <ContentNotFound subtitle="The requested page could not be found." />
     );
   return (
-    <div className="chat-container">
-      <div className="messages" ref={messagesContainerRef}>
-        <div className="message-wrapper">
-          {messages.map((msg, index) => {
-            const isHuman = msg.source === AgentType.HUMAN;
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
 
-            return (
-              <div
-                key={index}
-                className={`message ${isHuman ? role.user : role.assistant}`}
-              >
-                {!isHuman && (
-                  <div className="plan-chat-header">
-                    <div className="plan-chat-speaker">
-                      <Body1 className="speaker-name">
-                        {TaskService.cleanTextToSpaces(msg.source)}
-                      </Body1>
-                      <Tag
-                        size="extra-small"
-                        shape="rounded"
-                        appearance="brand"
-                        className="bot-tag"
-                      >
-                        BOT
-                      </Tag>
-                    </div>
-                  </div>
-                )}
-
-                <Body1>
-                  <div className="plan-chat-message-content">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypePrism]}
-                    >
-                      {TaskService.cleanHRAgent(msg.content) || ""}
-                    </ReactMarkdown>
-
-                    {!isHuman && (
-                      <div className="assistant-footer">
-                        <div className="assistant-actions">
-                          <div>
-                            <Button
-                              onClick={() =>
-                                msg.content &&
-                                navigator.clipboard.writeText(msg.content)
-                              }
-                              title="Copy Response"
-                              appearance="subtle"
-                              style={{ height: 28, width: 28 }}
-                              icon={<Copy />}
-                            />
-                          </div>
-
-                          <Tag
-                            icon={<DiamondRegular />}
-                            appearance="filled"
-                            size="extra-small"
-                          >
-                            Sample data for demonstration purposes only.
-                          </Tag>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </Body1>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {showScrollButton && (
-        <Tag
-          onClick={scrollToBottom}
-          className="scroll-to-bottom plan-chat-scroll-button"
-          shape="circular"
-          style={{
-            bottom: inputHeight,
-            position: "absolute", // ensure this or your class handles it
-            right: 16, // optional, for right alignment
-            zIndex: 5,
-          }}
-        >
-          Back to bottom
-        </Tag>
-      )}
+    }}>
+      {/* Messages Container */}
       <InlineToaster />
-      <div ref={inputContainerRef} className="plan-chat-input-container">
-        <div className="plan-chat-input-wrapper">
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onEnter={() => OnChatSubmit(input)}
-            disabledChat={false}
-            placeholder="Ask a follow-up or add context..."
-          >
-            <Button
-              appearance="transparent"
-              onClick={() => OnChatSubmit(input)}
-              icon={<Send />}
-              disabled={false}
-            />
-          </ChatInput>
-        </div>
+      <div
+        ref={messagesContainerRef}
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          padding: '32px 0',
+          maxWidth: '800px',
+          margin: '0 auto',
+          width: '100%'
+        }}
+      >
+        {/* User plan message */}
+        {renderUserPlanMessage(planApprovalRequest, initialTask, planData)}
+
+        {/* AI thinking state */}
+        {renderThinkingState(waitingForPlan)}
+
+        {/* Plan response with all information */}
+        <StreamingPlanResponse
+          planApprovalRequest={planApprovalRequest}
+          handleApprovePlan={handleApprovePlan}
+          handleRejectPlan={handleRejectPlan}
+          processingApproval={processingApproval}
+          showApprovalButtons={showApprovalButtons}
+        />
+        <StreamingAgentMessages
+          agentMessages={agentMessages}
+          planData={planData}
+          planApprovalRequest={planApprovalRequest}
+        />
+
+        {showProcessingPlanSpinner && renderPlanExecutionMessage()}
+        {/* Streaming plan updates */}
+        {showBufferingText && (
+          <StreamingBufferMessage
+            streamingMessageBuffer={streamingMessageBuffer}
+            isStreaming={true}
+          />
+        )}
       </div>
+
+      {/* Chat Input - only show if no plan is waiting for approval */}
+      <PlanChatBody
+        planData={planData}
+        input={input}
+        setInput={setInput}
+        submittingChatDisableInput={submittingChatDisableInput}
+        OnChatSubmit={OnChatSubmit}
+        waitingForPlan={waitingForPlan}
+        loading={false} />
+
     </div>
   );
 };

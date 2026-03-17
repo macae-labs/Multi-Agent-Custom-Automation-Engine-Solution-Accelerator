@@ -1,4 +1,4 @@
-/* PlanPage.css */
+/* PlanPage.css - Add proportional layout styles */
 .plan-page-container {
   max-width: 960px;
   margin: 24px auto;
@@ -53,6 +53,19 @@
   min-height: 200px;
 }
 
+.plan-loading-spinner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  padding: 20px;
+}
+
+.plan-error-message {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--colorNeutralForeground2);
+}
 
 .loadingWrapper {
   height: 100%;
@@ -63,8 +76,42 @@
   gap: 12px;
 }
 
+/* Proportional layout for panels */
+.plan-layout-row {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+.plan-left-panel {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+.plan-right-panel {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+.plan-content-center {
+  flex: 1;
+  min-width: 0; /* Allows flex item to shrink below its min-content size */
+  display: flex;
+  flex-direction: column;
+}
 
 /* Responsive design */
+@media (max-width: 1200px) {
+  .plan-right-panel {
+    width: 260px;
+  }
+  
+  .plan-left-panel {
+    width: 260px;
+  }
+}
+
 @media (max-width: 768px) {
   .plan-page-container {
     margin: 16px auto;
@@ -77,5 +124,10 @@
   
   .plan-page-header {
     margin-bottom: 16px;
+  }
+  
+  .plan-left-panel,
+  .plan-right-panel {
+    width: 240px;
   }
 }

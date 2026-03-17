@@ -4,26 +4,25 @@ import {
     HumanClarification,
     InputTask,
     InputTaskResponse,
-    PlanWithSteps,
-    Step,
-    StepStatus,
-    AgentType,
-    PlanMessage,
-    ProjectProfileResponse,
-    ProjectProfileUpsert
+    Plan,
+    PlanApprovalRequest,
+    PlanApprovalResponse,
+    AgentMessageBE,
+    MPlanBE,
+    TeamConfigurationBE,
+    PlanFromAPI,
+    AgentMessageResponse
 } from '../models';
 
 // Constants for endpoints
 const API_ENDPOINTS = {
-    INPUT_TASK: '/input_task',
-    PLANS: '/plans',
-    STEPS: '/steps',
-    HUMAN_FEEDBACK: '/human_feedback',
-    APPROVE_STEPS: '/approve_step_or_steps',
-    HUMAN_CLARIFICATION: '/human_clarification_on_plan',
-    AGENT_MESSAGES: '/agent_messages',
-    MESSAGES: '/messages',
-    PROJECT_PROFILE: '/project_profile'
+    PROCESS_REQUEST: '/v4/process_request',
+    PLANS: '/v4/plans',
+    PLAN: '/v4/plan',
+    PLAN_APPROVAL: '/v4/plan_approval',
+    HUMAN_CLARIFICATION: '/v4/user_clarification',
+    USER_BROWSER_LANGUAGE: '/user_browser_language',
+    AGENT_MESSAGE: '/v4/agent_message',
 };
 
 // Simple cache implementation
@@ -96,33 +95,24 @@ class RequestTracker {
     }
 }
 
+
+
 export class APIService {
     private _cache = new APICache();
     private _requestTracker = new RequestTracker();
 
+
     /**
-     * Submit a new input task to generate a plan
+     * Create a new plan with RAI validation
      * @param inputTask The task description and optional session ID
-     * @returns Promise with the response containing session and plan IDs
+     * @returns Promise with the response containing plan ID and status
      */
-    async submitInputTask(inputTask: InputTask): Promise<InputTaskResponse> {
-        return apiClient.post(API_ENDPOINTS.INPUT_TASK, inputTask);
-    }
+    // async createPlan(inputTask: InputTask): Promise<{ plan_id: string; status: string; session_id: string }> {
+    //     return apiClient.post(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
+    // }
 
-    /**
-     * Save or update project profile for dynamic tool injection.
-     */
-    async upsertProjectProfile(projectProfile: ProjectProfileUpsert): Promise<any> {
-        return apiClient.post(API_ENDPOINTS.PROJECT_PROFILE, projectProfile);
-    }
-
-    /**
-     * Get project profile for a session.
-     */
-    async getProjectProfile(sessionId: string): Promise<ProjectProfileResponse> {
-        return apiClient.get(API_ENDPOINTS.PROJECT_PROFILE, {
-            params: { session_id: sessionId }
-        });
+    async createPlan(inputTask: InputTask): Promise<InputTaskResponse> {
+        return apiClient.post(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
     }
 
     /**
@@ -131,10 +121,9 @@ export class APIService {
      * @param useCache Whether to use cached data or force fresh fetch
      * @returns Promise with array of plans with their steps
      */
-    async getPlans(sessionId?: string, useCache = true): Promise<PlanWithSteps[]> {
+    async getPlans(sessionId?: string, useCache = true): Promise<Plan[]> {
         const cacheKey = `plans_${sessionId || 'all'}`;
         const params = sessionId ? { session_id: sessionId } : {};
-
         const fetcher = async () => {
             const data = await apiClient.get(API_ENDPOINTS.PLANS, { params });
             if (useCache) {
@@ -156,28 +145,33 @@ export class APIService {
      * @param useCache Whether to use cached data or force fresh fetch
      * @returns Promise with the plan and its steps
      */
-    async getPlanById(planId: string, useCache = true): Promise<{ plan_with_steps: PlanWithSteps; messages: PlanMessage[] }> {
+    async getPlanById(planId: string, useCache = true): Promise<PlanFromAPI> {
         const cacheKey = `plan_by_id_${planId}`;
         const params = { plan_id: planId };
 
         const fetcher = async () => {
-            const data = await apiClient.get(API_ENDPOINTS.PLANS, { params });
+            const data = await apiClient.get(API_ENDPOINTS.PLAN, { params });
 
             // The API returns an array, but with plan_id filter it should have only one item
             if (!data) {
                 throw new Error(`Plan with ID ${planId} not found`);
             }
-
-            const plan = data[0] as PlanWithSteps;
-            const messages = data[1] || [];
+            console.log('Fetched plan by ID:', data);
+            const results = {
+                plan: data.plan as Plan,
+                messages: data.messages as AgentMessageBE[],
+                m_plan: data.m_plan as MPlanBE | null,
+                team: data.team as TeamConfigurationBE | null,
+                streaming_message: data.streaming_message as string | null
+            } as PlanFromAPI;
             if (useCache) {
-                this._cache.set(cacheKey, { plan_with_steps: plan, messages }, 30000); // Cache for 30 seconds
+                this._cache.set(cacheKey, results, 30000); // Cache for 30 seconds
             }
-            return { plan_with_steps: plan, messages };
+            return results;
         };
 
         if (useCache) {
-            const cachedPlan = this._cache.get<{ plan_with_steps: PlanWithSteps; messages: PlanMessage[] }>(cacheKey);
+            const cachedPlan = this._cache.get<PlanFromAPI>(cacheKey);
             if (cachedPlan) return cachedPlan;
 
             return this._requestTracker.trackRequest(cacheKey, fetcher);
@@ -186,178 +180,31 @@ export class APIService {
         return fetcher();
     }
 
-    /**
-     * Get a specific plan with its steps
-     * @param sessionId Session ID
-     * @param planId Plan ID
-     * @param useCache Whether to use cached data or force fresh fetch
-     * @returns Promise with the plan and its steps
-     */
-    async getPlanWithSteps(sessionId: string, planId: string, useCache = true): Promise<PlanWithSteps> {
-        const cacheKey = `plan_${sessionId}_${planId}`;
-
-        if (useCache) {
-            const cachedPlan = this._cache.get<PlanWithSteps>(cacheKey);
-            if (cachedPlan) return cachedPlan;
-        }
-
-        const fetcher = async () => {
-            const plans = await this.getPlans(sessionId, useCache);
-            const plan = plans.find(p => p.id === planId);
-
-            if (!plan) {
-                throw new Error(`Plan with ID ${planId} not found`);
-            }
-
-            if (useCache) {
-                this._cache.set(cacheKey, plan, 30000); // Cache for 30 seconds
-            }
-
-            return plan;
-        };
-
-        if (useCache) {
-            return this._requestTracker.trackRequest(cacheKey, fetcher);
-        }
-
-        return fetcher();
-    }
 
     /**
-     * Get steps for a specific plan
-     * @param planId Plan ID
-     * @param useCache Whether to use cached data or force fresh fetch
-     * @returns Promise with array of steps
-     */
-    async getSteps(planId: string, useCache = true): Promise<Step[]> {
-        const cacheKey = `steps_${planId}`;
+   * Approve a plan for execution 
+   * @param planApprovalData Plan approval data
+   * @returns Promise with approval response
+   */
+    async approvePlan(planApprovalData: PlanApprovalRequest): Promise<PlanApprovalResponse> {
+        const requestKey = `approve-plan-${planApprovalData.m_plan_id}`;
 
-        const fetcher = async () => {
-            const data = await apiClient.get(`${API_ENDPOINTS.STEPS}/${planId}`);
-            if (useCache) {
-                this._cache.set(cacheKey, data, 30000); // Cache for 30 seconds
+        return this._requestTracker.trackRequest(requestKey, async () => {
+            console.log('📤 Approving plan via v4 API:', planApprovalData);
+
+            const response = await apiClient.post(API_ENDPOINTS.PLAN_APPROVAL, planApprovalData);
+
+            // Invalidate cache since plan execution will start
+            this._cache.invalidate(new RegExp(`^plans_`));
+            if (planApprovalData.plan_id) {
+                this._cache.invalidate(new RegExp(`^plan.*_${planApprovalData.plan_id}`));
             }
-            return data;
-        };
 
-        if (useCache) {
-            return this._requestTracker.trackRequest(cacheKey, fetcher);
-        }
-
-        return fetcher();
+            console.log('✅ Plan approval successful:', response);
+            return response;
+        });
     }
 
-    /**
-     * Update a step with new status and optional feedback
-     * @param sessionId Session ID
-     * @param planId Plan ID
-     * @param stepId Step ID
-     * @param update Update object with status and optional feedback
-     * @returns Promise with the updated step
-     */
-    async updateStep(
-        sessionId: string,
-        planId: string,
-        stepId: string,
-        update: {
-            status: StepStatus;
-            human_feedback?: string;
-            updated_action?: string;
-        }
-    ): Promise<Step> {
-        await this.provideStepFeedback(
-            stepId,
-            planId,
-            sessionId,
-            update.status === StepStatus.APPROVED,
-            update.human_feedback,
-            update.updated_action
-        );
-
-        // Invalidate cached data
-        this._cache.invalidate(new RegExp(`^(plan|steps)_${planId}`));
-        this._cache.invalidate(new RegExp(`^plans_`));
-
-        // Get fresh step data
-        const steps = await this.getSteps(planId, false); // Force fresh data
-        const updatedStep = steps.find(step => step.id === stepId);
-
-        if (!updatedStep) {
-            throw new Error(`Step with ID ${stepId} not found after update`);
-        }
-
-        return updatedStep;
-    }
-
-    /**
-     * Provide feedback for a specific step
-     * @param stepId Step ID
-     * @param planId Plan ID
-     * @param sessionId Session ID
-     * @param approved Whether the step is approved
-     * @param humanFeedback Optional human feedback
-     * @param updatedAction Optional updated action
-     * @returns Promise with response object
-     */
-    async provideStepFeedback(
-        stepId: string,
-        planId: string,
-        sessionId: string,
-        approved: boolean,
-        humanFeedback?: string,
-        updatedAction?: string
-    ): Promise<{ status: string; session_id: string; step_id: string }> {
-        const response = await apiClient.post(
-            API_ENDPOINTS.HUMAN_FEEDBACK,
-            {
-                step_id: stepId,
-                plan_id: planId,
-                session_id: sessionId,
-                approved,
-                human_feedback: humanFeedback,
-                updated_action: updatedAction
-            }
-        );
-
-        // Invalidate cached data
-        this._cache.invalidate(new RegExp(`^(plan|steps)_${planId}`));
-        this._cache.invalidate(new RegExp(`^plans_`));
-
-        return response;
-    }
-
-    /**
-     * Approve one or more steps
-     * @param planId Plan ID
-     * @param sessionId Session ID
-     * @param approved Whether the step(s) are approved
-     * @param stepId Optional specific step ID
-     * @param humanFeedback Optional human feedback
-     * @param updatedAction Optional updated action
-     * @returns Promise with response object
-     */
-    async stepStatus(
-        planId: string,
-        sessionId: string,
-        approved: boolean,
-        stepId?: string,
-    ): Promise<{ status: string }> {
-        const response = await apiClient.post(
-            API_ENDPOINTS.APPROVE_STEPS,
-            {
-                step_id: stepId,
-                plan_id: planId,
-                session_id: sessionId,
-                approved
-            }
-        );
-
-        // Invalidate cached data
-        this._cache.invalidate(new RegExp(`^(plan|steps)_${planId}`));
-        this._cache.invalidate(new RegExp(`^plans_`));
-
-        return response;
-    }
 
     /**
      * Submit clarification for a plan
@@ -367,14 +214,16 @@ export class APIService {
      * @returns Promise with response object
      */
     async submitClarification(
-        planId: string,
-        sessionId: string,
-        clarification: string
+        request_id: string = "",
+        answer: string = "",
+        plan_id: string = "",
+        m_plan_id: string = ""
     ): Promise<{ status: string; session_id: string }> {
         const clarificationData: HumanClarification = {
-            plan_id: planId,
-            session_id: sessionId,
-            human_clarification: clarification
+            request_id,
+            answer,
+            plan_id,
+            m_plan_id
         };
 
         const response = await apiClient.post(
@@ -383,101 +232,12 @@ export class APIService {
         );
 
         // Invalidate cached data
-        this._cache.invalidate(new RegExp(`^(plan|steps)_${planId}`));
+        this._cache.invalidate(new RegExp(`^(plan|steps)_${plan_id}`));
         this._cache.invalidate(new RegExp(`^plans_`));
 
         return response;
     }
 
-    /**
-     * Get agent messages for a session
-     * @param sessionId Session ID
-     * @param useCache Whether to use cached data or force fresh fetch
-     * @returns Promise with array of agent messages
-     */
-    async getAgentMessages(sessionId: string, useCache = true): Promise<AgentMessage[]> {
-        const cacheKey = `agent_messages_${sessionId}`;
-
-        const fetcher = async () => {
-            const data = await apiClient.get(`${API_ENDPOINTS.AGENT_MESSAGES}/${sessionId}`);
-            if (useCache) {
-                this._cache.set(cacheKey, data, 30000); // Cache for 30 seconds
-            }
-            return data;
-        };
-
-        if (useCache) {
-            return this._requestTracker.trackRequest(cacheKey, fetcher);
-        }
-
-        return fetcher();
-    }
-
-    /**
-     * Delete all messages
-     * @returns Promise with response object
-     */
-    async deleteAllMessages(): Promise<{ status: string }> {
-        const response = await apiClient.delete(API_ENDPOINTS.MESSAGES);
-
-        // Clear all cached data
-        this._cache.clear();
-
-        return response;
-    }
-
-    /**
-     * Get all messages
-     * @param useCache Whether to use cached data or force fresh fetch
-     * @returns Promise with array of messages
-     */
-    async getAllMessages(useCache = true): Promise<any[]> {
-        const cacheKey = 'all_messages';
-
-        const fetcher = async () => {
-            const data = await apiClient.get(API_ENDPOINTS.MESSAGES);
-            if (useCache) {
-                this._cache.set(cacheKey, data, 30000); // Cache for 30 seconds
-            }
-            return data;
-        };
-
-        if (useCache) {
-            return this._requestTracker.trackRequest(cacheKey, fetcher);
-        }
-
-        return fetcher();
-    }
-
-    // Utility methods
-
-    /**
-     * Check if a plan is complete (all steps are completed or failed)
-     * @param plan Plan with steps
-     * @returns Boolean indicating if plan is complete
-     */
-    isPlanComplete(plan: PlanWithSteps): boolean {
-        return plan.steps.every(step =>
-            [StepStatus.COMPLETED, StepStatus.FAILED].includes(step.status)
-        );
-    }
-
-    /**
-     * Get steps that are awaiting human feedback
-     * @param plan Plan with steps
-     * @returns Array of steps awaiting feedback
-     */
-    getStepsAwaitingFeedback(plan: PlanWithSteps): Step[] {
-        return plan.steps.filter(step => step.status === StepStatus.AWAITING_FEEDBACK);
-    }    /**
-     * Get steps assigned to a specific agent type
-     * @param plan Plan with steps
-     * @param agentType Agent type to filter by
-     * @returns Array of steps for the specified agent
-     */
-    getStepsForAgent(plan: PlanWithSteps, agentType: AgentType): Step[] {
-        return plan.steps.filter(step => step.agent === agentType);
-    }
 
     /**
      * Clear all cached data
@@ -486,37 +246,28 @@ export class APIService {
         this._cache.clear();
     }
 
-    /**
-     * Get progress status counts for a plan
-     * @param plan Plan with steps
-     * @returns Object with counts for each step status
-     */
-    getPlanProgressStatus(plan: PlanWithSteps): Record<StepStatus, number> {
-        const result = Object.values(StepStatus).reduce((acc, status) => {
-            acc[status] = 0;
-            return acc;
-        }, {} as Record<StepStatus, number>);
 
-        plan.steps.forEach(step => {
-            result[step.status]++;
+
+    /**
+     * Send the user's browser language to the backend
+     * @returns Promise with response object
+     */
+    async sendUserBrowserLanguage(): Promise<{ status: string }> {
+        const language = navigator.language || navigator.languages[0] || 'en';
+        const response = await apiClient.post(API_ENDPOINTS.USER_BROWSER_LANGUAGE, {
+            language
         });
-
-        return result;
+        return response;
     }
-
-    /**
-     * Get completion percentage for a plan
-     * @param plan Plan with steps
-     * @returns Completion percentage (0-100)
-     */
-    getPlanCompletionPercentage(plan: PlanWithSteps): number {
-        if (!plan.steps.length) return 0;
-
-        const completedSteps = plan.steps.filter(
-            step => [StepStatus.COMPLETED, StepStatus.FAILED].includes(step.status)
-        ).length;
-
-        return Math.round((completedSteps / plan.steps.length) * 100);
+    async sendAgentMessage(data: AgentMessageResponse): Promise<AgentMessage> {
+        const t0 = performance.now();
+        const result = await apiClient.post(API_ENDPOINTS.AGENT_MESSAGE, data);
+        console.log('[agent_message] sent', {
+            ms: +(performance.now() - t0).toFixed(1),
+            agent: data.agent,
+            type: data.agent_type
+        });
+        return result;
     }
 }
 

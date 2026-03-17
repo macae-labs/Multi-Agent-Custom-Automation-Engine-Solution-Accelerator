@@ -13,11 +13,13 @@ export default defineConfig({
         },
     },
 
+
+
     // Server configuration
     server: {
         port: 3001,
         open: true,
-        host: true,
+        host: true
     },
 
     // Build configuration

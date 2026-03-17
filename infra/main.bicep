@@ -179,6 +179,9 @@ param existingLogAnalyticsWorkspaceId string = ''
 @description('Optional. Resource ID of an existing Ai Foundry AI Services resource.')
 param existingAiFoundryAiProjectResourceId string = ''
 
+@description('Optional. Resource ID of an existing Container Apps Environment. Use this to avoid hitting the 5 environment limit per subscription.')
+param existingContainerAppsEnvironmentResourceId string = ''
+
 // ============== //
 // Variables      //
 // ============== //
@@ -1127,8 +1130,15 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
 // ========== Backend Container App Environment ========== //
 // WAF best practices for container apps: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/azure-container-apps
 // PSRule for Container App: https://azure.github.io/PSRule.Rules.Azure/en/rules/resource/#container-app
+var useExistingContainerAppsEnvironment = !empty(existingContainerAppsEnvironmentResourceId)
 var containerAppEnvironmentResourceName = 'cae-${solutionSuffix}'
-module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = {
+
+// Computed Container Apps Environment Resource ID - uses existing if provided, otherwise from new module
+var containerAppsEnvironmentResourceId = useExistingContainerAppsEnvironment
+  ? existingContainerAppsEnvironmentResourceId
+  : containerAppEnvironment!.outputs.resourceId
+
+module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = if (!useExistingContainerAppsEnvironment) {
   name: take('avm.res.app.managed-environment.${containerAppEnvironmentResourceName}', 64)
   params: {
     name: containerAppEnvironmentResourceName
@@ -1182,7 +1192,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: tags
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 8000
     ingressExternal: true
@@ -1390,7 +1400,7 @@ module containerAppMcp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: tags
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 9000
     ingressExternal: true
