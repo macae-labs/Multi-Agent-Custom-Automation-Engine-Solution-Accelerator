@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.40.2.10011",
-      "templateHash": "17476534152468179054"
+      "version": "0.41.2.15936",
+      "templateHash": "15277193169435132001"
     },
     "name": "Multi-Agent Custom Automation Engine",
     "description": "This module contains the resources required to deploy the [Multi-Agent Custom Automation Engine solution accelerator](https://github.com/microsoft/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator) for both Sandbox environments and WAF aligned environments.\n\n> **Note:** This module is not intended for broad, generic use, as it was designed by the Commercial Solution Areas CTO team, as a Microsoft Solution Accelerator. Feature requests and bug fix requests are welcome if they support the needs of this organization but may not be incorporated if they aim to make this module more generic than what it needs to be for its primary use case. This module will likely be updated to leverage AVM resource modules in the future. This may result in breaking changes in upcoming versions when these features are implemented.\n"
@@ -31,10 +31,12 @@
     },
     "location": {
       "type": "string",
+      "defaultValue": "eastus2",
       "allowedValues": [
         "australiaeast",
         "centralus",
         "eastasia",
+        "eastus",
         "eastus2",
         "japaneast",
         "northeurope",
@@ -226,6 +228,27 @@
         "description": "Optional. Enable private networking for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false."
       }
     },
+    "enableEncryptionAtHost": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optional. Enable encryption at host for the virtual machine. Requires Microsoft.Compute/EncryptionAtHost feature to be registered in the subscription. Defaults to false."
+      }
+    },
+    "enableProximityPlacement": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optional. Enable proximity placement group for the virtual machine. Defaults to false."
+      }
+    },
+    "enableMaintenanceConfig": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optional. Enable maintenance configuration for the virtual machine. Defaults to false."
+      }
+    },
     "virtualMachineAdminUsername": {
       "type": "securestring",
       "nullable": true,
@@ -324,16 +347,19 @@
         "description": "Optional. Resource ID of an existing Ai Foundry AI Services resource."
       }
     },
+    "existingContainerAppsEnvironmentResourceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. Resource ID of an existing Container Apps Environment. Use this to avoid hitting the 5 environment limit per subscription."
+      }
+    },
     "createdBy": {
       "type": "string",
       "defaultValue": "[if(contains(deployer(), 'userPrincipalName'), split(deployer().userPrincipalName, '@')[0], deployer().objectId)]",
       "metadata": {
         "description": "Tag, Created by user name"
       }
-    },
-    "storageContainerName": {
-      "type": "string",
-      "defaultValue": "sample-dataset"
     },
     "storageContainerNameRetailCustomer": {
       "type": "string",
@@ -399,7 +425,7 @@
     },
     "replicaLocation": "[variables('replicaRegionPairs')[parameters('location')]]",
     "allTags": "[union(createObject('azd-env-name', parameters('solutionName')), parameters('tags'))]",
-    "existingTags": "[coalesce(resourceGroup().tags, createObject())]",
+    "existingTags": "[coalesce(tryGet(resourceGroup(), 'tags'), createObject())]",
     "deployerPrincipalType": "[if(contains(deployer(), 'userPrincipalName'), 'User', 'ServicePrincipal')]",
     "useExistingLogAnalytics": "[not(empty(parameters('existingLogAnalyticsWorkspaceId')))]",
     "existingLawSubscription": "[if(variables('useExistingLogAnalytics'), split(parameters('existingLogAnalyticsWorkspaceId'), '/')[2], '')]",
@@ -422,7 +448,7 @@
       "privatelink.openai.azure.com",
       "privatelink.services.ai.azure.com",
       "privatelink.documents.azure.com",
-      "privatelink.blob.core.windows.net",
+      "[format('privatelink.blob.{0}', environment().suffixes.storage)]",
       "privatelink.search.windows.net",
       "[variables('keyVaultPrivateDNSZone')]"
     ],
@@ -479,6 +505,7 @@
     "cosmosDbResourceName": "[format('cosmos-{0}', variables('solutionSuffix'))]",
     "cosmosDbDatabaseName": "macae",
     "cosmosDbDatabaseMemoryContainerName": "memory",
+    "useExistingContainerAppsEnvironment": "[not(empty(parameters('existingContainerAppsEnvironmentResourceId')))]",
     "containerAppEnvironmentResourceName": "[format('cae-{0}', variables('solutionSuffix'))]",
     "containerAppResourceName": "[format('ca-{0}', variables('solutionSuffix'))]",
     "containerAppMcpResourceName": "[format('ca-mcp-{0}', variables('solutionSuffix'))]",
@@ -4921,8 +4948,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "16969845928384020185"
+              "version": "0.41.2.15936",
+              "templateHash": "8667922205584012198"
             }
           },
           "definitions": {
@@ -9040,7 +9067,7 @@
       ]
     },
     "maintenanceConfiguration": {
-      "condition": "[parameters('enablePrivateNetworking')]",
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enableMaintenanceConfig'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[take(format('avm.res.compute.virtual-machine.{0}', variables('maintenanceConfigurationResourceName')), 64)]",
@@ -10418,7 +10445,7 @@
       ]
     },
     "proximityPlacementGroup": {
-      "condition": "[parameters('enablePrivateNetworking')]",
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enableProximityPlacement'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[take(format('avm.res.compute.proximity-placement-group.{0}', variables('proximityPlacementGroupResourceName')), 64)]",
@@ -10775,7 +10802,7 @@
       }
     },
     "virtualMachine": {
-      "condition": "[parameters('enablePrivateNetworking')]",
+      "condition": "[and(parameters('enablePrivateNetworking'), not(equals(parameters('virtualMachineAdminPassword'), null())))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[take(format('avm.res.compute.virtual-machine.{0}', variables('virtualMachineResourceName')), 64)]",
@@ -10810,7 +10837,7 @@
             "value": "[coalesce(parameters('virtualMachineAdminUsername'), 'JumpboxAdminUser')]"
           },
           "adminPassword": {
-            "value": "[coalesce(parameters('virtualMachineAdminPassword'), 'JumpboxAdminP@ssw0rd1234!')]"
+            "value": "[parameters('virtualMachineAdminPassword')]"
           },
           "patchMode": {
             "value": "AutomaticByPlatform"
@@ -10818,21 +10845,17 @@
           "bypassPlatformSafetyChecksOnUserSchedule": {
             "value": true
           },
-          "maintenanceConfigurationResourceId": {
-            "value": "[reference('maintenanceConfiguration').outputs.resourceId.value]"
-          },
+          "maintenanceConfigurationResourceId": "[if(parameters('enableMaintenanceConfig'), createObject('value', reference('maintenanceConfiguration').outputs.resourceId.value), createObject('value', null()))]",
           "enableAutomaticUpdates": {
             "value": true
           },
           "encryptionAtHost": {
-            "value": true
+            "value": "[parameters('enableEncryptionAtHost')]"
           },
           "availabilityZone": {
             "value": "[variables('virtualMachineAvailabilityZone')]"
           },
-          "proximityPlacementGroupResourceId": {
-            "value": "[reference('proximityPlacementGroup').outputs.resourceId.value]"
-          },
+          "proximityPlacementGroupResourceId": "[if(parameters('enableProximityPlacement'), createObject('value', reference('proximityPlacementGroup').outputs.resourceId.value), createObject('value', null()))]",
           "imageReference": {
             "value": {
               "publisher": "microsoft-dsvm",
@@ -22453,8 +22476,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "8742987061721021759"
+              "version": "0.41.2.15936",
+              "templateHash": "8365054813170845685"
             }
           },
           "definitions": {
@@ -25440,9 +25463,9 @@
         }
       },
       "dependsOn": [
-        "[format('avmPrivateDnsZones[{0}]', variables('dnsZoneIndex').openAI)]",
-        "[format('avmPrivateDnsZones[{0}]', variables('dnsZoneIndex').aiServices)]",
         "[format('avmPrivateDnsZones[{0}]', variables('dnsZoneIndex').cognitiveServices)]",
+        "[format('avmPrivateDnsZones[{0}]', variables('dnsZoneIndex').aiServices)]",
+        "[format('avmPrivateDnsZones[{0}]', variables('dnsZoneIndex').openAI)]",
         "logAnalyticsWorkspace",
         "userAssignedIdentity",
         "virtualNetwork"
@@ -25481,8 +25504,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "7507285802464480889"
+              "version": "0.41.2.15936",
+              "templateHash": "5789718034225488560"
             }
           },
           "parameters": {
@@ -29416,6 +29439,7 @@
       ]
     },
     "containerAppEnvironment": {
+      "condition": "[not(variables('useExistingContainerAppsEnvironment'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[take(format('avm.res.app.managed-environment.{0}', variables('containerAppEnvironmentResourceName')), 64)]",
@@ -30349,9 +30373,7 @@
           "enableTelemetry": {
             "value": "[parameters('enableTelemetry')]"
           },
-          "environmentResourceId": {
-            "value": "[reference('containerAppEnvironment').outputs.resourceId.value]"
-          },
+          "environmentResourceId": "[if(variables('useExistingContainerAppsEnvironment'), createObject('value', parameters('existingContainerAppsEnvironmentResourceId')), createObject('value', reference('containerAppEnvironment').outputs.resourceId.value))]",
           "managedIdentities": {
             "value": {
               "userAssignedResourceIds": [
@@ -32156,9 +32178,7 @@
           "enableTelemetry": {
             "value": "[parameters('enableTelemetry')]"
           },
-          "environmentResourceId": {
-            "value": "[reference('containerAppEnvironment').outputs.resourceId.value]"
-          },
+          "environmentResourceId": "[if(variables('useExistingContainerAppsEnvironment'), createObject('value', parameters('existingContainerAppsEnvironmentResourceId')), createObject('value', reference('containerAppEnvironment').outputs.resourceId.value))]",
           "managedIdentities": {
             "value": {
               "userAssignedResourceIds": [
@@ -32239,11 +32259,11 @@
                   },
                   {
                     "name": "JWKS_URI",
-                    "value": "[format('https://login.microsoftonline.com/{0}/discovery/v2.0/keys', tenant().tenantId)]"
+                    "value": "[format('{0}{1}/discovery/v2.0/keys', environment().authentication.loginEndpoint, tenant().tenantId)]"
                   },
                   {
                     "name": "ISSUER",
-                    "value": "[format('https://sts.windows.net/{0}/', tenant().tenantId)]"
+                    "value": "[format('{0}{1}/v2.0', environment().authentication.loginEndpoint, tenant().tenantId)]"
                   },
                   {
                     "name": "AUDIENCE",
@@ -34461,8 +34481,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "8640881069237947782"
+              "version": "0.41.2.15936",
+              "templateHash": "14525082674956141939"
             }
           },
           "definitions": {
@@ -35474,8 +35494,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.40.2.10011",
-                      "templateHash": "10706743168754451638"
+                      "version": "0.41.2.15936",
+                      "templateHash": "1185169597469996118"
                     },
                     "name": "Site App Settings",
                     "description": "This module deploys a Site App Setting."
@@ -44644,8 +44664,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.40.2.10011",
-              "templateHash": "15348022841521786626"
+              "version": "0.41.2.15936",
+              "templateHash": "8488390916703184584"
             }
           },
           "parameters": {
@@ -44707,7 +44727,6 @@
         }
       },
       "dependsOn": [
-        "aiFoundryAiServices",
         "aiFoundryAiServicesProject",
         "searchService"
       ]
@@ -47984,7 +48003,7 @@
     },
     "AI_FOUNDRY_RESOURCE_ID": {
       "type": "string",
-      "value": "[if(not(variables('useExistingAiFoundryAiProject')), reference('aiFoundryAiServices').outputs.resourceId.value, parameters('existingAiFoundryAiProjectResourceId'))]"
+      "value": "[if(variables('useExistingAiFoundryAiProject'), parameters('existingAiFoundryAiProjectResourceId'), reference('aiFoundryAiServices').outputs.resourceId.value)]"
     },
     "COSMOSDB_ACCOUNT_NAME": {
       "type": "string",
