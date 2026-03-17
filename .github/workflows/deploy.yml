@@ -145,6 +145,7 @@ jobs:
               frontendContainerImageTag="${IMAGE_TAG}" \
               azureAiServiceLocation='${{ env.AZURE_LOCATION }}' \
               gptModelCapacity=50 \
+              existingContainerAppsEnvironmentResourceId="/subscriptions/380fa841-83f3-42fe-adc4-582a5ebe139b/resourceGroups/boat-rental-app-group-eus2-clean/providers/Microsoft.App/managedEnvironments/cae-macae-wsxymdijs3u2" \
               createdBy="Pipeline" \
               tags="{'Purpose':'Deploying and Cleaning Up Resources for Validation','CreatedDate':'$current_date'}" \
             --output json
