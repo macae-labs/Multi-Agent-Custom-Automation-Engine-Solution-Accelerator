@@ -4,6 +4,13 @@ metadata:
   template: multi-agent-custom-automation-engine-solution-accelerator@1.0
 requiredVersions:
   azd: '>= 1.18.0'
+infra:
+  parameters:
+    location: ${AZURE_LOCATION}
+    azureAiServiceLocation: ${AZURE_ENV_OPENAI_LOCATION}
+    existingLogAnalyticsWorkspaceId: ${AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID}
+    existingAiFoundryAiProjectResourceId: ${AZURE_EXISTING_AI_PROJECT_RESOURCE_ID}
+    existingContainerAppsEnvironmentResourceId: ${AZURE_EXISTING_CAE_RESOURCE_ID}
 hooks:
   postdeploy:
     windows:
