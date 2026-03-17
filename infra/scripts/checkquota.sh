@@ -23,6 +23,30 @@ if ! az account set --subscription "$SUBSCRIPTION_ID"; then
 fi
 echo "✅ Azure subscription set successfully."
 
+# ── Container App Environments quota check ────────────────────────────────────
+# Azure allows at most 5 Container App Environments per subscription globally.
+# Check the current count before attempting deployment so we can fail fast with
+# a clear message rather than getting a mid-deployment ARM error.
+MAX_CAE_ENVIRONMENTS=5
+echo "🔄 Checking Container App Environments quota (max: ${MAX_CAE_ENVIRONMENTS})..."
+
+CAE_COUNT=$(az rest \
+  --method get \
+  --url "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.App/managedEnvironments?api-version=2024-03-01" \
+  --query "length(value)" \
+  --output tsv 2>/dev/null || echo "0")
+
+CAE_COUNT=${CAE_COUNT:-0}
+echo "📊 Container App Environments in use: ${CAE_COUNT} / ${MAX_CAE_ENVIRONMENTS}"
+
+if [ "${CAE_COUNT}" -ge "${MAX_CAE_ENVIRONMENTS}" ]; then
+    echo "❌ ERROR: Subscription has reached the limit of ${MAX_CAE_ENVIRONMENTS} Container App Environments (currently: ${CAE_COUNT}). Deployment would fail with MaxNumberOfGlobalEnvironmentsInSubExceeded."
+    echo "QUOTA_FAILED=true" >> "$GITHUB_ENV"
+    exit 0
+fi
+echo "✅ Container App Environments quota check passed (${CAE_COUNT}/${MAX_CAE_ENVIRONMENTS} in use)."
+# ── End Container App Environments quota check ───────────────────────────────
+
 # Define models and their minimum required capacities
 declare -A MIN_CAPACITY=(
     ["OpenAI.GlobalStandard.o4-mini"]="${O4_MINI_MIN_CAPACITY}"
