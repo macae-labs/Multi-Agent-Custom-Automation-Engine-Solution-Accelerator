@@ -22,13 +22,14 @@ param solutionUniqueText string = take(uniqueString(subscription().id, resourceG
   'australiaeast'
   'centralus'
   'eastasia'
+  'eastus'
   'eastus2'
   'japaneast'
   'northeurope'
   'southeastasia'
   'uksouth'
 ])
-param location string
+param location string = 'eastus2'
 
 //Get the current deployer's information
 var deployerInfo = deployer()
