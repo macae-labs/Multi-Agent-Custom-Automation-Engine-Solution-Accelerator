@@ -30,6 +30,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    environment: production
     env:
       MACAE_WEB_URL: ${{ inputs.MACAE_WEB_URL }}
       MACAE_URL_API: ${{ inputs.MACAE_URL_API }}
