@@ -11,6 +11,13 @@ infra:
     existingLogAnalyticsWorkspaceId: ${AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID}
     existingAiFoundryAiProjectResourceId: ${AZURE_EXISTING_AI_PROJECT_RESOURCE_ID}
     existingContainerAppsEnvironmentResourceId: ${AZURE_EXISTING_CAE_RESOURCE_ID}
+    # Container Registry configuration - uses our ACR instead of upstream biabcontainerreg
+    backendContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    frontendContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    MCPContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    backendContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
+    frontendContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
+    MCPContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
 hooks:
   postdeploy:
     windows:

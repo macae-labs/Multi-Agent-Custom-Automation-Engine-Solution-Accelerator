@@ -120,6 +120,9 @@ jobs:
             --template-file infra/main.bicep \
             --parameters \
               solutionName=${{ env.SOLUTION_PREFIX }} \
+              backendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              frontendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              MCPContainerRegistryHostname="boatrentalacr.azurecr.io" \
               location="${{ env.AZURE_LOCATION }}" \
               azureAiServiceLocation='${{ env.AZURE_LOCATION }}' \
               gptModelCapacity=${{ env.GPT_MIN_CAPACITY }} \
