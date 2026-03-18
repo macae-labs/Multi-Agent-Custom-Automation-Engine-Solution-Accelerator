@@ -5,14 +5,18 @@ permissions:
   contents: read
   actions: read
 on:
-  workflow_run:
-    workflows: ["Build Docker and Optional Push v4"]
-    types:
-      - completed
-    branches:
-      - main
-      - dev-v4
-      - hotfix
+  # DISABLED: workflow_run trigger removed to avoid conflict with deploy.yml (upstream)
+  # Both were listening to the same trigger causing parallel deploys and
+  # MaxNumberOfRegionalEnvironmentsInSubExceeded errors
+  #
+  # workflow_run:
+  #   workflows: ["Build Docker and Optional Push v4"]
+  #   types:
+  #     - completed
+  #   branches:
+  #     - main
+  #     - dev-v4
+  #     - hotfix
   workflow_dispatch:
     inputs:
       runner_os:
