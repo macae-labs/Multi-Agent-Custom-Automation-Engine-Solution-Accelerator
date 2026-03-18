@@ -249,13 +249,20 @@ jobs:
           azd env set AZURE_ENV_IMAGE_TAG="$env:INPUT_IMAGE_TAG"
           azd env set AZURE_EXISTING_CAE_RESOURCE_ID="/subscriptions/380fa841-83f3-42fe-adc4-582a5ebe139b/resourceGroups/boat-rental-app-group-eus2-clean/providers/Microsoft.App/managedEnvironments/cae-macae-wsxymdijs3u2"
 
-          # Set ACR name only when building Docker image
-          if ($env:INPUT_BUILD_DOCKER_IMAGE -eq "true") {
-            $ACR_NAME = "${{ secrets.ACR_TEST_LOGIN_SERVER }}"
+          # Always set ACR to our registry (not upstream biabcontainerreg)
+          # This ensures we use images built from our code with correct SDK versions
+          $ACR_NAME = "${{ secrets.ACR_TEST_LOGIN_SERVER }}"
+          if ($ACR_NAME -ne "") {
             azd env set AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT="$ACR_NAME"
-            Write-Host "Set ACR name to: $ACR_NAME"
+            Write-Host "✅ Set ACR to: $ACR_NAME"
           } else {
-            Write-Host "Skipping ACR name configuration (using existing image)"
+            Write-Host "⚠️ ACR_TEST_LOGIN_SERVER not set, using default (biabcontainerreg)"
+          }
+
+          if ($env:INPUT_BUILD_DOCKER_IMAGE -eq "true") {
+            Write-Host "✅ Docker image will be built and pushed to: $ACR_NAME"
+          } else {
+            Write-Host "ℹ️ Using existing image from: $ACR_NAME"
           }
 
           if ($env:INPUT_EXP -eq "true") {

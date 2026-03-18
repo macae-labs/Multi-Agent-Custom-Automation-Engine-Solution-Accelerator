@@ -129,6 +129,9 @@ jobs:
             --template-file infra/main.bicep \
             --parameters \
               solutionName=${{ env.SOLUTION_PREFIX }} \
+              backendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              frontendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              MCPContainerRegistryHostname="boatrentalacr.azurecr.io" \
               location="${{ env.AZURE_LOCATION }}" \
               gptModelDeploymentType="GlobalStandard" \
               gptModelName="gpt-4.1-mini" \

@@ -15,11 +15,11 @@ opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-openai
 opentelemetry-exporter-otlp-proto-http
 
-semantic-kernel[azure]==1.32.2
-azure-ai-projects==1.0.0b11
-openai==1.84.0 
-azure-ai-inference==1.0.0b9 
-azure-search-documents 
+# Semantic Kernel drives openai and azure-ai-projects versions
+semantic-kernel[azure]==1.39.4
+# Do NOT pin openai or azure-ai-projects - let SK resolve them
+azure-ai-inference==1.0.0b9
+azure-search-documents
 azure-keyvault-secrets
 azure-ai-evaluation
 google-cloud-firestore
