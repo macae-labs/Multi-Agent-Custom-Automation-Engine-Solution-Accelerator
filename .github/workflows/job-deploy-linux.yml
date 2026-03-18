@@ -246,7 +246,7 @@ jobs:
           azd env set AZURE_LOCATION="$INPUT_AZURE_LOCATION"
           azd env set AZURE_RESOURCE_GROUP="$INPUT_RESOURCE_GROUP_NAME"
           azd env set AZURE_ENV_IMAGE_TAG="$INPUT_IMAGE_TAG"
-          azd env set AZURE_EXISTING_CAE_RESOURCE_ID="/subscriptions/380fa841-83f3-42fe-adc4-582a5ebe139b/resourceGroups/boat-rental-app-group-eus2-clean/providers/Microsoft.App/managedEnvironments/cae-macae-wsxymdijs3u2"
+          azd env set AZURE_EXISTING_CAE_RESOURCE_ID="${{ vars.EXISTING_CAE_RESOURCE_ID }}"
 
           # Always set ACR to our registry (not upstream biabcontainerreg)
           # This ensures we use images built from our code with correct SDK versions
