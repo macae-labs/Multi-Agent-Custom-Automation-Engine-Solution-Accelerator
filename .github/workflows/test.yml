@@ -81,12 +81,13 @@ jobs:
 
       - name: Run unit tests (excluding integration)
         run: |
-          cd src/backend
           pytest -m "not integration and not e2e" \
-            --cov=. \
+            --cov=src/backend \
             --cov-report=term-missing \
             --cov-report=xml \
-            -v --tb=short
+            -v --tb=short \
+            src/backend/tests \
+            src/tests/backend/v4
 
   # ==========================================================================
   # Integration Tests - Only on push to main (requires real Azure services)
