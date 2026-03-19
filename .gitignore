@@ -6,6 +6,7 @@ __pycache__/
 # C extensions
 *.so
 .env
+.env.*
 .env_*
 appsettings.json
 # Distribution / packaging
