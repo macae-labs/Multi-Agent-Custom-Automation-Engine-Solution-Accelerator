@@ -30,6 +30,7 @@ sys.modules['v4.common'] = MagicMock()
 sys.modules['v4.common.services'] = MagicMock()
 sys.modules['v4.common.services.team_service'] = MagicMock()
 
+
 # Create mock data models for testing
 class MockTeamAgent:
     """Mock TeamAgent class for testing."""
@@ -45,6 +46,7 @@ class MockTeamAgent:
         self.use_mcp = kwargs.get('use_mcp', False)
         self.coding_tools = kwargs.get('coding_tools', False)
 
+
 class MockTeamConfiguration:
     """Mock TeamConfiguration class for testing."""
     def __init__(self, agents=None, **kwargs):
@@ -53,10 +55,12 @@ class MockTeamConfiguration:
         self.name = kwargs.get('name', 'Test Team')
         self.status = kwargs.get('status', 'active')
 
+
 class MockTeamService:
     """Mock TeamService class for testing."""
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+
 
 # Set up mock models
 mock_messages_af = MagicMock()
@@ -80,15 +84,15 @@ with patch.dict('sys.modules', {
     agents_service_path = os.path.abspath(agents_service_path)
     spec = importlib.util.spec_from_file_location("backend.v4.common.services.agents_service", agents_service_path)
     agents_service_module = importlib.util.module_from_spec(spec)
-    
+
     # Set the proper module name for coverage tracking (matching --cov=backend pattern)
     agents_service_module.__name__ = "backend.v4.common.services.agents_service"
     agents_service_module.__file__ = agents_service_path
-    
+
     # Add to sys.modules BEFORE execution for coverage tracking (both variations)
     sys.modules['backend.v4.common.services.agents_service'] = agents_service_module
     sys.modules['src.backend.v4.common.services.agents_service'] = agents_service_module
-    
+
     spec.loader.exec_module(agents_service_module)
 
 AgentsService = agents_service_module.AgentsService
@@ -101,7 +105,7 @@ class TestAgentsServiceInitialization:
         """Test AgentsService initialization with a TeamService instance."""
         mock_team_service = MockTeamService()
         service = AgentsService(team_service=mock_team_service)
-        
+
         assert service.team_service == mock_team_service
         assert service.logger is not None
         assert service.logger.name == "backend.v4.common.services.agents_service"
@@ -110,7 +114,7 @@ class TestAgentsServiceInitialization:
         """Test that team_service attribute is properly set."""
         mock_team_service = MockTeamService()
         service = AgentsService(team_service=mock_team_service)
-        
+
         # Verify team_service can be accessed and used
         assert hasattr(service, 'team_service')
         assert service.team_service is not None
@@ -120,7 +124,7 @@ class TestAgentsServiceInitialization:
         """Test that logger is properly configured."""
         mock_team_service = MockTeamService()
         service = AgentsService(team_service=mock_team_service)
-        
+
         assert service.logger is not None
         assert isinstance(service.logger, logging.Logger)
 
@@ -138,7 +142,7 @@ class TestGetAgentsFromTeamConfig:
         """Test with empty team config."""
         result = await self.service.get_agents_from_team_config(None)
         assert result == []
-        
+
         result = await self.service.get_agents_from_team_config({})
         assert result == []
 
@@ -157,19 +161,19 @@ class TestGetAgentsFromTeamConfig:
             use_mcp=False,
             coding_tools=True
         )
-        
+
         agent2 = MockTeamAgent(
             input_key="agent2",
             type="rag",
             name="RAG Agent",
             use_rag=True
         )
-        
+
         team_config = MockTeamConfiguration(agents=[agent1, agent2])
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Check first agent descriptor
         desc1 = result[0]
         assert desc1["input_key"] == "agent1"
@@ -183,7 +187,7 @@ class TestGetAgentsFromTeamConfig:
         assert desc1["use_mcp"] is False
         assert desc1["coding_tools"] is True
         assert desc1["agent_obj"] is None
-        
+
         # Check second agent descriptor
         desc2 = result[1]
         assert desc2["input_key"] == "agent2"
@@ -218,11 +222,11 @@ class TestGetAgentsFromTeamConfig:
                 }
             ]
         }
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Check first agent descriptor
         desc1 = result[0]
         assert desc1["input_key"] == "dict_agent1"
@@ -236,7 +240,7 @@ class TestGetAgentsFromTeamConfig:
         assert desc1["use_mcp"] is True
         assert desc1["coding_tools"] is False
         assert desc1["agent_obj"] is None
-        
+
         # Check second agent descriptor with instructions fallback
         desc2 = result[1]
         assert desc2["input_key"] == "dict_agent2"
@@ -262,11 +266,11 @@ class TestGetAgentsFromTeamConfig:
                 }
             ]
         }
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Check first agent with minimal fields
         desc1 = result[0]
         assert desc1["input_key"] == "minimal_agent"
@@ -280,7 +284,7 @@ class TestGetAgentsFromTeamConfig:
         assert desc1["use_mcp"] is False
         assert desc1["coding_tools"] is False
         assert desc1["agent_obj"] is None
-        
+
         # Check second agent with missing required fields
         desc2 = result[1]
         assert desc2["input_key"] is None
@@ -294,7 +298,7 @@ class TestGetAgentsFromTeamConfig:
         """Test with team config containing empty agents list."""
         team_config = {"agents": []}
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert result == []
 
     @pytest.mark.asyncio
@@ -302,7 +306,7 @@ class TestGetAgentsFromTeamConfig:
         """Test with team config not containing agents key."""
         team_config = {"name": "Team without agents"}
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert result == []
 
     @pytest.mark.asyncio
@@ -310,7 +314,7 @@ class TestGetAgentsFromTeamConfig:
         """Test with TeamConfiguration object having None agents."""
         team_config = MockTeamConfiguration(agents=None)
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert result == []
 
     @pytest.mark.asyncio
@@ -322,24 +326,24 @@ class TestGetAgentsFromTeamConfig:
             name="Object Agent",
             system_message="Object message"
         )
-        
+
         agent_dict = {
             "input_key": "dict_agent",
             "type": "rag",
             "name": "Dict Agent",
             "system_message": "Dict message"
         }
-        
+
         team_config = MockTeamConfiguration(agents=[agent_obj, agent_dict])
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Both should be converted to the same descriptor format
         assert result[0]["input_key"] == "obj_agent"
         assert result[0]["name"] == "Object Agent"
         assert result[0]["system_message"] == "Object message"
-        
+
         assert result[1]["input_key"] == "dict_agent"
         assert result[1]["name"] == "Dict Agent"
         assert result[1]["system_message"] == "Dict message"
@@ -349,16 +353,16 @@ class TestGetAgentsFromTeamConfig:
         """Test with unknown agent object types (fallback handling)."""
         unknown_agent = "unknown_string_agent"
         another_unknown = 12345
-        
+
         team_config = MockTeamConfiguration(agents=[unknown_agent, another_unknown])
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Unknown objects should be wrapped in raw descriptor
         assert result[0]["raw"] == "unknown_string_agent"
         assert result[0]["agent_obj"] is None
-        
+
         assert result[1]["raw"] == 12345
         assert result[1]["agent_obj"] is None
 
@@ -389,17 +393,17 @@ class TestGetAgentsFromTeamConfig:
                 }
             ]
         }
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 3
-        
+
         # First agent should use instructions as system_message
         assert result[0]["system_message"] == "Use instructions as system message"
-        
+
         # Second agent should use system_message (not instructions)
         assert result[1]["system_message"] == "Primary system message"
-        
+
         # Third agent with empty system_message should use instructions
         assert result[2]["system_message"] == "Should use instructions"
 
@@ -416,12 +420,12 @@ class TestGetAgentsFromTeamConfig:
                 }
             ]
         }
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 1
         desc = result[0]
-        
+
         # All boolean fields should default to False
         assert desc["use_rag"] is False
         assert desc["use_mcp"] is False
@@ -434,10 +438,10 @@ class TestGetAgentsFromTeamConfig:
         class CustomConfig:
             def __iter__(self):
                 return iter([{"input_key": "custom", "type": "test", "name": "Custom"}])
-        
+
         custom_config = CustomConfig()
         result = await self.service.get_agents_from_team_config(custom_config)
-        
+
         assert len(result) == 1
         assert result[0]["input_key"] == "custom"
         assert result[0]["name"] == "Custom"
@@ -448,7 +452,7 @@ class TestGetAgentsFromTeamConfig:
         # Object that can't be converted to a list
         non_iterable_config = 42
         result = await self.service.get_agents_from_team_config(non_iterable_config)
-        
+
         # Should return empty list when conversion fails
         assert result == []
 
@@ -472,10 +476,10 @@ class TestInstantiateAgents:
                 "agent_obj": None
             }
         ]
-        
+
         with pytest.raises(NotImplementedError) as exc_info:
             await self.service.instantiate_agents(agent_descriptors)
-        
+
         assert "Agent instantiation is not implemented in the skeleton" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -533,17 +537,17 @@ class TestAgentsServiceIntegration:
                 coding_tools=True
             )
         ]
-        
+
         team_config = MockTeamConfiguration(
             agents=agents,
             name="Development Team",
             status="active"
         )
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 3
-        
+
         # Verify each agent descriptor
         coordinator = result[0]
         assert coordinator["input_key"] == "coordinator"
@@ -551,13 +555,13 @@ class TestAgentsServiceIntegration:
         assert coordinator["name"] == "Team Coordinator"
         assert coordinator["use_mcp"] is True
         assert coordinator["coding_tools"] is False
-        
+
         researcher = result[1]
         assert researcher["input_key"] == "researcher"
         assert researcher["type"] == "rag"
         assert researcher["index_name"] == "research-index"
         assert researcher["use_rag"] is True
-        
+
         coder = result[2]
         assert coder["input_key"] == "coder"
         assert coder["coding_tools"] is True
@@ -593,11 +597,11 @@ class TestAgentsServiceIntegration:
                 }
             ]
         }
-        
+
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 2
-        
+
         # Verify content creator
         content_creator = result[0]
         assert content_creator["input_key"] == "content_creator"
@@ -605,7 +609,7 @@ class TestAgentsServiceIntegration:
         assert content_creator["system_message"] == "You create marketing content"
         assert content_creator["use_rag"] is True
         assert content_creator["index_name"] == "marketing-content-index"
-        
+
         # Verify analyst with instructions fallback
         analyst = result[1]
         assert analyst["input_key"] == "analyst"
@@ -626,15 +630,15 @@ class TestAgentsServiceIntegration:
             MockTeamConfiguration(agents=None),
             MockTeamConfiguration(agents=[])
         ]
-        
+
         for config in valid_empty_configs:
             result = await self.service.get_agents_from_team_config(config)
             assert result == [], f"Failed for config: {config}"
-        
+
         # Test configuration that causes TypeError (agents is None in dict)
         # This exposes a bug in the service but we test the actual behavior
         problematic_config = {"agents": None}
-        
+
         with pytest.raises(TypeError, match="'NoneType' object is not iterable"):
             await self.service.get_agents_from_team_config(problematic_config)
 
@@ -651,12 +655,12 @@ class TestAgentsServiceIntegration:
                 system_message=f"System message {i}"
             )
             agents.append(agent)
-        
+
         team_config = MockTeamConfiguration(agents=agents)
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 100
-        
+
         # Verify a few random agents
         assert result[0]["input_key"] == "agent_0"
         assert result[50]["input_key"] == "agent_50"
@@ -681,14 +685,14 @@ class TestAgentsServiceIntegration:
                 )
             ]
             configs.append(MockTeamConfiguration(agents=agents))
-        
+
         # Run concurrent operations
         tasks = [
             self.service.get_agents_from_team_config(config)
             for config in configs
         ]
         results = await asyncio.gather(*tasks)
-        
+
         # Verify all results
         assert len(results) == 5
         for i, result in enumerate(results):
@@ -700,11 +704,11 @@ class TestAgentsServiceIntegration:
         """Test that service attributes are accessible."""
         mock_team_service = MockTeamService()
         service = AgentsService(team_service=mock_team_service)
-        
+
         # Test team_service access
         assert service.team_service is not None
         assert service.team_service == mock_team_service
-        
+
         # Test logger access
         assert service.logger is not None
         assert hasattr(service.logger, 'info')
@@ -726,21 +730,21 @@ class TestAgentsServiceIntegration:
             use_mcp=True,
             coding_tools=True
         )
-        
+
         team_config = MockTeamConfiguration(agents=[agent])
         result = await self.service.get_agents_from_team_config(team_config)
-        
+
         assert len(result) == 1
         desc = result[0]
-        
+
         # Check all expected fields are present
         expected_fields = [
             "input_key", "type", "name", "system_message", "description",
             "icon", "index_name", "use_rag", "use_mcp", "coding_tools", "agent_obj"
         ]
-        
+
         for field in expected_fields:
             assert field in desc, f"Missing field: {field}"
-        
+
         # Verify agent_obj is always None in descriptors
         assert desc["agent_obj"] is None
