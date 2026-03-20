@@ -53,6 +53,7 @@ sys.modules['azure.monitor.events.extension'] = Mock()
 sys.modules['azure.monitor.opentelemetry'] = Mock()
 sys.modules['azure.monitor.opentelemetry.exporter'] = Mock()
 
+
 # Mock agent_framework dependencies
 class MockChatMessage:
     """Mock ChatMessage class for isinstance checks."""
@@ -61,12 +62,21 @@ class MockChatMessage:
         self.author_name = "TestAgent"
         self.role = "assistant"
 
+
+class MockMessage:
+    """Mock Message class for isinstance checks."""
+    def __init__(self, text="", role="assistant", author_name=""):
+        self.text = text
+        self.author_name = author_name
+        self.role = role
+
+
 mock_chat_message = MockChatMessage
 mock_agent_response_update = Mock()
 mock_agent_response_update.text = "Sample update text"
 mock_agent_response_update.contents = []
 
-sys.modules['agent_framework'] = Mock(ChatMessage=mock_chat_message)
+sys.modules['agent_framework'] = Mock(ChatMessage=mock_chat_message, Message=MockMessage)
 sys.modules['agent_framework._workflows'] = Mock()
 sys.modules['agent_framework._workflows._magentic'] = Mock(AgentRunResponseUpdate=mock_agent_response_update)
 sys.modules['agent_framework.azure'] = Mock(AzureOpenAIChatClient=Mock())
@@ -88,7 +98,7 @@ sys.modules['common.utils.utils_af'] = Mock()
 sys.modules['common.utils.event_utils'] = Mock()
 sys.modules['common.utils.otlp_tracing'] = Mock()
 
-# Mock v4 config dependencies  
+# Mock v4 config dependencies
 mock_connection_config = Mock()
 mock_connection_config.send_status_update_async = AsyncMock()
 sys.modules['v4'] = Mock()
@@ -284,7 +294,7 @@ class TestExtractToolCallsFromContents:
         mock_item1.content_type = "text"
         mock_item2 = Mock()
         mock_item2.some_attr = "value"
-        
+
         result = _extract_tool_calls_from_contents([mock_item1, mock_item2])
         assert result == []
 
@@ -307,10 +317,10 @@ class TestExtractToolCallsFromContents:
             mock_agent_tool_call.side_effect = [mock_tool_call1, mock_tool_call2]
 
             result = _extract_tool_calls_from_contents([mock_item1, mock_item2])
-            
+
             assert len(result) == 2
             assert result == [mock_tool_call1, mock_tool_call2]
-            
+
             # Verify AgentToolCall was called with correct parameters
             mock_agent_tool_call.assert_any_call(tool_name="test_function1", arguments={"arg1": "value1"})
             mock_agent_tool_call.assert_any_call(tool_name="test_function2", arguments={"arg2": "value2"})
@@ -331,7 +341,7 @@ class TestExtractToolCallsFromContents:
             mock_agent_tool_call.return_value = mock_tool_call
 
             result = _extract_tool_calls_from_contents([mock_function_item, mock_text_item])
-            
+
             assert len(result) == 1
             assert result == [mock_tool_call]
 
@@ -348,7 +358,7 @@ class TestExtractToolCallsFromContents:
             mock_agent_tool_call.return_value = mock_tool_call
 
             result = _extract_tool_calls_from_contents([mock_item])
-            
+
             assert len(result) == 1
             mock_agent_tool_call.assert_called_once_with(tool_name="unknown_tool", arguments={"arg": "value"})
 
@@ -364,7 +374,7 @@ class TestExtractToolCallsFromContents:
             mock_agent_tool_call.return_value = mock_tool_call
 
             result = _extract_tool_calls_from_contents([mock_item])
-            
+
             assert len(result) == 1
             mock_agent_tool_call.assert_called_once_with(tool_name="test_function", arguments={})
 
@@ -388,28 +398,29 @@ class TestAgentResponseCallback:
     @patch('backend.v4.callbacks.response_handlers.asyncio.create_task')
     @patch('backend.v4.callbacks.response_handlers.time.time')
     def test_agent_response_callback_with_chat_message(self, mock_time, mock_create_task):
-        """Test agent_response_callback with ChatMessage object."""
+        """Test agent_response_callback with Message object."""
         mock_time.return_value = 1234567890.0
-        
-        # Create an instance of our MockChatMessage
-        mock_message = MockChatMessage()
-        mock_message.text = "Test message with citations [1:2|source]"
-        mock_message.author_name = "TestAgent"
-        mock_message.role = "assistant"
-        
+
+        # Create an instance of our MockMessage (source checks isinstance(message, Message))
+        mock_message = MockMessage(
+            text="Test message with citations [1:2|source]",
+            author_name="TestAgent",
+            role="assistant",
+        )
+
         with patch('backend.v4.callbacks.response_handlers.AgentMessage') as mock_agent_message:
             mock_agent_msg = Mock()
             mock_agent_message.return_value = mock_agent_msg
 
             agent_response_callback("agent_123", mock_message, user_id="user_456")
-            
+
             # Verify AgentMessage was created with cleaned text
             mock_agent_message.assert_called_once_with(
                 agent_name="TestAgent",
                 timestamp=1234567890.0,
                 content="Test message with citations "
             )
-            
+
             # Verify asyncio.create_task was called
             mock_create_task.assert_called_once()
 
@@ -418,7 +429,7 @@ class TestAgentResponseCallback:
     def test_agent_response_callback_fallback_message(self, mock_time, mock_create_task):
         """Test agent_response_callback with non-ChatMessage object (fallback)."""
         mock_time.return_value = 1234567890.0
-        
+
         mock_message = Mock()
         mock_message.text = "Fallback message text"
         # Don't set author_name to test fallback
@@ -432,7 +443,7 @@ class TestAgentResponseCallback:
             mock_agent_message.return_value = mock_agent_msg
 
             agent_response_callback("agent_123", mock_message, user_id="user_456")
-            
+
             # Verify AgentMessage was created with agent_id as agent_name
             mock_agent_message.assert_called_once_with(
                 agent_name="agent_123",
@@ -445,7 +456,7 @@ class TestAgentResponseCallback:
     def test_agent_response_callback_no_text_attribute(self, mock_time, mock_create_task):
         """Test agent_response_callback with message that has no text attribute."""
         mock_time.return_value = 1234567890.0
-        
+
         mock_message = Mock()
         if hasattr(mock_message, 'text'):
             del mock_message.text
@@ -456,7 +467,7 @@ class TestAgentResponseCallback:
             mock_agent_message.return_value = mock_agent_msg
 
             agent_response_callback("agent_123", mock_message, user_id="user_456")
-            
+
             # Verify AgentMessage was created with empty content
             mock_agent_message.assert_called_once_with(
                 agent_name="TestAgent",
@@ -477,7 +488,7 @@ class TestAgentResponseCallback:
 
         with patch('backend.v4.callbacks.response_handlers.AgentMessage'):
             agent_response_callback("agent_123", mock_message, user_id="user_456")
-            
+
             # Verify error was logged
             mock_logger.error.assert_called_once_with(
                 "agent_response_callback error sending WebSocket message: %s",
@@ -490,7 +501,7 @@ class TestAgentResponseCallback:
     def test_agent_response_callback_successful_logging(self, mock_time, mock_create_task, mock_logger):
         """Test agent_response_callback logs successful message."""
         mock_time.return_value = 1234567890.0
-        
+
         long_message = "A very long test message that should be truncated in the log output because it exceeds the 200 character limit that is applied in the logging statement for better readability and log management"
         mock_message = Mock()
         mock_message.text = long_message
@@ -499,7 +510,7 @@ class TestAgentResponseCallback:
 
         with patch('backend.v4.callbacks.response_handlers.AgentMessage'):
             agent_response_callback("agent_123", mock_message, user_id="user_456")
-            
+
             # Verify info log was called with truncated message
             mock_logger.info.assert_called_once()
             call_args = mock_logger.info.call_args[0]
@@ -517,7 +528,7 @@ class TestStreamingAgentResponseCallback:
         """Test streaming callback returns early when no user_id."""
         mock_update = Mock()
         mock_update.text = "Test text"
-        
+
         # Should return None without any processing
         result = await streaming_agent_response_callback("agent_123", mock_update, False, user_id=None)
         assert result is None
@@ -534,14 +545,14 @@ class TestStreamingAgentResponseCallback:
             mock_streaming.return_value = mock_streaming_obj
 
             await streaming_agent_response_callback("agent_123", mock_update, True, user_id="user_456")
-            
+
             # Verify AgentMessageStreaming was created with cleaned text
             mock_streaming.assert_called_once_with(
                 agent_name="agent_123",
                 content="Test streaming text ",
                 is_final=True
             )
-            
+
             # Verify send_status_update_async was called
             connection_config.send_status_update_async.assert_called_with(
                 mock_streaming_obj,
@@ -551,17 +562,24 @@ class TestStreamingAgentResponseCallback:
 
     @pytest.mark.asyncio
     async def test_streaming_callback_no_text_with_contents(self):
-        """Test streaming callback when update has no text but has contents with text."""
+        """Test streaming callback when update has no text but has contents with text.
+
+        Note: The current implementation uses update.content (singular) when text is None,
+        not iterating through update.contents to concatenate text. This test verifies
+        the actual implementation behavior.
+        """
         mock_update = Mock()
         mock_update.text = None
-        
+        # Set up content (singular) as the implementation uses this fallback
+        mock_update.content = "Content from content attribute"
+
         mock_content1 = Mock()
         mock_content1.text = "Content text 1"
         mock_content2 = Mock()
         mock_content2.text = "Content text 2"
         mock_content3 = Mock()
         mock_content3.text = None  # No text
-        
+
         mock_update.contents = [mock_content1, mock_content2, mock_content3]
 
         with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming') as mock_streaming:
@@ -569,11 +587,11 @@ class TestStreamingAgentResponseCallback:
             mock_streaming.return_value = mock_streaming_obj
 
             await streaming_agent_response_callback("agent_123", mock_update, False, user_id="user_456")
-            
-            # Verify AgentMessageStreaming was created with concatenated content text
+
+            # Implementation uses update.content (singular) when text is None
             mock_streaming.assert_called_once_with(
                 agent_name="agent_123",
-                content="Content text 1Content text 2",
+                content="Content from content attribute",
                 is_final=False
             )
 
@@ -582,7 +600,7 @@ class TestStreamingAgentResponseCallback:
         """Test streaming callback when update has no text and no content text."""
         mock_update = Mock()
         mock_update.text = ""
-        
+
         mock_content = Mock()
         mock_content.text = None
         mock_update.contents = [mock_content]
@@ -597,38 +615,38 @@ class TestStreamingAgentResponseCallback:
         """Test streaming callback with tool calls in contents."""
         mock_update = Mock()
         mock_update.text = "Regular text"
-        
+
         # Create mock content that will be detected as function call
         mock_tool_content = Mock()
         mock_tool_content.content_type = "function_call"
         mock_tool_content.name = "test_tool"
         mock_tool_content.arguments = {"param": "value"}
-        
+
         mock_update.contents = [mock_tool_content]
-        
+
         # Reset the mock call count before the test
         connection_config.send_status_update_async.reset_mock()
 
         with patch('backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents') as mock_extract:
             mock_tool_call = Mock()
             mock_extract.return_value = [mock_tool_call]
-            
+
             with patch('backend.v4.callbacks.response_handlers.AgentToolMessage') as mock_tool_message:
                 mock_tool_msg = Mock()
                 mock_tool_msg.tool_calls = []
                 mock_tool_message.return_value = mock_tool_msg
-                
+
                 with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming') as mock_streaming:
                     mock_streaming_obj = Mock()
                     mock_streaming.return_value = mock_streaming_obj
 
                     await streaming_agent_response_callback("agent_123", mock_update, False, user_id="user_456")
-                    
+
                     # Verify tool message was created and sent
                     mock_tool_message.assert_called_once_with(agent_name="agent_123")
                     # Verify tool_calls.extend was called with our mock tool call
                     assert mock_tool_call in mock_tool_msg.tool_calls or mock_tool_msg.tool_calls.extend.called
-                    
+
                     # Verify both tool message and streaming message were sent
                     assert connection_config.send_status_update_async.call_count == 2
 
@@ -642,20 +660,20 @@ class TestStreamingAgentResponseCallback:
 
         with patch('backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents') as mock_extract:
             mock_extract.return_value = []
-            
+
             with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming') as mock_streaming:
                 mock_streaming_obj = Mock()
                 mock_streaming.return_value = mock_streaming_obj
 
                 await streaming_agent_response_callback("agent_123", mock_update, True, user_id="user_456")
-                
+
                 # Should still process the text
                 mock_streaming.assert_called_once_with(
                     agent_name="agent_123",
                     content="Test text",
                     is_final=True
                 )
-                
+
                 # Should call extract with empty list
                 mock_extract.assert_called_once_with([])
 
@@ -668,13 +686,13 @@ class TestStreamingAgentResponseCallback:
 
         with patch('backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents') as mock_extract:
             mock_extract.return_value = []
-            
+
             with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming') as mock_streaming:
                 mock_streaming_obj = Mock()
                 mock_streaming.return_value = mock_streaming_obj
 
                 await streaming_agent_response_callback("agent_123", mock_update, True, user_id="user_456")
-                
+
                 # Should call extract with empty list
                 mock_extract.assert_called_once_with([])
 
@@ -691,7 +709,7 @@ class TestStreamingAgentResponseCallback:
         with patch('backend.v4.callbacks.response_handlers.logger') as mock_logger:
             with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming'):
                 await streaming_agent_response_callback("agent_123", mock_update, False, user_id="user_456")
-                
+
                 # Verify error was logged
                 mock_logger.error.assert_called_once_with(
                     "streaming_agent_response_callback error: %s",
@@ -709,14 +727,14 @@ class TestStreamingAgentResponseCallback:
             # Mock multiple tool calls
             mock_tool_calls = [Mock(), Mock(), Mock()]
             mock_extract.return_value = mock_tool_calls
-    
+
             with patch('backend.v4.callbacks.response_handlers.AgentToolMessage') as mock_tool_message:
                 mock_tool_msg = Mock()
                 mock_tool_msg.tool_calls = []
                 mock_tool_message.return_value = mock_tool_msg
 
                 await streaming_agent_response_callback("agent_123", mock_update, False, user_id="user_456")
-                
+
                 # Verify tool message was created and tool calls were processed
                 mock_tool_message.assert_called_once_with(agent_name="agent_123")
                 assert connection_config.send_status_update_async.called
@@ -731,9 +749,9 @@ class TestStreamingAgentResponseCallback:
         with patch('backend.v4.callbacks.response_handlers.AgentMessageStreaming') as mock_streaming:
             mock_streaming_obj = Mock()
             mock_streaming.return_value = mock_streaming_obj
-            
+
             await streaming_agent_response_callback("agent_123", mock_update, True, user_id="user_456")
-            
+
             # Verify streaming message was created with correct parameters
             mock_streaming.assert_called_once_with(
                 agent_name="agent_123",

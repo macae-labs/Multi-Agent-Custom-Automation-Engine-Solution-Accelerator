@@ -16,7 +16,6 @@ import sys
 import asyncio
 import json
 import logging
-import importlib.util
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Any, List
 from dataclasses import dataclass
@@ -78,19 +77,23 @@ sys.modules['common.utils.event_utils'] = mock_event_utils
 # Create mock message types and enums
 mock_messages_af = MagicMock()
 
+
 # Create mock enums
 class MockAgentType:
     HUMAN = MagicMock()
     HUMAN.value = "Human_Agent"
 
+
 class MockAgentMessageType:
     HUMAN_AGENT = "Human_Agent"
     AI_AGENT = "AI_Agent"
+
 
 class MockPlanStatus:
     approved = "approved"
     completed = "completed"
     rejected = "rejected"
+
 
 # Create mock AgentMessageData class
 class MockAgentMessageData:
@@ -105,6 +108,7 @@ class MockAgentMessageData:
         self.steps = steps
         self.next_steps = next_steps
 
+
 mock_messages_af.AgentType = MockAgentType
 mock_messages_af.AgentMessageType = MockAgentMessageType
 mock_messages_af.PlanStatus = MockPlanStatus
@@ -115,7 +119,6 @@ sys.modules['common.models.messages_af'] = mock_messages_af
 mock_v4_messages = MagicMock()
 sys.modules['v4.models.messages'] = mock_v4_messages
 
-# Now import the real PlanService using direct file import with proper mocking
 import importlib.util
 
 # Mock the orchestration_config
@@ -133,15 +136,15 @@ with patch.dict('sys.modules', {
     plan_service_path = os.path.abspath(plan_service_path)
     spec = importlib.util.spec_from_file_location("backend.v4.common.services.plan_service", plan_service_path)
     plan_service_module = importlib.util.module_from_spec(spec)
-    
+
     # Set the proper module name for coverage tracking (matching --cov=backend pattern)
     plan_service_module.__name__ = "backend.v4.common.services.plan_service"
     plan_service_module.__file__ = plan_service_path
-    
+
     # Add to sys.modules BEFORE execution for coverage tracking (both variations)
     sys.modules['backend.v4.common.services.plan_service'] = plan_service_module
     sys.modules['src.backend.v4.common.services.plan_service'] = plan_service_module
-    
+
     spec.loader.exec_module(plan_service_module)
 
 PlanService = plan_service_module.PlanService
@@ -157,7 +160,7 @@ class MockUserClarificationResponse:
     answer: str = ""
 
 
-@dataclass  
+@dataclass
 class MockAgentMessageResponse:
     plan_id: str = ""
     user_id: str = ""
@@ -190,13 +193,13 @@ class TestUtilityFunctions:
         """Test basic agent message building from user clarification."""
         feedback = MockUserClarificationResponse(
             plan_id="test-plan-123",
-            m_plan_id="test-m-plan-456", 
+            m_plan_id="test-m-plan-456",
             answer="This is my clarification"
         )
         user_id = "test-user-789"
-        
+
         result = build_agent_message_from_user_clarification(feedback, user_id)
-        
+
         assert result.plan_id == "test-plan-123"
         assert result.user_id == "test-user-789"
         assert result.m_plan_id == "test-m-plan-456"
@@ -213,9 +216,9 @@ class TestUtilityFunctions:
             answer=None
         )
         user_id = "test-user"
-        
+
         result = build_agent_message_from_user_clarification(feedback, user_id)
-        
+
         assert result.plan_id == ""
         assert result.user_id == "test-user"
         assert result.m_plan_id is None
@@ -228,9 +231,9 @@ class TestUtilityFunctions:
             answer="test answer"
         )
         user_id = "test-user"
-        
+
         result = build_agent_message_from_user_clarification(feedback, user_id)
-        
+
         # Parse the raw_data JSON to verify it's valid
         raw_data = json.loads(result.raw_data)
         assert raw_data["plan_id"] == "test-plan"
@@ -247,9 +250,9 @@ class TestUtilityFunctions:
             next_steps=["next1"]
         )
         user_id = "fallback-user"
-        
+
         result = build_agent_message_from_agent_message_response(response, user_id)
-        
+
         assert result.plan_id == "test-plan-123"
         assert result.user_id == "response-user"  # Should use response user_id
         assert result.agent == "TestAgent"
@@ -269,9 +272,9 @@ class TestUtilityFunctions:
             next_steps=None
         )
         user_id = "fallback-user"
-        
+
         result = build_agent_message_from_agent_message_response(response, user_id)
-        
+
         assert result.plan_id == ""
         assert result.user_id == "fallback-user"  # Should use fallback
         assert result.agent == "NamedAgent"  # Should use agent_name fallback
@@ -285,7 +288,7 @@ class TestUtilityFunctions:
         response_human = MockAgentMessageResponse(agent_type="human_agent")
         result = build_agent_message_from_agent_message_response(response_human, "user")
         assert result.agent_type == MockAgentMessageType.HUMAN_AGENT
-        
+
         # Test AI agent type fallback
         response_ai = MockAgentMessageResponse(agent_type="unknown")
         result = build_agent_message_from_agent_message_response(response_ai, "user")
@@ -297,7 +300,7 @@ class TestUtilityFunctions:
         response_dict = MockAgentMessageResponse(raw_data={"test": "data"})
         result = build_agent_message_from_agent_message_response(response_dict, "user")
         assert '"test": "data"' in result.raw_data
-        
+
         # Test with None raw_data (should use asdict fallback)
         response_none = MockAgentMessageResponse(raw_data=None, content="test")
         result = build_agent_message_from_agent_message_response(response_none, "user")
@@ -311,7 +314,7 @@ class TestUtilityFunctions:
             agent_name="",
             source="SourceAgent"
         )
-        
+
         result = build_agent_message_from_agent_message_response(response, "user")
         assert result.agent == "SourceAgent"
 
@@ -330,15 +333,15 @@ class TestPlanService:
             feedback="Looks good!"
         )
         user_id = "test-user"
-        
+
         # Setup mock orchestration config
         mock_mplan = MagicMock()
         mock_mplan.plan_id = None
         mock_mplan.team_id = None
         mock_mplan.model_dump.return_value = {"test": "data"}
-        
+
         mock_orchestration_config.plans = {"test-m-plan-456": mock_mplan}
-        
+
         # Setup mock database and plan
         mock_db = MagicMock()
         mock_plan = MagicMock()
@@ -346,10 +349,10 @@ class TestPlanService:
         mock_db.get_plan = AsyncMock(return_value=mock_plan)
         mock_db.update_plan = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         with patch.object(plan_service_module, 'orchestration_config', mock_orchestration_config):
             result = await PlanService.handle_plan_approval(mock_approval, user_id)
-        
+
         assert result is True
         assert mock_mplan.plan_id == "test-plan-123"
         assert mock_mplan.team_id == "test-team"
@@ -366,20 +369,20 @@ class TestPlanService:
             feedback="Need changes"
         )
         user_id = "test-user"
-        
+
         # Setup mock orchestration config
         mock_mplan = MagicMock()
         mock_mplan.plan_id = "existing-plan-id"
         mock_orchestration_config.plans = {"test-m-plan-456": mock_mplan}
-        
+
         # Setup mock database
         mock_db = MagicMock()
         mock_db.delete_plan_by_plan_id = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         with patch.object(plan_service_module, 'orchestration_config', mock_orchestration_config):
             result = await PlanService.handle_plan_approval(mock_approval, user_id)
-        
+
         assert result is True
         mock_db.delete_plan_by_plan_id.assert_called_once_with("test-plan-123")
 
@@ -387,10 +390,10 @@ class TestPlanService:
     async def test_handle_plan_approval_no_orchestration_config(self):
         """Test when orchestration config is None."""
         mock_approval = MockPlanApprovalResponse()
-        
+
         with patch.object(plan_service_module, 'orchestration_config', None):
             result = await PlanService.handle_plan_approval(mock_approval, "user")
-        
+
         assert result is False
 
     @pytest.mark.asyncio
@@ -401,31 +404,31 @@ class TestPlanService:
             m_plan_id="test-m-plan",
             approved=True
         )
-        
+
         mock_mplan = MagicMock()
         mock_mplan.plan_id = None
         mock_orchestration_config.plans = {"test-m-plan": mock_mplan}
-        
+
         mock_db = MagicMock()
         mock_db.get_plan = AsyncMock(return_value=None)  # Plan not found
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         with patch.object(plan_service_module, 'orchestration_config', mock_orchestration_config):
             result = await PlanService.handle_plan_approval(mock_approval, "user")
-        
+
         assert result is False
 
     @pytest.mark.asyncio
     async def test_handle_plan_approval_exception(self):
         """Test exception handling in plan approval."""
         mock_approval = MockPlanApprovalResponse(m_plan_id="nonexistent")
-        
+
         # Setup orchestration config that will cause KeyError
         mock_orchestration_config.plans = {}
-        
+
         with patch.object(plan_service_module, 'orchestration_config', mock_orchestration_config):
             result = await PlanService.handle_plan_approval(mock_approval, "user")
-        
+
         assert result is False
 
     @pytest.mark.asyncio
@@ -438,14 +441,14 @@ class TestPlanService:
             is_final=False
         )
         user_id = "test-user"
-        
+
         # Setup mock database
         mock_db = MagicMock()
         mock_db.add_agent_message = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         result = await PlanService.handle_agent_messages(mock_message, user_id)
-        
+
         assert result is True
         mock_db.add_agent_message.assert_called_once()
 
@@ -460,7 +463,7 @@ class TestPlanService:
             streaming_message="Stream completed"
         )
         user_id = "test-user"
-        
+
         # Setup mock database and plan
         mock_db = MagicMock()
         mock_plan = MagicMock()
@@ -468,9 +471,9 @@ class TestPlanService:
         mock_db.get_plan = AsyncMock(return_value=mock_plan)
         mock_db.update_plan = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         result = await PlanService.handle_agent_messages(mock_message, user_id)
-        
+
         assert result is True
         assert mock_plan.streaming_message == "Stream completed"
         assert mock_plan.overall_status == MockPlanStatus.completed
@@ -480,12 +483,12 @@ class TestPlanService:
     async def test_handle_agent_messages_exception(self):
         """Test exception handling in agent message processing."""
         mock_message = MockAgentMessageResponse()
-        
+
         # Mock database to raise exception
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(side_effect=Exception("Database error"))
-        
+
         result = await PlanService.handle_agent_messages(mock_message, "user")
-        
+
         assert result is False
 
     @pytest.mark.asyncio
@@ -496,14 +499,14 @@ class TestPlanService:
             answer="This is my clarification"
         )
         user_id = "test-user"
-        
+
         # Setup mock database
         mock_db = MagicMock()
         mock_db.add_agent_message = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         result = await PlanService.handle_human_clarification(mock_clarification, user_id)
-        
+
         assert result is True
         mock_db.add_agent_message.assert_called_once()
 
@@ -511,12 +514,12 @@ class TestPlanService:
     async def test_handle_human_clarification_exception(self):
         """Test exception handling in human clarification."""
         mock_clarification = MockUserClarificationResponse()
-        
+
         # Mock database to raise exception
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(side_effect=Exception("Database error"))
-        
+
         result = await PlanService.handle_human_clarification(mock_clarification, "user")
-        
+
         assert result is False
 
     @pytest.mark.asyncio
@@ -524,23 +527,15 @@ class TestPlanService:
         """Test that all PlanService methods are static."""
         # Verify methods are static by calling them on the class
         mock_approval = MockPlanApprovalResponse(approved=False)
-        
+
         with patch.object(plan_service_module, 'orchestration_config', None):
             result = await PlanService.handle_plan_approval(mock_approval, "user")
             assert result is False
 
     def test_event_tracking_calls(self):
-        """Test that event tracking is called appropriately."""
-        # This test verifies the event tracking integration
-        with patch.object(mock_event_utils, 'track_event_if_configured') as mock_track:
-            mock_approval = MockPlanApprovalResponse(
-                plan_id="test-plan",
-                m_plan_id="test-m-plan",
-                approved=True
-            )
-            
-            # The actual event tracking calls are tested indirectly through the service methods
-            assert mock_track is not None
+        """Test that event tracking is callable via the mocked event_utils module."""
+        # Verify the mock event_utils has the track function accessible
+        assert callable(mock_event_utils.track_event_if_configured)
 
     def test_logging_integration(self):
         """Test that logging is properly configured."""
@@ -556,17 +551,17 @@ class TestPlanService:
         mock_mplan.plan_id = None
         mock_mplan.team_id = None
         mock_mplan.model_dump.return_value = {"test": "plan"}
-        
+
         mock_orchestration_config.plans = {"m-plan-123": mock_mplan}
-        
+
         mock_plan = MagicMock()
         mock_plan.team_id = "team-456"
-        
+
         mock_db = MagicMock()
         mock_db.get_plan = AsyncMock(return_value=mock_plan)
         mock_db.update_plan = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         # Test approval flow
         approval = MockPlanApprovalResponse(
             plan_id="plan-123",
@@ -574,10 +569,10 @@ class TestPlanService:
             approved=True,
             feedback="Approved"
         )
-        
+
         with patch.object(plan_service_module, 'orchestration_config', mock_orchestration_config):
             result = await PlanService.handle_plan_approval(approval, "user-123")
-        
+
         assert result is True
         assert mock_mplan.plan_id == "plan-123"
         assert mock_mplan.team_id == "team-456"
@@ -590,26 +585,26 @@ class TestPlanService:
         mock_db = MagicMock()
         mock_db.add_agent_message = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         agent_msg = MockAgentMessageResponse(
             plan_id="plan-456",
             agent="ProcessingAgent",
             content="Processing complete",
             is_final=False
         )
-        
+
         result = await PlanService.handle_agent_messages(agent_msg, "user-456")
         assert result is True
-        
+
         # Test human clarification
         clarification = MockUserClarificationResponse(
             plan_id="plan-456",
             answer="Additional clarification"
         )
-        
+
         result = await PlanService.handle_human_clarification(clarification, "user-456")
         assert result is True
-        
+
         # Verify both calls made it to the database
         assert mock_db.add_agent_message.call_count == 2
 
@@ -621,7 +616,7 @@ class TestPlanService:
             MockAgentMessageResponse(plan_id="", content="", steps=[]),
             MockPlanApprovalResponse(approved=True, plan_id=""),
         ]
-        
+
         for input_obj in malformed_inputs:
             # These should not raise exceptions during object creation
             assert input_obj is not None
@@ -632,7 +627,7 @@ class TestPlanService:
         mock_db = MagicMock()
         mock_db.add_agent_message = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
-        
+
         # Create multiple tasks
         tasks = []
         for i in range(5):
@@ -642,9 +637,9 @@ class TestPlanService:
             )
             task = PlanService.handle_human_clarification(clarification, f"user-{i}")
             tasks.append(task)
-        
+
         results = await asyncio.gather(*tasks)
-        
+
         # All should succeed
         assert all(results)
         assert mock_db.add_agent_message.call_count == 5

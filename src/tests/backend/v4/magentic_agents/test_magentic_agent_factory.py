@@ -61,7 +61,7 @@ class TestMagenticAgentFactory:
         """Set up test fixtures before each test method."""
         self.mock_team_service = Mock()
         self.factory = MagenticAgentFactory(team_service=self.mock_team_service)
-        
+
         # Setup mock agent object
         self.mock_agent_obj = SimpleNamespace()
         self.mock_agent_obj.name = "TestAgent"
@@ -74,15 +74,15 @@ class TestMagenticAgentFactory:
         self.mock_agent_obj.use_rag = False
         self.mock_agent_obj.use_mcp = False
         self.mock_agent_obj.index_name = None
-        
+
         # Setup mock team configuration
         self.mock_team_config = Mock()
         self.mock_team_config.name = "Test Team"
         self.mock_team_config.agents = [self.mock_agent_obj]
-        
+
         # Setup mock memory store
         self.mock_memory_store = Mock()
-        
+
         # Reset mocks
         mock_foundry_agent_template.reset_mock()
         mock_proxy_agent.reset_mock()
@@ -92,7 +92,7 @@ class TestMagenticAgentFactory:
     def test_init_with_team_service(self):
         """Test MagenticAgentFactory initialization with team service."""
         factory = MagenticAgentFactory(team_service=self.mock_team_service)
-        
+
         assert factory.team_service is self.mock_team_service
         assert factory._agent_list == []
         assert isinstance(factory.logger, logging.Logger)
@@ -100,7 +100,7 @@ class TestMagenticAgentFactory:
     def test_init_without_team_service(self):
         """Test MagenticAgentFactory initialization without team service."""
         factory = MagenticAgentFactory()
-        
+
         assert factory.team_service is None
         assert factory._agent_list == []
         assert isinstance(factory.logger, logging.Logger)
@@ -109,7 +109,7 @@ class TestMagenticAgentFactory:
         """Test extract_use_reasoning with explicit boolean True."""
         agent_obj = SimpleNamespace()
         agent_obj.use_reasoning = True
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is True
 
@@ -117,28 +117,28 @@ class TestMagenticAgentFactory:
         """Test extract_use_reasoning with explicit boolean False."""
         agent_obj = SimpleNamespace()
         agent_obj.use_reasoning = False
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is False
 
     def test_extract_use_reasoning_with_dict_true(self):
         """Test extract_use_reasoning with dict containing True."""
         agent_obj = {"use_reasoning": True}
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is True
 
     def test_extract_use_reasoning_with_dict_false(self):
         """Test extract_use_reasoning with dict containing False."""
         agent_obj = {"use_reasoning": False}
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is False
 
     def test_extract_use_reasoning_with_dict_missing_key(self):
         """Test extract_use_reasoning with dict missing use_reasoning key."""
         agent_obj = {"name": "TestAgent"}
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is False
 
@@ -146,14 +146,14 @@ class TestMagenticAgentFactory:
         """Test extract_use_reasoning with non-boolean value."""
         agent_obj = SimpleNamespace()
         agent_obj.use_reasoning = "true"  # String instead of boolean
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is False
 
     def test_extract_use_reasoning_with_missing_attribute(self):
         """Test extract_use_reasoning with missing attribute."""
         agent_obj = SimpleNamespace()
-        
+
         result = self.factory.extract_use_reasoning(agent_obj)
         assert result is False
 
@@ -162,14 +162,14 @@ class TestMagenticAgentFactory:
         """Test creating a ProxyAgent from configuration."""
         self.mock_agent_obj.name = "proxyagent"
         self.mock_agent_obj.deployment_name = None
-        
+
         mock_proxy_instance = Mock()
         mock_proxy_agent.return_value = mock_proxy_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         assert result is mock_proxy_instance
         mock_proxy_agent.assert_called_once_with(user_id="user123")
 
@@ -177,12 +177,12 @@ class TestMagenticAgentFactory:
     async def test_create_agent_from_config_unsupported_model(self):
         """Test creating agent with unsupported model raises error."""
         self.mock_agent_obj.deployment_name = "unsupported-model"
-        
+
         with pytest.raises(UnsupportedModelError) as exc_info:
             await self.factory.create_agent_from_config(
                 "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
             )
-        
+
         assert "unsupported-model" in str(exc_info.value)
         assert "not supported" in str(exc_info.value)
 
@@ -191,12 +191,12 @@ class TestMagenticAgentFactory:
         """Test creating reasoning agent with Bing search raises error."""
         self.mock_agent_obj.use_reasoning = True
         self.mock_agent_obj.use_bing = True
-        
+
         with pytest.raises(InvalidConfigurationError) as exc_info:
             await self.factory.create_agent_from_config(
                 "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
             )
-        
+
         assert "cannot use Bing search" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -204,12 +204,12 @@ class TestMagenticAgentFactory:
         """Test creating reasoning agent with coding tools raises error."""
         self.mock_agent_obj.use_reasoning = True
         self.mock_agent_obj.coding_tools = True
-        
+
         with pytest.raises(InvalidConfigurationError) as exc_info:
             await self.factory.create_agent_from_config(
                 "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
             )
-        
+
         assert "cannot use Bing search or coding tools" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -218,11 +218,11 @@ class TestMagenticAgentFactory:
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         assert result is mock_agent_instance
         mock_foundry_agent_template.assert_called_once()
         mock_agent_instance.open.assert_called_once()
@@ -232,18 +232,18 @@ class TestMagenticAgentFactory:
         """Test creating agent with search configuration."""
         self.mock_agent_obj.use_rag = True
         self.mock_agent_obj.index_name = "test-index"
-        
+
         mock_search_instance = Mock()
         mock_search_config.from_env.return_value = mock_search_instance
-        
+
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         mock_search_config.from_env.assert_called_once_with("test-index")
         assert result is mock_agent_instance
 
@@ -251,18 +251,18 @@ class TestMagenticAgentFactory:
     async def test_create_agent_from_config_with_mcp_config(self):
         """Test creating agent with MCP configuration."""
         self.mock_agent_obj.use_mcp = True
-        
+
         mock_mcp_instance = Mock()
         mock_mcp_config.from_env.return_value = mock_mcp_instance
-        
+
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         mock_mcp_config.from_env.assert_called_once()
         assert result is mock_agent_instance
 
@@ -270,15 +270,15 @@ class TestMagenticAgentFactory:
     async def test_create_agent_from_config_with_reasoning(self):
         """Test creating agent with reasoning enabled."""
         self.mock_agent_obj.use_reasoning = True
-        
+
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         # Verify FoundryAgentTemplate was called with use_reasoning=True
         call_args = mock_foundry_agent_template.call_args
         assert call_args[1]['use_reasoning'] is True
@@ -288,15 +288,15 @@ class TestMagenticAgentFactory:
     async def test_create_agent_from_config_with_coding_tools(self):
         """Test creating agent with coding tools enabled."""
         self.mock_agent_obj.coding_tools = True
-        
+
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.create_agent_from_config(
             "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
         )
-        
+
         # Verify FoundryAgentTemplate was called with enable_code_interpreter=True
         call_args = mock_foundry_agent_template.call_args
         assert call_args[1]['enable_code_interpreter'] is True
@@ -308,11 +308,11 @@ class TestMagenticAgentFactory:
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.return_value = mock_agent_instance
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         assert len(result) == 1
         assert result[0] is mock_agent_instance
         assert len(self.factory._agent_list) == 1
@@ -333,20 +333,20 @@ class TestMagenticAgentFactory:
         agent_obj_2.use_rag = False
         agent_obj_2.use_mcp = False
         agent_obj_2.index_name = None
-        
+
         self.mock_team_config.agents = [self.mock_agent_obj, agent_obj_2]
-        
+
         mock_agent_instance_1 = Mock()
         mock_agent_instance_1.open = AsyncMock()
         mock_agent_instance_2 = Mock()
         mock_agent_instance_2.open = AsyncMock()
-        
+
         mock_foundry_agent_template.side_effect = [mock_agent_instance_1, mock_agent_instance_2]
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         assert len(result) == 2
         assert result[0] is mock_agent_instance_1
         assert result[1] is mock_agent_instance_2
@@ -357,11 +357,11 @@ class TestMagenticAgentFactory:
         """Test get_agents handles UnsupportedModelError gracefully."""
         # Create an agent with unsupported model - it should be skipped
         self.mock_agent_obj.deployment_name = "unsupported-model"
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         # Should have skipped the agent with unsupported model
         assert len(result) == 0
 
@@ -371,11 +371,11 @@ class TestMagenticAgentFactory:
         # Create agent with invalid configuration (reasoning + bing) - it should be skipped
         self.mock_agent_obj.use_reasoning = True
         self.mock_agent_obj.use_bing = True  # This will cause InvalidConfigurationError
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         # Should have skipped the agent with invalid configuration
         assert len(result) == 0
 
@@ -384,7 +384,7 @@ class TestMagenticAgentFactory:
         """Test get_agents handles general exceptions gracefully."""
         # Mock foundry agent to raise exception for first agent
         mock_foundry_agent_template.side_effect = [Exception("Test error"), Mock()]
-        
+
         # Create a second valid agent
         agent_obj_2 = SimpleNamespace()
         agent_obj_2.name = "TestAgent2"
@@ -397,17 +397,17 @@ class TestMagenticAgentFactory:
         agent_obj_2.use_rag = False
         agent_obj_2.use_mcp = False
         agent_obj_2.index_name = None
-        
+
         self.mock_team_config.agents = [self.mock_agent_obj, agent_obj_2]
-        
+
         mock_agent_instance = Mock()
         mock_agent_instance.open = AsyncMock()
         mock_foundry_agent_template.side_effect = [Exception("Test error"), mock_agent_instance]
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         # Should have skipped the first agent but created the second one
         assert len(result) == 1
         assert result[0] is mock_agent_instance
@@ -416,11 +416,11 @@ class TestMagenticAgentFactory:
     async def test_get_agents_empty_team(self):
         """Test get_agents with empty team configuration."""
         self.mock_team_config.agents = []
-        
+
         result = await self.factory.get_agents(
             "user123", self.mock_team_config, self.mock_memory_store
         )
-        
+
         assert result == []
         assert self.factory._agent_list == []
 
@@ -430,12 +430,12 @@ class TestMagenticAgentFactory:
         # Make the team config agents property raise an exception
         self.mock_team_config.agents = Mock()
         self.mock_team_config.agents.__iter__ = Mock(side_effect=Exception("Test loading error"))
-        
+
         with pytest.raises(Exception) as exc_info:
             await self.factory.get_agents(
                 "user123", self.mock_team_config, self.mock_memory_store
             )
-        
+
         assert "Test loading error" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -444,15 +444,15 @@ class TestMagenticAgentFactory:
         mock_agent_1 = Mock()
         mock_agent_1.close = AsyncMock()
         mock_agent_1.agent_name = "Agent1"
-        
+
         mock_agent_2 = Mock()
         mock_agent_2.close = AsyncMock()
         mock_agent_2.agent_name = "Agent2"
-        
+
         agent_list = [mock_agent_1, mock_agent_2]
-        
+
         await MagenticAgentFactory.cleanup_all_agents(agent_list)
-        
+
         mock_agent_1.close.assert_called_once()
         mock_agent_2.close.assert_called_once()
         assert len(agent_list) == 0
@@ -463,16 +463,16 @@ class TestMagenticAgentFactory:
         mock_agent_1 = Mock()
         mock_agent_1.close = AsyncMock(side_effect=Exception("Close error"))
         mock_agent_1.agent_name = "Agent1"
-        
+
         mock_agent_2 = Mock()
         mock_agent_2.close = AsyncMock()
         mock_agent_2.agent_name = "Agent2"
-        
+
         agent_list = [mock_agent_1, mock_agent_2]
-        
+
         # Should not raise exception even if some agents fail to close
         await MagenticAgentFactory.cleanup_all_agents(agent_list)
-        
+
         mock_agent_1.close.assert_called_once()
         mock_agent_2.close.assert_called_once()
         assert len(agent_list) == 0
@@ -483,12 +483,12 @@ class TestMagenticAgentFactory:
         mock_agent = Mock()
         mock_agent.close = AsyncMock(side_effect=Exception("Close error"))
         # No agent_name attribute
-        
+
         agent_list = [mock_agent]
-        
+
         # Should not raise exception even if agent doesn't have name
         await MagenticAgentFactory.cleanup_all_agents(agent_list)
-        
+
         mock_agent.close.assert_called_once()
         assert len(agent_list) == 0
 
@@ -496,9 +496,9 @@ class TestMagenticAgentFactory:
     async def test_cleanup_all_agents_empty_list(self):
         """Test cleanup with empty agent list."""
         agent_list = []
-        
+
         await MagenticAgentFactory.cleanup_all_agents(agent_list)
-        
+
         assert len(agent_list) == 0
 
 
@@ -509,7 +509,7 @@ class TestExceptionClasses:
         """Test UnsupportedModelError exception."""
         error_msg = "Test unsupported model error"
         exc = UnsupportedModelError(error_msg)
-        
+
         assert str(exc) == error_msg
         assert isinstance(exc, Exception)
 
@@ -517,6 +517,6 @@ class TestExceptionClasses:
         """Test InvalidConfigurationError exception."""
         error_msg = "Test invalid configuration error"
         exc = InvalidConfigurationError(error_msg)
-        
+
         assert str(exc) == error_msg
         assert isinstance(exc, Exception)

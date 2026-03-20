@@ -1,5 +1,4 @@
 """Unit tests for backend.v4.magentic_agents.common.lifecycle module."""
-import asyncio
 import logging
 import sys
 from unittest.mock import Mock, patch, AsyncMock
@@ -7,7 +6,7 @@ import pytest
 
 # Mock the dependencies before importing the module under test
 sys.modules['agent_framework'] = Mock()
-sys.modules['agent_framework.azure'] = Mock() 
+sys.modules['agent_framework.azure'] = Mock()
 sys.modules['agent_framework_azure_ai'] = Mock()
 sys.modules['azure'] = Mock()
 sys.modules['azure.ai'] = Mock()
@@ -16,6 +15,8 @@ sys.modules['azure.ai.agents.aio'] = Mock()
 sys.modules['azure.identity'] = Mock()
 sys.modules['azure.identity.aio'] = Mock()
 sys.modules['common'] = Mock()
+sys.modules['common.config'] = Mock()
+sys.modules['common.config.app_config'] = Mock(config=Mock())
 sys.modules['common.database'] = Mock()
 sys.modules['common.database.database_base'] = Mock()
 sys.modules['common.models'] = Mock()
@@ -77,21 +78,21 @@ class TestMCPEnabledBase:
         self.mock_mcp_config.name = "test-mcp"
         self.mock_mcp_config.description = "Test MCP Tool"
         self.mock_mcp_config.url = "http://test-mcp.com"
-        
+
         self.mock_team_service = Mock()
         self.mock_team_config = Mock()
         self.mock_team_config.team_id = "team-123"
         self.mock_team_config.name = "Test Team"
-        
+
         self.mock_memory_store = Mock()
-        
+
         # Reset mocks
         mock_agent_registry.reset_mock()
 
     def test_init_with_minimal_params(self):
         """Test MCPEnabledBase initialization with minimal parameters."""
         base = MCPEnabledBase()
-        
+
         assert base._stack is None
         assert base.mcp_cfg is None
         assert base.mcp_tool is None
@@ -121,7 +122,7 @@ class TestMCPEnabledBase:
             agent_instructions="Test instructions",
             model_deployment_name="gpt-4"
         )
-        
+
         assert base.mcp_cfg is self.mock_mcp_config
         assert base.team_service is self.mock_team_service
         assert base.team_config is self.mock_team_config
@@ -145,7 +146,7 @@ class TestMCPEnabledBase:
             agent_instructions=None,
             model_deployment_name=None
         )
-        
+
         assert base.mcp_cfg is None
         assert base.team_service is None
         assert base.team_config is None
@@ -163,25 +164,28 @@ class TestMCPEnabledBase:
             project_endpoint="https://test-endpoint.com",
             mcp=self.mock_mcp_config
         )
-        
+
         # Mock AsyncExitStack
         mock_stack = AsyncMock()
         mock_creds = AsyncMock()
         mock_client = AsyncMock()
         mock_mcp_tool = AsyncMock()
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.AsyncExitStack', return_value=mock_stack):
-            with patch('backend.v4.magentic_agents.common.lifecycle.DefaultAzureCredential', return_value=mock_creds):
+            with patch('backend.v4.magentic_agents.common.lifecycle.config') as mock_config:
+                mock_config.get_azure_credential_async.return_value = mock_creds
+                mock_config.AZURE_CLIENT_ID = "test-client-id"
                 with patch('backend.v4.magentic_agents.common.lifecycle.AgentsClient', return_value=mock_client):
                     with patch('backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool', return_value=mock_mcp_tool):
                         with patch.object(base, '_after_open', new_callable=AsyncMock) as mock_after_open:
-                            
+
                             result = await base.open()
-                            
+
                             assert result is base
                             assert base._stack is mock_stack
                             assert base.creds is mock_creds
                             assert base.client is mock_client
+                            mock_config.get_azure_credential_async.assert_called_once_with("test-client-id")
                             mock_after_open.assert_called_once()
                             mock_agent_registry.register_agent.assert_called_once_with(base)
 
@@ -191,9 +195,9 @@ class TestMCPEnabledBase:
         base = MCPEnabledBase()
         mock_stack = AsyncMock()
         base._stack = mock_stack
-        
+
         result = await base.open()
-        
+
         assert result is base
         assert base._stack is mock_stack
 
@@ -201,42 +205,45 @@ class TestMCPEnabledBase:
     async def test_open_method_registration_failure(self):
         """Test open method with agent registration failure."""
         base = MCPEnabledBase(project_endpoint="https://test-endpoint.com")
-        
+
         mock_stack = AsyncMock()
         mock_creds = AsyncMock()
         mock_client = AsyncMock()
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.AsyncExitStack', return_value=mock_stack):
-            with patch('backend.v4.magentic_agents.common.lifecycle.DefaultAzureCredential', return_value=mock_creds):
+            with patch('backend.v4.magentic_agents.common.lifecycle.config') as mock_config:
+                mock_config.get_azure_credential_async.return_value = mock_creds
+                mock_config.AZURE_CLIENT_ID = "test-client-id"
                 with patch('backend.v4.magentic_agents.common.lifecycle.AgentsClient', return_value=mock_client):
                     with patch.object(base, '_after_open', new_callable=AsyncMock):
                         mock_agent_registry.register_agent.side_effect = Exception("Registration failed")
-                        
+
                         # Should not raise exception
                         result = await base.open()
-                        
+
                         assert result is base
+                        mock_config.get_azure_credential_async.assert_called_once_with("test-client-id")
                         mock_agent_registry.register_agent.assert_called_once_with(base)
 
     @pytest.mark.asyncio
     async def test_close_method_success(self):
         """Test successful close method execution."""
         base = MCPEnabledBase()
-        
+
         # Set up mocks
         mock_stack = AsyncMock()
         mock_agent = AsyncMock()
         mock_agent.close = AsyncMock()
-        
+
         base._stack = mock_stack
         base._agent = mock_agent
-        
+
         await base.close()
-        
+
         mock_agent.close.assert_called_once()
         mock_agent_registry.unregister_agent.assert_called_once_with(base)
         mock_stack.aclose.assert_called_once()
-        
+
         assert base._stack is None
         assert base.mcp_tool is None
         assert base._agent is None
@@ -246,9 +253,9 @@ class TestMCPEnabledBase:
         """Test close method when no stack exists."""
         base = MCPEnabledBase()
         base._stack = None
-        
+
         await base.close()
-        
+
         # Should not raise exception
         mock_agent_registry.unregister_agent.assert_not_called()
 
@@ -256,19 +263,19 @@ class TestMCPEnabledBase:
     async def test_close_method_with_exceptions(self):
         """Test close method with exceptions in cleanup."""
         base = MCPEnabledBase()
-        
+
         mock_stack = AsyncMock()
         mock_agent = AsyncMock()
         mock_agent.close.side_effect = Exception("Close failed")
-        
+
         base._stack = mock_stack
         base._agent = mock_agent
-        
+
         mock_agent_registry.unregister_agent.side_effect = Exception("Unregister failed")
-        
+
         # Should not raise exceptions
         await base.close()
-        
+
         mock_stack.aclose.assert_called_once()
         assert base._stack is None
 
@@ -276,15 +283,15 @@ class TestMCPEnabledBase:
     async def test_context_manager_protocol(self):
         """Test async context manager protocol."""
         base = MCPEnabledBase()
-        
+
         with patch.object(base, 'open', new_callable=AsyncMock) as mock_open:
             with patch.object(base, 'close', new_callable=AsyncMock) as mock_close:
                 mock_open.return_value = base
-                
+
                 async with base as result:
                     assert result is base
                     mock_open.assert_called_once()
-                
+
                 mock_close.assert_called_once()
 
     def test_getattr_delegation_success(self):
@@ -293,9 +300,9 @@ class TestMCPEnabledBase:
         mock_agent = Mock()
         mock_agent.test_method = Mock(return_value="test_result")
         base._agent = mock_agent
-        
+
         result = base.test_method()
-        
+
         assert result == "test_result"
         mock_agent.test_method.assert_called_once()
 
@@ -303,202 +310,101 @@ class TestMCPEnabledBase:
         """Test __getattr__ when no agent exists."""
         base = MCPEnabledBase()
         base._agent = None
-        
+
         with pytest.raises(AttributeError) as exc_info:
             _ = base.nonexistent_method()
-        
+
         assert "MCPEnabledBase has no attribute 'nonexistent_method'" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_after_open_not_implemented(self):
         """Test that _after_open raises NotImplementedError."""
         base = MCPEnabledBase()
-        
+
         with pytest.raises(NotImplementedError):
             await base._after_open()
 
     def test_get_chat_client_with_existing_client(self):
-        """Test get_chat_client with provided chat_client."""
+        """Test get_chat_client uses existing client from agent."""
         base = MCPEnabledBase()
-        mock_provided_client = Mock()
-        
-        result = base.get_chat_client(mock_provided_client)
-        
-        assert result is mock_provided_client
+        mock_agent = Mock()
+        mock_chat_client = Mock()
+        mock_agent.client = mock_chat_client
+        base._agent = mock_agent
+
+        result = base.get_chat_client()
+
+        assert result is mock_chat_client
 
     def test_get_chat_client_from_agent(self):
         """Test get_chat_client from existing agent."""
         base = MCPEnabledBase()
         mock_agent = Mock()
         mock_chat_client = Mock()
-        mock_chat_client.agent_id = "agent-123"
-        mock_agent.chat_client = mock_chat_client
+        mock_agent.client = mock_chat_client
         base._agent = mock_agent
-        
-        result = base.get_chat_client(None)
-        
+
+        result = base.get_chat_client()
+
         assert result is mock_chat_client
 
     def test_get_chat_client_create_new(self):
-        """Test get_chat_client creates new client."""
+        """Test get_chat_client creates new client when no agent exists."""
         base = MCPEnabledBase(
             project_endpoint="https://test.com",
+            agent_name="test_agent",
             model_deployment_name="gpt-4"
         )
         mock_creds = Mock()
         base.creds = mock_creds
-        
+        base._agent = None
+
         mock_new_client = Mock()
-        
-        with patch('backend.v4.magentic_agents.common.lifecycle.AzureAIAgentClient', return_value=mock_new_client) as mock_client_class:
-            result = base.get_chat_client(None)
-            
+
+        with patch('backend.v4.magentic_agents.common.lifecycle.AzureAIClient', return_value=mock_new_client) as mock_client_class:
+            result = base.get_chat_client()
+
             assert result is mock_new_client
             mock_client_class.assert_called_once_with(
                 project_endpoint="https://test.com",
+                agent_name="test_agent",
                 model_deployment_name="gpt-4",
-                async_credential=mock_creds
+                credential=mock_creds,
+                use_latest_version=True,
             )
 
     def test_get_agent_id_with_existing_client(self):
-        """Test get_agent_id with provided chat_client."""
+        """Test get_agent_id generates new ID (new API)."""
         base = MCPEnabledBase()
-        mock_chat_client = Mock()
-        mock_chat_client.agent_id = "provided-agent-id"
-        
-        result = base.get_agent_id(mock_chat_client)
-        
-        assert result == "provided-agent-id"
+
+        with patch('backend.v4.magentic_agents.common.lifecycle.generate_assistant_id', return_value="generated-agent-id"):
+            result = base.get_agent_id()
+
+        assert result == "generated-agent-id"
 
     def test_get_agent_id_from_agent(self):
-        """Test get_agent_id from existing agent."""
+        """Test get_agent_id generates new ID regardless of agent state."""
         base = MCPEnabledBase()
         mock_agent = Mock()
         mock_chat_client = Mock()
         mock_chat_client.agent_id = "agent-from-agent"
         mock_agent.chat_client = mock_chat_client
         base._agent = mock_agent
-        
-        result = base.get_agent_id(None)
-        
-        assert result == "agent-from-agent"
+
+        with patch('backend.v4.magentic_agents.common.lifecycle.generate_assistant_id', return_value="generated-agent-id"):
+            result = base.get_agent_id()
+
+        # New API always generates a new local ID
+        assert result == "generated-agent-id"
 
     def test_get_agent_id_generate_new(self):
         """Test get_agent_id generates new ID."""
         base = MCPEnabledBase()
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.generate_assistant_id', return_value="new-generated-id"):
-            result = base.get_agent_id(None)
-            
+            result = base.get_agent_id()
+
             assert result == "new-generated-id"
-
-    @pytest.mark.asyncio
-    async def test_get_database_team_agent_success(self):
-        """Test successful get_database_team_agent."""
-        base = MCPEnabledBase(
-            team_config=self.mock_team_config,
-            agent_name="TestAgent",
-            project_endpoint="https://test.com",
-            model_deployment_name="gpt-4"
-        )
-        base.memory_store = self.mock_memory_store
-        base.creds = Mock()
-        
-        mock_client = AsyncMock()
-        mock_agent = Mock()
-        mock_agent.id = "database-agent-id"
-        mock_client.get_agent.return_value = mock_agent
-        base.client = mock_client
-        
-        mock_azure_client = Mock()
-        
-        with patch('backend.v4.magentic_agents.common.lifecycle.get_database_team_agent_id', return_value="database-agent-id"):
-            with patch('backend.v4.magentic_agents.common.lifecycle.AzureAIAgentClient', return_value=mock_azure_client):
-                result = await base.get_database_team_agent()
-                
-                assert result is mock_azure_client
-                mock_client.get_agent.assert_called_once_with(agent_id="database-agent-id")
-
-    @pytest.mark.asyncio
-    async def test_get_database_team_agent_no_agent_id(self):
-        """Test get_database_team_agent with no agent ID."""
-        base = MCPEnabledBase()
-        base.memory_store = self.mock_memory_store
-        
-        with patch('backend.v4.magentic_agents.common.lifecycle.get_database_team_agent_id', return_value=None):
-            result = await base.get_database_team_agent()
-            
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_database_team_agent_exception(self):
-        """Test get_database_team_agent with exception."""
-        base = MCPEnabledBase()
-        base.memory_store = self.mock_memory_store
-        
-        with patch('backend.v4.magentic_agents.common.lifecycle.get_database_team_agent_id', side_effect=Exception("Database error")):
-            result = await base.get_database_team_agent()
-            
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_save_database_team_agent_success(self):
-        """Test successful save_database_team_agent."""
-        base = MCPEnabledBase(
-            team_config=self.mock_team_config,
-            agent_name="TestAgent",
-            agent_description="Test Description",
-            agent_instructions="Test Instructions"
-        )
-        base.memory_store = AsyncMock()
-        
-        mock_agent = Mock()
-        mock_agent.id = "agent-123"
-        mock_agent.chat_client = Mock()
-        mock_agent.chat_client.agent_id = "agent-123"
-        base._agent = mock_agent
-        
-        with patch('backend.v4.magentic_agents.common.lifecycle.CurrentTeamAgent') as mock_team_agent_class:
-            mock_team_agent_instance = Mock()
-            mock_team_agent_class.return_value = mock_team_agent_instance
-            
-            await base.save_database_team_agent()
-            
-            mock_team_agent_class.assert_called_once_with(
-                team_id=self.mock_team_config.team_id,
-                team_name=self.mock_team_config.name,
-                agent_name="TestAgent",
-                agent_foundry_id="agent-123",
-                agent_description="Test Description",
-                agent_instructions="Test Instructions"
-            )
-            base.memory_store.add_team_agent.assert_called_once_with(mock_team_agent_instance)
-
-    @pytest.mark.asyncio
-    async def test_save_database_team_agent_no_agent_id(self):
-        """Test save_database_team_agent with no agent ID."""
-        base = MCPEnabledBase()
-        mock_agent = Mock()
-        mock_agent.id = None
-        base._agent = mock_agent
-        
-        await base.save_database_team_agent()
-        
-        # Should log error and return early
-
-    @pytest.mark.asyncio
-    async def test_save_database_team_agent_exception(self):
-        """Test save_database_team_agent with exception."""
-        base = MCPEnabledBase(team_config=self.mock_team_config)
-        base.memory_store = AsyncMock()
-        base.memory_store.add_team_agent.side_effect = Exception("Save error")
-        
-        mock_agent = Mock()
-        mock_agent.id = "agent-123"
-        base._agent = mock_agent
-        
-        # Should not raise exception
-        await base.save_database_team_agent()
 
     @pytest.mark.asyncio
     async def test_prepare_mcp_tool_success(self):
@@ -506,12 +412,12 @@ class TestMCPEnabledBase:
         base = MCPEnabledBase(mcp=self.mock_mcp_config)
         mock_stack = AsyncMock()
         base._stack = mock_stack
-        
+
         mock_mcp_tool = AsyncMock()
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool', return_value=mock_mcp_tool) as mock_tool_class:
             await base._prepare_mcp_tool()
-            
+
             mock_tool_class.assert_called_once_with(
                 name=self.mock_mcp_config.name,
                 description=self.mock_mcp_config.description,
@@ -524,9 +430,9 @@ class TestMCPEnabledBase:
     async def test_prepare_mcp_tool_no_config(self):
         """Test _prepare_mcp_tool with no MCP config."""
         base = MCPEnabledBase(mcp=None)
-        
+
         await base._prepare_mcp_tool()
-        
+
         assert base.mcp_tool is None
 
     @pytest.mark.asyncio
@@ -535,10 +441,10 @@ class TestMCPEnabledBase:
         base = MCPEnabledBase(mcp=self.mock_mcp_config)
         mock_stack = AsyncMock()
         base._stack = mock_stack
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool', side_effect=Exception("MCP error")):
             await base._prepare_mcp_tool()
-            
+
             assert base.mcp_tool is None
 
 
@@ -551,19 +457,19 @@ class TestAzureAgentBase:
         self.mock_team_service = Mock()
         self.mock_team_config = Mock()
         self.mock_memory_store = Mock()
-        
+
         # Reset mocks
         mock_agent_registry.reset_mock()
 
     def test_init_with_minimal_params(self):
         """Test AzureAgentBase initialization with minimal parameters."""
         base = AzureAgentBase()
-        
+
         # Check inherited attributes
         assert base._stack is None
         assert base.mcp_cfg is None
         assert base._agent is None
-        
+
         # Check AzureAgentBase specific attributes
         assert base._created_ephemeral is False
 
@@ -580,7 +486,7 @@ class TestAzureAgentBase:
             agent_description="Test agent description",
             agent_instructions="Test instructions"
         )
-        
+
         # Verify all parameters are set correctly via parent class
         assert base.mcp_cfg is self.mock_mcp_config
         assert base.model_deployment_name == "gpt-4"
@@ -597,7 +503,7 @@ class TestAzureAgentBase:
     async def test_close_method_success(self):
         """Test successful close method execution."""
         base = AzureAgentBase()
-        
+
         # Set up mocks
         mock_agent = AsyncMock()
         mock_agent.close = AsyncMock()
@@ -605,22 +511,22 @@ class TestAzureAgentBase:
         mock_client.close = AsyncMock()
         mock_creds = AsyncMock()
         mock_creds.close = AsyncMock()
-        
+
         base._agent = mock_agent
         base.client = mock_client
         base.creds = mock_creds
         base.project_endpoint = "https://test.com"
-        
+
         # Mock parent close
         with patch('backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close', new_callable=AsyncMock) as mock_parent_close:
             await base.close()
-            
+
             mock_agent.close.assert_called_once()
             mock_agent_registry.unregister_agent.assert_called_once_with(base)
             mock_client.close.assert_called_once()
             mock_creds.close.assert_called_once()
             mock_parent_close.assert_called_once()
-            
+
             assert base.client is None
             assert base.creds is None
             assert base.project_endpoint is None
@@ -629,7 +535,7 @@ class TestAzureAgentBase:
     async def test_close_method_with_exceptions(self):
         """Test close method with exceptions in cleanup."""
         base = AzureAgentBase()
-        
+
         # Set up mocks that raise exceptions
         mock_agent = AsyncMock()
         mock_agent.close.side_effect = Exception("Agent close failed")
@@ -637,18 +543,18 @@ class TestAzureAgentBase:
         mock_client.close.side_effect = Exception("Client close failed")
         mock_creds = AsyncMock()
         mock_creds.close.side_effect = Exception("Creds close failed")
-        
+
         base._agent = mock_agent
         base.client = mock_client
         base.creds = mock_creds
-        
+
         mock_agent_registry.unregister_agent.side_effect = Exception("Unregister failed")
-        
+
         # Mock parent close
         with patch('backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close', new_callable=AsyncMock) as mock_parent_close:
             # Should not raise exceptions
             await base.close()
-            
+
             mock_parent_close.assert_called_once()
             assert base.client is None
             assert base.creds is None
@@ -657,21 +563,21 @@ class TestAzureAgentBase:
     async def test_close_method_no_resources(self):
         """Test close method when no resources to close."""
         base = AzureAgentBase()
-        
+
         base._agent = None
         base.client = None
         base.creds = None
-        
+
         with patch('backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close', new_callable=AsyncMock) as mock_parent_close:
             await base.close()
-            
+
             mock_parent_close.assert_called_once()
             mock_agent_registry.unregister_agent.assert_called_once_with(base)
 
     def test_inheritance_from_mcp_enabled_base(self):
         """Test that AzureAgentBase properly inherits from MCPEnabledBase."""
         base = AzureAgentBase()
-        
+
         assert isinstance(base, MCPEnabledBase)
         # Should have access to parent methods
         assert hasattr(base, 'open')
@@ -682,7 +588,7 @@ class TestAzureAgentBase:
     def test_azure_specific_attributes(self):
         """Test AzureAgentBase specific attributes."""
         base = AzureAgentBase()
-        
+
         # Check Azure-specific attribute
         assert hasattr(base, '_created_ephemeral')
         assert base._created_ephemeral is False
@@ -691,15 +597,15 @@ class TestAzureAgentBase:
     async def test_context_manager_inheritance(self):
         """Test that context manager functionality is inherited."""
         base = AzureAgentBase()
-        
+
         with patch.object(base, 'open', new_callable=AsyncMock) as mock_open:
             with patch.object(base, 'close', new_callable=AsyncMock) as mock_close:
                 mock_open.return_value = base
-                
+
                 async with base as result:
                     assert result is base
                     mock_open.assert_called_once()
-                
+
                 mock_close.assert_called_once()
 
     def test_getattr_delegation_inheritance(self):
@@ -708,8 +614,8 @@ class TestAzureAgentBase:
         mock_agent = Mock()
         mock_agent.inherited_method = Mock(return_value="inherited_result")
         base._agent = mock_agent
-        
+
         result = base.inherited_method()
-        
+
         assert result == "inherited_result"
         mock_agent.inherited_method.assert_called_once()
