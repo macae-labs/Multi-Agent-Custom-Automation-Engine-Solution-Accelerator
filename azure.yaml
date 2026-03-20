@@ -4,6 +4,20 @@ metadata:
   template: multi-agent-custom-automation-engine-solution-accelerator@1.0
 requiredVersions:
   azd: '>= 1.18.0'
+infra:
+  parameters:
+    location: ${AZURE_LOCATION}
+    azureAiServiceLocation: ${AZURE_ENV_OPENAI_LOCATION}
+    existingLogAnalyticsWorkspaceId: ${AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID}
+    existingAiFoundryAiProjectResourceId: ${AZURE_EXISTING_AI_PROJECT_RESOURCE_ID}
+    existingContainerAppsEnvironmentResourceId: ${AZURE_EXISTING_CAE_RESOURCE_ID}
+    # Container Registry configuration - uses our ACR instead of upstream biabcontainerreg
+    backendContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    frontendContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    MCPContainerRegistryHostname: ${AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT=biabcontainerreg.azurecr.io}
+    backendContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
+    frontendContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
+    MCPContainerImageTag: ${AZURE_ENV_IMAGE_TAG=latest_v4}
 hooks:
   postdeploy:
     windows:
@@ -13,7 +27,7 @@ hooks:
           # Running in Git Bash/MSYS2 environment
           Write-Host ""
           Write-Host "===============================================================" -ForegroundColor Yellow
-          Write-Host " POST-DEPLOYMENT STEPS (Bash)" -ForegroundColor Green  
+          Write-Host " POST-DEPLOYMENT STEPS (Bash)" -ForegroundColor Green
           Write-Host "===============================================================" -ForegroundColor Yellow
           Write-Host ""
 
@@ -42,7 +56,7 @@ hooks:
           Write-Host "   https://$env:webSiteDefaultHostname" -ForegroundColor Cyan
           Write-Host ""
         }
-        
+
       shell: pwsh
       interactive: true
     posix:

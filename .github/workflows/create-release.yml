@@ -1,5 +1,5 @@
 on:
-   push:
+  push:
     branches:
       - main
 
@@ -16,9 +16,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - uses: codfish/semantic-release-action@v4
+      - name: Fetch all tags
+        run: |
+          git fetch --force --tags origin
+          echo "Latest tag: $(git describe --tags --abbrev=0 2>/dev/null || echo 'none')"
+          git tag -l 'v*' | sort -V | tail -5
+
+      - uses: codfish/semantic-release-action@v3
         id: semantic
         with:
           tag-format: 'v${version}'
@@ -56,7 +63,7 @@ jobs:
               '@semantic-release/github'
             ]
         env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: echo ${{ steps.semantic.outputs.release-version }}
 
       - run: echo "$OUTPUTS"

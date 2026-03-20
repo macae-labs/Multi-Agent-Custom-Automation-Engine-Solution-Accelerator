@@ -7,10 +7,6 @@ param principalId string
 @description('The name of the existing Azure Cognitive Services account.')
 param aiServiceName string
 
-
-@allowed(['Device', 'ForeignGroup', 'Group', 'ServicePrincipal', 'User'])
-param principalType string = 'ServicePrincipal'
-
 resource cognitiveServiceExisting 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing =  {
   name: aiServiceName
 }
@@ -33,7 +29,7 @@ resource aiUserAccessFoundry 'Microsoft.Authorization/roleAssignments@2022-04-01
   properties: {
     roleDefinitionId: aiUser.id
     principalId: principalId
-    principalType: principalType
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -43,7 +39,7 @@ resource aiDeveloperAccessFoundry 'Microsoft.Authorization/roleAssignments@2022-
   properties: {
     roleDefinitionId: aiDeveloper.id
     principalId: principalId
-    principalType: principalType
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -53,6 +49,6 @@ resource cognitiveServiceOpenAIUserAccessFoundry 'Microsoft.Authorization/roleAs
   properties: {
     roleDefinitionId: cognitiveServiceOpenAIUser.id
     principalId: principalId
-    principalType: principalType
+    principalType: 'ServicePrincipal'
   }
 }

@@ -8,8 +8,11 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
+    paths:
+      - 'infra/**'
+      - 'azure.yaml'
+  # schedule:
+  #   - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
 
 jobs:
   deploy:
@@ -88,7 +91,7 @@ jobs:
       - name: Check and Create Resource Group
         id: check_create_rg
         run: |
-          set -e  
+          set -e
           echo "Checking if resource group exists..."
           rg_exists=$(az group exists --name ${{ env.RESOURCE_GROUP_NAME }})
           if [ "$rg_exists" = "false" ]; then
@@ -120,6 +123,9 @@ jobs:
             --template-file infra/main.bicep \
             --parameters \
               solutionName=${{ env.SOLUTION_PREFIX }} \
+              backendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              frontendContainerRegistryHostname="boatrentalacr.azurecr.io" \
+              MCPContainerRegistryHostname="boatrentalacr.azurecr.io" \
               location="${{ env.AZURE_LOCATION }}" \
               azureAiServiceLocation='${{ env.AZURE_LOCATION }}' \
               gptModelCapacity=${{ env.GPT_MIN_CAPACITY }} \
@@ -127,11 +133,15 @@ jobs:
               gptReasoningModelCapacity=${{ env.O4_MINI_MIN_CAPACITY }} \
               enableTelemetry=true \
               enableMonitoring=true \
-              enablePrivateNetworking=true \
-              enableScalability=true \
+              enablePrivateNetworking=false \
+              enableScalability=false \
+              enableEncryptionAtHost=false \
+              enableProximityPlacement=false \
+              enableMaintenanceConfig=false \
+              existingContainerAppsEnvironmentResourceId="${{ vars.EXISTING_CAE_RESOURCE_ID }}" \
               createdBy="Pipeline" \
               tags="{'Purpose':'Deploying and Cleaning Up Resources for Validation','CreatedDate':'$current_date'}"
-              
+
 
       - name: Send Notification on Failure
         if: failure()
@@ -167,13 +177,13 @@ jobs:
             exit 1
           else
             echo "OPENAI_RESOURCE_NAME=${openai_resource_name}" >> $GITHUB_ENV
-            echo "OpenAI resource name: ${openai_resource_name}" 
+            echo "OpenAI resource name: ${openai_resource_name}"
           fi
 
       - name: Delete Bicep Deployment
         if: always()
         run: |
-          set -e  
+          set -e
           echo "Checking if resource group exists..."
           rg_exists=$(az group exists --name ${{ env.RESOURCE_GROUP_NAME }})
           if [ "$rg_exists" = "true" ]; then
@@ -241,16 +251,32 @@ jobs:
       - name: Purging the Resources
         if: always()
         run: |
+          echo "Purging all soft-deleted Cognitive Services accounts in eastus2..."
 
-          set -e 
-          echo "Azure OpenAI: ${{ env.OPENAI_RESOURCE_NAME }}"
-
-          # Purge OpenAI Resource
-          echo "Purging the OpenAI Resource..."
-          if ! az resource delete --ids /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/providers/Microsoft.CognitiveServices/locations/eastus/resourceGroups/${{ env.RESOURCE_GROUP_NAME }}/deletedAccounts/${{ env.OPENAI_RESOURCE_NAME }} --verbose; then
-            echo "Failed to purge openai resource: ${{ env.OPENAI_RESOURCE_NAME }}"
-          else
-            echo "Purged the openai resource: ${{ env.OPENAI_RESOURCE_NAME }}"
+          # Purge current deployment's resource
+          if [ -n "${{ env.OPENAI_RESOURCE_NAME }}" ]; then
+            az cognitiveservices account purge \
+              --name "${{ env.OPENAI_RESOURCE_NAME }}" \
+              --location "${{ env.AZURE_LOCATION }}" \
+              --resource-group "${{ env.RESOURCE_GROUP_NAME }}" 2>/dev/null \
+              && echo "✅ Purged: ${{ env.OPENAI_RESOURCE_NAME }}" \
+              || echo "⚠️ Could not purge: ${{ env.OPENAI_RESOURCE_NAME }}"
           fi
 
-          echo "Resource purging completed successfully"
+          # Purge ALL accumulated soft-deleted accounts using REST API with full resource IDs
+          # This handles accounts where the original RG was already deleted
+          echo "Scanning for other soft-deleted accounts..."
+          az rest --method get \
+            --url "https://management.azure.com/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/providers/Microsoft.CognitiveServices/deletedAccounts?api-version=2023-05-01" \
+            --query "value[].id" -o tsv 2>/dev/null | \
+          while read -r resource_id; do
+            if [ -n "$resource_id" ]; then
+              echo "Purging: $resource_id"
+              az rest --method DELETE \
+                --url "https://management.azure.com${resource_id}?api-version=2023-05-01" 2>/dev/null \
+                && echo "✅ Purged" \
+                || echo "⚠️ Could not purge"
+            fi
+          done
+
+          echo "Resource purging completed"

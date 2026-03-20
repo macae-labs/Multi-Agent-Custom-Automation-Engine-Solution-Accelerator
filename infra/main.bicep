@@ -22,13 +22,14 @@ param solutionUniqueText string = take(uniqueString(subscription().id, resourceG
   'australiaeast'
   'centralus'
   'eastasia'
+  'eastus'
   'eastus2'
   'japaneast'
   'northeurope'
   'southeastasia'
   'uksouth'
 ])
-param location string
+param location string = 'eastus2'
 
 //Get the current deployer's information
 var deployerInfo = deployer()
@@ -124,6 +125,15 @@ param enableRedundancy bool = false
 @description('Optional. Enable private networking for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enablePrivateNetworking bool = false
 
+@description('Optional. Enable encryption at host for the virtual machine. Requires Microsoft.Compute/EncryptionAtHost feature to be registered in the subscription. Defaults to false.')
+param enableEncryptionAtHost bool = false
+
+@description('Optional. Enable proximity placement group for the virtual machine. Defaults to false.')
+param enableProximityPlacement bool = false
+
+@description('Optional. Enable maintenance configuration for the virtual machine. Defaults to false.')
+param enableMaintenanceConfig bool = false
+
 @secure()
 @description('Optional. The user name for the administrator account of the virtual machine. Allows to customize credentials if `enablePrivateNetworking` is set to true.')
 param virtualMachineAdminUsername string?
@@ -131,9 +141,6 @@ param virtualMachineAdminUsername string?
 @description('Optional. The password for the administrator account of the virtual machine. Allows to customize credentials if `enablePrivateNetworking` is set to true.')
 @secure()
 param virtualMachineAdminPassword string?
-
-@description('Optional. The size of the virtual machine. Defaults to Standard_D2s_v5.')
-param virtualMachineSize string = 'Standard_D2s_v5'
 
 // These parameters are changed for testing - please reset as part of publication
 
@@ -172,6 +179,9 @@ param existingLogAnalyticsWorkspaceId string = ''
 
 @description('Optional. Resource ID of an existing Ai Foundry AI Services resource.')
 param existingAiFoundryAiProjectResourceId string = ''
+
+@description('Optional. Resource ID of an existing Container Apps Environment. Use this to avoid hitting the 5 environment limit per subscription.')
+param existingContainerAppsEnvironmentResourceId string = ''
 
 // ============== //
 // Variables      //
@@ -228,7 +238,7 @@ var allTags = union(
   },
   tags
 )
-var existingTags = resourceGroup().tags ?? {}
+var existingTags = resourceGroup().?tags ?? {}
 @description('Tag, Created by user name')
 param createdBy string = contains(deployer(), 'userPrincipalName')
   ? split(deployer().userPrincipalName, '@')[0]
@@ -345,7 +355,7 @@ module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0
       : null
   }
 }
-// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new) 
+// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new)
 var logAnalyticsWorkspaceName = useExistingLogAnalytics
   ? existingLogAnalyticsWorkspace!.name
   : logAnalyticsWorkspace!.outputs.name
@@ -376,6 +386,7 @@ module applicationInsights 'br/public:avm/res/insights/component:0.6.0' = if (en
     flowType: 'Bluefield'
     // WAF aligned configuration for Monitoring
     workspaceResourceId: enableMonitoring ? logAnalyticsWorkspaceResourceId : ''
+    diagnosticSettings: enableMonitoring ? [{ workspaceResourceId: logAnalyticsWorkspaceResourceId }] : null
   }
 }
 
@@ -439,7 +450,7 @@ module bastionHost 'br/public:avm/res/network/bastion-host:0.7.0' = if (enablePr
 // ========== Virtual machine ========== //
 // WAF best practices for virtual machines: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/virtual-machines
 var maintenanceConfigurationResourceName = 'mc-${solutionSuffix}'
-module maintenanceConfiguration 'br/public:avm/res/maintenance/maintenance-configuration:0.3.1' = if (enablePrivateNetworking) {
+module maintenanceConfiguration 'br/public:avm/res/maintenance/maintenance-configuration:0.3.1' = if (enablePrivateNetworking && enableMaintenanceConfig) {
   name: take('avm.res.compute.virtual-machine.${maintenanceConfigurationResourceName}', 64)
   params: {
     name: maintenanceConfigurationResourceName
@@ -592,7 +603,7 @@ module windowsVmDataCollectionRules 'br/public:avm/res/insights/data-collection-
 }
 
 var proximityPlacementGroupResourceName = 'ppg-${solutionSuffix}'
-module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-group:0.4.0' = if (enablePrivateNetworking) {
+module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-group:0.4.0' = if (enablePrivateNetworking && enableProximityPlacement) {
   name: take('avm.res.compute.proximity-placement-group.${proximityPlacementGroupResourceName}', 64)
   params: {
     name: proximityPlacementGroupResourceName
@@ -606,7 +617,9 @@ module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-gr
 
 var virtualMachineResourceName = 'vm-${solutionSuffix}'
 var virtualMachineAvailabilityZone = 1
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (enablePrivateNetworking) {
+var virtualMachineSize = 'Standard_D2s_v4'
+// VM only deploys when enablePrivateNetworking=true AND virtualMachineAdminPassword is provided
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (enablePrivateNetworking && virtualMachineAdminPassword != null) {
   name: take('avm.res.compute.virtual-machine.${virtualMachineResourceName}', 64)
   params: {
     name: virtualMachineResourceName
@@ -617,14 +630,14 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (e
     osType: 'Windows'
     vmSize: virtualMachineSize
     adminUsername: virtualMachineAdminUsername ?? 'JumpboxAdminUser'
-    adminPassword: virtualMachineAdminPassword ?? 'JumpboxAdminP@ssw0rd1234!'
+    adminPassword: virtualMachineAdminPassword!
     patchMode: 'AutomaticByPlatform'
     bypassPlatformSafetyChecksOnUserSchedule: true
-    maintenanceConfigurationResourceId: maintenanceConfiguration!.outputs.resourceId
+    maintenanceConfigurationResourceId: enableMaintenanceConfig ? maintenanceConfiguration!.outputs.resourceId : null
     enableAutomaticUpdates: true
-    encryptionAtHost: true
+    encryptionAtHost: enableEncryptionAtHost
     availabilityZone: virtualMachineAvailabilityZone
-    proximityPlacementGroupResourceId: proximityPlacementGroup!.outputs.resourceId
+    proximityPlacementGroupResourceId: enableProximityPlacement ? proximityPlacementGroup!.outputs.resourceId : null
     imageReference: {
       publisher: 'microsoft-dsvm'
       offer: 'dsvm-win-2022'
@@ -707,7 +720,7 @@ var privateDnsZones = [
   'privatelink.openai.azure.com'
   'privatelink.services.ai.azure.com'
   'privatelink.documents.azure.com'
-  'privatelink.blob.core.windows.net'
+  'privatelink.blob.${environment().suffixes.storage}'
   'privatelink.search.windows.net'
   keyVaultPrivateDNSZone
 ]
@@ -1118,8 +1131,15 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
 // ========== Backend Container App Environment ========== //
 // WAF best practices for container apps: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/azure-container-apps
 // PSRule for Container App: https://azure.github.io/PSRule.Rules.Azure/en/rules/resource/#container-app
+var useExistingContainerAppsEnvironment = !empty(existingContainerAppsEnvironmentResourceId)
 var containerAppEnvironmentResourceName = 'cae-${solutionSuffix}'
-module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = {
+
+// Computed Container Apps Environment Resource ID - uses existing if provided, otherwise from new module
+var containerAppsEnvironmentResourceId = useExistingContainerAppsEnvironment
+  ? existingContainerAppsEnvironmentResourceId
+  : containerAppEnvironment!.outputs.resourceId
+
+module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = if (!useExistingContainerAppsEnvironment) {
   name: take('avm.res.app.managed-environment.${containerAppEnvironmentResourceName}', 64)
   params: {
     name: containerAppEnvironmentResourceName
@@ -1173,7 +1193,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: tags
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 8000
     ingressExternal: true
@@ -1381,7 +1401,7 @@ module containerAppMcp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: tags
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 9000
     ingressExternal: true
@@ -1446,11 +1466,11 @@ module containerAppMcp 'br/public:avm/res/app/container-app:0.18.1' = {
           }
           {
             name: 'JWKS_URI'
-            value: 'https://login.microsoftonline.com/${tenant().tenantId}/discovery/v2.0/keys'
+            value: '${environment().authentication.loginEndpoint}${tenant().tenantId}/discovery/v2.0/keys'
           }
           {
             name: 'ISSUER'
-            value: 'https://sts.windows.net/${tenant().tenantId}/'
+            value: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
           }
           {
             name: 'AUDIENCE'
@@ -1535,7 +1555,6 @@ module webSite 'modules/web-sites.bicep' = {
 // ========== Storage Account ========== //
 
 var storageAccountName = replace('st${solutionSuffix}', '-', '')
-param storageContainerName string = 'sample-dataset'
 param storageContainerNameRetailCustomer string = 'retail-dataset-customer'
 param storageContainerNameRetailOrder string = 'retail-dataset-order'
 param storageContainerNameRFPSummary string = 'rfp-summary-dataset'
@@ -1709,7 +1728,7 @@ module searchServiceUpdate 'br/public:avm/res/search/search-service:0.11.1' = {
     //Removing the Private endpoints as we are facing the issue with connecting to search service while comminicating with agents
 
     privateEndpoints: []
-    // privateEndpoints: enablePrivateNetworking 
+    // privateEndpoints: enablePrivateNetworking
     //   ? [
     //       {
     //         name: 'pep-search-${solutionSuffix}'
@@ -1746,9 +1765,6 @@ module aiSearchFoundryConnection 'modules/aifp-connections.bicep' = {
     searchServiceLocation: searchService.location
     searchServiceName: searchService.name
   }
-  dependsOn: [
-    aiFoundryAiServices
-  ]
 }
 
 // ========== KeyVault ========== //
@@ -1832,11 +1848,11 @@ output AZURE_AI_PROJECT_NAME string = aiFoundryAiProjectName
 output AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME string = aiFoundryAiServicesModelDeployment.name
 // output AZURE_AI_AGENT_ENDPOINT string = aiFoundryAiProjectEndpoint
 output APP_ENV string = 'Prod'
-output AI_FOUNDRY_RESOURCE_ID string = !useExistingAiFoundryAiProject
-  ? aiFoundryAiServices.outputs.resourceId
-  : existingAiFoundryAiProjectResourceId
+output AI_FOUNDRY_RESOURCE_ID string = useExistingAiFoundryAiProject
+  ? existingAiFoundryAiProjectResourceId
+  : aiFoundryAiServices!.outputs.resourceId
 output COSMOSDB_ACCOUNT_NAME string = cosmosDbResourceName
-output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint  
+output AZURE_SEARCH_ENDPOINT string = searchServiceUpdate.outputs.endpoint
 output AZURE_CLIENT_ID string = userAssignedIdentity!.outputs.clientId
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_AI_SEARCH_CONNECTION_NAME string = aiSearchConnectionName
@@ -1868,4 +1884,3 @@ output AZURE_AI_SEARCH_INDEX_NAME_RFP_COMPLIANCE string = aiSearchIndexNameForRF
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_SUMMARY string = aiSearchIndexNameForContractSummary
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_RISK string = aiSearchIndexNameForContractRisk
 output AZURE_AI_SEARCH_INDEX_NAME_CONTRACT_COMPLIANCE string = aiSearchIndexNameForContractCompliance
-

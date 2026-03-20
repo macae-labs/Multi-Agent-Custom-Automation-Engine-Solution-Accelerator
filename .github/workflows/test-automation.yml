@@ -54,12 +54,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # - name: Start Container App
-      #   uses: azure/cli@v2
-      #   with:
-      #     azcliversion: "latest"
-      #     inlineScript: |
-      #       az rest -m post -u "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.MACAE_RG }}/providers/Microsoft.App/containerApps/${{ env.MACAE_CONTAINER_APP }}/start?api-version=2025-01-01"
+      - name: Start Container App
+        uses: azure/cli@v2
+        with:
+          azcliversion: "latest"
+          inlineScript: |
+            az rest -m post -u "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.MACAE_RG }}/providers/Microsoft.App/containerApps/${{ env.MACAE_CONTAINER_APP }}/start?api-version=2025-01-01"
 
       - name: Install dependencies
         run: |

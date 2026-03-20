@@ -76,7 +76,7 @@ jobs:
       - name: Get current date
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-      
+
       - name: Get registry
         id: registry
         run: |
@@ -86,50 +86,64 @@ jobs:
         id: determine_tag
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "TAG=latest_v4" >> $GITHUB_ENV
+            echo "tag=latest_v4" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/dev-v4" ]]; then
-            echo "TAG=dev_v4" >> $GITHUB_ENV
+            echo "tag=dev_v4" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/demo-v4" ]]; then
-            echo "TAG=demo_v4" >> $GITHUB_ENV
+            echo "tag=demo_v4" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/hotfix" ]]; then
-            echo "TAG=hotfix" >> $GITHUB_ENV
+            echo "tag=hotfix" >> $GITHUB_OUTPUT
           else
-            echo "TAG=pullrequest-ignore" >> $GITHUB_ENV
+            echo "tag=pullrequest-ignore" >> $GITHUB_OUTPUT
           fi
 
       - name: Set Historical Tag
+        id: historical_tag
         run: |
           DATE_TAG=$(date +'%Y-%m-%d')
           RUN_ID=${{ github.run_number }}
           # Create historical tag using TAG, DATE_TAG, and RUN_ID
-          echo "HISTORICAL_TAG=${{ env.TAG }}_${DATE_TAG}_${RUN_ID}" >> $GITHUB_ENV
+          echo "historical_tag=${{ steps.determine_tag.outputs.tag }}_${DATE_TAG}_${RUN_ID}" >> $GITHUB_OUTPUT
 
       - name: Build and optionally push Backend Docker image
         uses: docker/build-push-action@v6
         with:
           context: ./src/backend
           file: ./src/backend/Dockerfile
-          push: ${{ env.TAG != 'pullrequest-ignore' }}
+          push: ${{ steps.determine_tag.outputs.tag != 'pullrequest-ignore' }}
           tags: |
-            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.TAG }}
-            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ env.HISTORICAL_TAG }}
-  
+            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ steps.determine_tag.outputs.tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ steps.historical_tag.outputs.historical_tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaebackend:${{ github.sha }}
+
       - name: Build and optionally push Frontend Docker image
         uses: docker/build-push-action@v6
         with:
           context: ./src/frontend
           file: ./src/frontend/Dockerfile
-          push: ${{ env.TAG != 'pullrequest-ignore' }}
+          push: ${{ steps.determine_tag.outputs.tag != 'pullrequest-ignore' }}
           tags: |
-            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.TAG }}
-            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ env.HISTORICAL_TAG }}
-      
+            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ steps.determine_tag.outputs.tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ steps.historical_tag.outputs.historical_tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaefrontend:${{ github.sha }}
+
+      - name: Check MCP server path exists
+        id: check_mcp
+        run: |
+          if [ -d "./src/mcp_server" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ MCP server path not found - skipping MCP build"
+          fi
+
       - name: Build and optionally push MCP Docker image
+        if: steps.check_mcp.outputs.exists == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./src/mcp_server
           file: ./src/mcp_server/Dockerfile
-          push: ${{ env.TAG != 'pullrequest-ignore' }}
+          push: ${{ steps.determine_tag.outputs.tag != 'pullrequest-ignore' }}
           tags: |
-            ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ env.TAG }}
-            ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ env.HISTORICAL_TAG }}
+            ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ steps.determine_tag.outputs.tag }}
+            ${{ steps.registry.outputs.ext_registry }}/macaemcp:${{ steps.historical_tag.outputs.historical_tag }}

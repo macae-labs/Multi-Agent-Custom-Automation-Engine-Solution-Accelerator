@@ -70,7 +70,7 @@ jobs:
         run: |
           echo "🔍 Validating workflow input parameters..."
           VALIDATION_FAILED=false
-          
+
           # Validate ENV_NAME (required, alphanumeric and hyphens)
           if [[ -z "$INPUT_ENV_NAME" ]]; then
             echo "❌ ERROR: ENV_NAME is required but not provided"
@@ -81,7 +81,7 @@ jobs:
           else
             echo "✅ ENV_NAME: '$INPUT_ENV_NAME' is valid"
           fi
-          
+
           # Validate AZURE_ENV_OPENAI_LOCATION (required, Azure region format)
           if [[ -z "$INPUT_AZURE_ENV_OPENAI_LOCATION" ]]; then
             echo "❌ ERROR: AZURE_ENV_OPENAI_LOCATION is required but not provided"
@@ -92,7 +92,7 @@ jobs:
           else
             echo "✅ AZURE_ENV_OPENAI_LOCATION: '$INPUT_AZURE_ENV_OPENAI_LOCATION' is valid"
           fi
-          
+
           # Validate AZURE_LOCATION (required, Azure region format)
           if [[ -z "$INPUT_AZURE_LOCATION" ]]; then
             echo "❌ ERROR: AZURE_LOCATION is required but not provided"
@@ -103,7 +103,7 @@ jobs:
           else
             echo "✅ AZURE_LOCATION: '$INPUT_AZURE_LOCATION' is valid"
           fi
-          
+
           # Validate RESOURCE_GROUP_NAME (required, Azure naming convention)
           if [[ -z "$INPUT_RESOURCE_GROUP_NAME" ]]; then
             echo "❌ ERROR: RESOURCE_GROUP_NAME is required but not provided"
@@ -117,7 +117,7 @@ jobs:
           else
             echo "✅ RESOURCE_GROUP_NAME: '$INPUT_RESOURCE_GROUP_NAME' is valid"
           fi
-          
+
           # Validate IMAGE_TAG (required, Docker tag pattern)
           if [[ -z "$INPUT_IMAGE_TAG" ]]; then
             echo "❌ ERROR: IMAGE_TAG is required but not provided"
@@ -128,7 +128,7 @@ jobs:
           else
             echo "✅ IMAGE_TAG: '$INPUT_IMAGE_TAG' is valid"
           fi
-          
+
           # Validate BUILD_DOCKER_IMAGE (required, must be 'true' or 'false')
           if [[ "$INPUT_BUILD_DOCKER_IMAGE" != "true" && "$INPUT_BUILD_DOCKER_IMAGE" != "false" ]]; then
             echo "❌ ERROR: BUILD_DOCKER_IMAGE must be 'true' or 'false', got: '$INPUT_BUILD_DOCKER_IMAGE'"
@@ -136,7 +136,7 @@ jobs:
           else
             echo "✅ BUILD_DOCKER_IMAGE: '$INPUT_BUILD_DOCKER_IMAGE' is valid"
           fi
-          
+
           # Validate EXP (required, must be 'true' or 'false')
           if [[ "$INPUT_EXP" != "true" && "$INPUT_EXP" != "false" ]]; then
             echo "❌ ERROR: EXP must be 'true' or 'false', got: '$INPUT_EXP'"
@@ -144,7 +144,7 @@ jobs:
           else
             echo "✅ EXP: '$INPUT_EXP' is valid"
           fi
-          
+
           # Validate WAF_ENABLED (must be 'true' or 'false')
           if [[ "$INPUT_WAF_ENABLED" != "true" && "$INPUT_WAF_ENABLED" != "false" ]]; then
             echo "❌ ERROR: WAF_ENABLED must be 'true' or 'false', got: '$INPUT_WAF_ENABLED'"
@@ -152,7 +152,7 @@ jobs:
           else
             echo "✅ WAF_ENABLED: '$INPUT_WAF_ENABLED' is valid"
           fi
-          
+
           # Validate AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID (optional, if provided must be valid Resource ID)
           if [[ -n "$INPUT_AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID" ]]; then
             if [[ ! "$INPUT_AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID" =~ ^/subscriptions/[a-fA-F0-9-]+/[Rr]esource[Gg]roups/[^/]+/providers/[Mm]icrosoft\.[Oo]perational[Ii]nsights/[Ww]orkspaces/[^/]+$ ]]; then
@@ -164,7 +164,7 @@ jobs:
               echo "✅ AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID: Valid Resource ID format"
             fi
           fi
-          
+
           # Validate AZURE_EXISTING_AI_PROJECT_RESOURCE_ID (optional, if provided must be valid Resource ID)
           if [[ -n "$INPUT_AZURE_EXISTING_AI_PROJECT_RESOURCE_ID" ]]; then
             if [[ ! "$INPUT_AZURE_EXISTING_AI_PROJECT_RESOURCE_ID" =~ ^/subscriptions/[a-fA-F0-9-]+/[Rr]esource[Gg]roups/[^/]+/providers/([Mm]icrosoft\.[Mm]achine[Ll]earning[Ss]ervices/([Ww]orkspaces|[Pp]rojects)/[^/]+|[Mm]icrosoft\.[Cc]ognitive[Ss]ervices/[Aa]ccounts/[^/]+/[Pp]rojects/[^/]+)$ ]]; then
@@ -176,14 +176,14 @@ jobs:
               echo "✅ AZURE_EXISTING_AI_PROJECT_RESOURCE_ID: Valid Resource ID format"
             fi
           fi
-          
+
           # Fail workflow if any validation failed
           if [[ "$VALIDATION_FAILED" == "true" ]]; then
             echo ""
             echo "❌ Parameter validation failed. Please correct the errors above and try again."
             exit 1
           fi
-          
+
           echo ""
           echo "✅ All input parameters validated successfully!"
 
@@ -233,46 +233,54 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Write-Host "Starting azd deployment..."
-         
+
           Write-Host "Creating environment..."
           azd env new $env:INPUT_ENV_NAME --no-prompt
           Write-Host "Environment created: $env:INPUT_ENV_NAME"
 
           Write-Host "Setting default subscription..."
           azd config set defaults.subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        
+
           # Set additional parameters
           azd env set AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
           azd env set AZURE_ENV_OPENAI_LOCATION="$env:INPUT_AZURE_ENV_OPENAI_LOCATION"
           azd env set AZURE_LOCATION="$env:INPUT_AZURE_LOCATION"
           azd env set AZURE_RESOURCE_GROUP="$env:INPUT_RESOURCE_GROUP_NAME"
           azd env set AZURE_ENV_IMAGE_TAG="$env:INPUT_IMAGE_TAG"
-          
-          # Set ACR name only when building Docker image
-          if ($env:INPUT_BUILD_DOCKER_IMAGE -eq "true") {
-            $ACR_NAME = "${{ secrets.ACR_TEST_LOGIN_SERVER }}"
+          azd env set AZURE_EXISTING_CAE_RESOURCE_ID="${{ vars.EXISTING_CAE_RESOURCE_ID }}"
+
+          # Always set ACR to our registry (not upstream biabcontainerreg)
+          # This ensures we use images built from our code with correct SDK versions
+          $ACR_NAME = "${{ secrets.ACR_TEST_LOGIN_SERVER }}"
+          if ($ACR_NAME -ne "") {
             azd env set AZURE_ENV_CONTAINER_REGISTRY_ENDPOINT="$ACR_NAME"
-            Write-Host "Set ACR name to: $ACR_NAME"
+            Write-Host "✅ Set ACR to: $ACR_NAME"
           } else {
-            Write-Host "Skipping ACR name configuration (using existing image)"
+            Write-Host "⚠️ ACR_TEST_LOGIN_SERVER not set, using default (biabcontainerreg)"
+          }
+
+          if ($env:INPUT_BUILD_DOCKER_IMAGE -eq "true") {
+            Write-Host "✅ Docker image will be built and pushed to: $ACR_NAME"
+          } else {
+            Write-Host "ℹ️ Using existing image from: $ACR_NAME"
           }
 
           if ($env:INPUT_EXP -eq "true") {
             Write-Host "✅ EXP ENABLED - Setting EXP parameters..."
-            
+
             # Set EXP variables dynamically
             if ($env:INPUT_AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID -ne "") {
               $EXP_LOG_ANALYTICS_ID = $env:INPUT_AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID
             } else {
               $EXP_LOG_ANALYTICS_ID = "${{ secrets.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}"
             }
-            
+
             if ($env:INPUT_AZURE_EXISTING_AI_PROJECT_RESOURCE_ID -ne "") {
               $EXP_AI_PROJECT_ID = $env:INPUT_AZURE_EXISTING_AI_PROJECT_RESOURCE_ID
             } else {
               $EXP_AI_PROJECT_ID = "${{ secrets.AZURE_ENV_FOUNDRY_PROJECT_ID }}"
             }
-            
+
             Write-Host "AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID: $EXP_LOG_ANALYTICS_ID"
             Write-Host "AZURE_EXISTING_AI_PROJECT_RESOURCE_ID: $EXP_AI_PROJECT_ID"
             azd env set AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID="$EXP_LOG_ANALYTICS_ID"
@@ -289,7 +297,7 @@ jobs:
           Write-Host "Extracting deployment outputs..."
           $DEPLOY_OUTPUT = azd env get-values --output json | ConvertFrom-Json
           Write-Host "Deployment output: $($DEPLOY_OUTPUT | ConvertTo-Json -Depth 10)"
-          
+
           if (-not $DEPLOY_OUTPUT) {
             Write-Host "Error: Deployment output is empty. Please check the deployment logs."
             exit 1
@@ -328,7 +336,7 @@ jobs:
         run: |
           set -e
           az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          
+
           # Upload team configurations and index sample data in one step
           # Automatically select "6" (All use cases) for non-interactive deployment
           echo "6" | bash infra/scripts/selecting_team_config_and_data.sh
@@ -366,22 +374,22 @@ jobs:
           if [[ "${{ job.status }}" == "success" ]]; then
             echo "### ✅ Deployment Details" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            
+
             # Display Web App URL if available
             if [[ -n "${{ steps.get_output_windows.outputs.WEBAPP_URL }}" ]]; then
               echo "- **Web Application URL**: [${{ steps.get_output_windows.outputs.WEBAPP_URL }}](${{ steps.get_output_windows.outputs.WEBAPP_URL }})" >> $GITHUB_STEP_SUMMARY
             fi
-            
+
             # Display Container App Backend URL if available
             if [[ -n "${{ steps.get_output_windows.outputs.BACKEND_URL }}" ]]; then
               echo "- **Backend API URL**: [${{ steps.get_output_windows.outputs.BACKEND_URL }}](${{ steps.get_output_windows.outputs.BACKEND_URL }})" >> $GITHUB_STEP_SUMMARY
             fi
-            
+
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "#### 🎯 Post-Deployment Actions Completed:" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ Azure resources provisioned and configured" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ Agent team configurations uploaded" >> $GITHUB_STEP_SUMMARY
-            echo "- ✅ Sample datasets processed and indexed" >> $GITHUB_STEP_SUMMARY            
+            echo "- ✅ Sample datasets processed and indexed" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY

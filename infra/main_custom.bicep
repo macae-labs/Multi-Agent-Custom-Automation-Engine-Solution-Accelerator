@@ -131,9 +131,6 @@ param virtualMachineAdminUsername string?
 @description('Optional. The password for the administrator account of the virtual machine. Allows to customize credentials if `enablePrivateNetworking` is set to true.')
 @secure()
 param virtualMachineAdminPassword string?
-
-@description('Optional. The size of the virtual machine. Defaults to Standard_D2s_v5.')
-param virtualMachineSize string = 'Standard_D2s_v5'
 // These parameters are changed for testing - please reset as part of publication
 
 @description('Optional. The Container Registry hostname where the docker images for the backend are located.')
@@ -171,6 +168,9 @@ param existingLogAnalyticsWorkspaceId string = ''
 
 @description('Optional. Resource ID of an existing Ai Foundry AI Services resource.')
 param existingAiFoundryAiProjectResourceId string = ''
+
+@description('Optional. Resource ID of an existing Container Apps Environment. Use this to avoid hitting the 5 environment limit per subscription.')
+param existingContainerAppsEnvironmentResourceId string = ''
 
 // ============== //
 // Variables      //
@@ -344,7 +344,7 @@ module logAnalyticsWorkspace 'br/public:avm/res/operational-insights/workspace:0
       : null
   }
 }
-// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new) 
+// Log Analytics Name, workspace ID, customer ID, and shared key (existing or new)
 var logAnalyticsWorkspaceName = useExistingLogAnalytics
   ? existingLogAnalyticsWorkspace!.name
   : logAnalyticsWorkspace!.outputs.name
@@ -375,6 +375,7 @@ module applicationInsights 'br/public:avm/res/insights/component:0.6.0' = if (en
     flowType: 'Bluefield'
     // WAF aligned configuration for Monitoring
     workspaceResourceId: enableMonitoring ? logAnalyticsWorkspaceResourceId : ''
+    diagnosticSettings: enableMonitoring ? [{ workspaceResourceId: logAnalyticsWorkspaceResourceId }] : null
   }
 }
 
@@ -605,6 +606,7 @@ module proximityPlacementGroup 'br/public:avm/res/compute/proximity-placement-gr
 
 var virtualMachineResourceName = 'vm-${solutionSuffix}'
 var virtualMachineAvailabilityZone = 1
+var virtualMachineSize = 'Standard_D2s_v4'
 module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.17.0' = if (enablePrivateNetworking) {
   name: take('avm.res.compute.virtual-machine.${virtualMachineResourceName}', 64)
   params: {
@@ -1117,8 +1119,15 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
 // ========== Backend Container App Environment ========== //
 // WAF best practices for container apps: https://learn.microsoft.com/en-us/azure/well-architected/service-guides/azure-container-apps
 // PSRule for Container App: https://azure.github.io/PSRule.Rules.Azure/en/rules/resource/#container-app
+var useExistingContainerAppsEnvironment = !empty(existingContainerAppsEnvironmentResourceId)
 var containerAppEnvironmentResourceName = 'cae-${solutionSuffix}'
-module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = {
+
+// Computed Container Apps Environment Resource ID - uses existing if provided, otherwise from new module
+var containerAppsEnvironmentResourceId = useExistingContainerAppsEnvironment
+  ? existingContainerAppsEnvironmentResourceId
+  : containerAppEnvironment!.outputs.resourceId
+
+module containerAppEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = if (!useExistingContainerAppsEnvironment) {
   name: take('avm.res.app.managed-environment.${containerAppEnvironmentResourceName}', 64)
   params: {
     name: containerAppEnvironmentResourceName
@@ -1201,7 +1210,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: union(tags, { 'azd-service-name': 'backend' })
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 8000
     ingressExternal: true
@@ -1424,7 +1433,7 @@ module containerAppMcp 'br/public:avm/res/app/container-app:0.18.1' = {
     tags: union(tags, { 'azd-service-name': 'mcp' })
     location: location
     enableTelemetry: enableTelemetry
-    environmentResourceId: containerAppEnvironment.outputs.resourceId
+    environmentResourceId: containerAppsEnvironmentResourceId
     managedIdentities: { userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId] }
     ingressTargetPort: 9000
     ingressExternal: true
@@ -1754,7 +1763,7 @@ module searchService 'br/public:avm/res/search/search-service:0.11.1' = {
     //Removing the Private endpoints as we are facing the issue with connecting to search service while comminicating with agents
 
     privateEndpoints: []
-    // privateEndpoints: enablePrivateNetworking 
+    // privateEndpoints: enablePrivateNetworking
     //   ? [
     //       {
     //         name: 'pep-search-${solutionSuffix}'
