@@ -1,4 +1,3 @@
-import PropTypes from 'prop-types';
 import ChatInput from "@/coral/modules/ChatInput";
 import { PlanChatProps } from "@/models";
 import { Button } from "@fluentui/react-components";
@@ -73,15 +72,6 @@ const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
             </ChatInput>
         </div>
     );
-};
-
-PlanChatBody.propTypes = {
-    planData: PropTypes.any,
-    input: PropTypes.string.isRequired,
-    setInput: PropTypes.func.isRequired,
-    submittingChatDisableInput: PropTypes.bool.isRequired,
-    OnChatSubmit: PropTypes.func.isRequired,
-    waitingForPlan: PropTypes.bool.isRequired
-};
+}
 
 export default PlanChatBody;

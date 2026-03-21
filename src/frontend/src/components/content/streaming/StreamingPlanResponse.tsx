@@ -13,14 +13,6 @@ import {
 import React, { useState } from 'react';
 import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
 
-interface StreamingPlanResponseProps {
-    planApprovalRequest: MPlanData | null;
-    handleApprovePlan: () => void;
-    handleRejectPlan: () => void;
-    processingApproval: boolean;
-    showApprovalButtons: boolean;
-}
-
 // Updated styles to match consistent spacing and remove brand colors from bot elements
 const useStyles = makeStyles({
     container: {
@@ -285,8 +277,17 @@ const getFactsPreview = (content: string): string => {
     return content.length > 200 ? content.substring(0, 200) + "..." : content;
 };
 
+// Props interface for the plan response component
+interface RenderPlanResponseProps {
+    planApprovalRequest: MPlanData | null;
+    handleApprovePlan: () => void;
+    handleRejectPlan: () => void;
+    processingApproval: boolean;
+    showApprovalButtons: boolean;
+}
+
 // FluentUI-based plan response component with consistent spacing and proper colors
-const StreamingPlanResponse: React.FC<StreamingPlanResponseProps> = ({
+const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
     planApprovalRequest,
     handleApprovePlan,
     handleRejectPlan,
@@ -441,4 +442,4 @@ const StreamingPlanResponse: React.FC<StreamingPlanResponseProps> = ({
     );
 };
 
-export default StreamingPlanResponse;
+export default RenderPlanResponse;

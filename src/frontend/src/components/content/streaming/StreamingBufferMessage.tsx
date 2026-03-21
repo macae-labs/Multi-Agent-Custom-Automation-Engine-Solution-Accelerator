@@ -165,7 +165,6 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                         a: ({ node, children, ...props }) => (
                                             <a
                                                 {...props}
-                                                aria-label={children ? undefined : 'link'}
                                                 style={{
                                                     color: 'var(--colorNeutralBrandForeground1)',
                                                     textDecoration: 'none'
@@ -205,7 +204,6 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                 a: ({ node, children, ...props }) => (
                                     <a
                                         {...props}
-                                        aria-label={children ? undefined : 'link'}
                                         style={{
                                             color: 'var(--colorNeutralBrandForeground1)',
                                             textDecoration: 'none'

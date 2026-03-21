@@ -21,5 +21,6 @@ module.exports = {
     rules: {
         // Add custom rules here
         'react/react-in-jsx-scope': 'off', // Not needed in React 17+
+        'react/prop-types': 'off', // TypeScript provides static type checking, prop-types is redundant
     }
 };

@@ -138,7 +138,7 @@ export const toBoolean = (value: any): boolean => {
     return value.trim().toLowerCase() === 'true';
 };
 
-const configExports = {
+const apiConfig = {
     setApiUrl,
     getApiUrl,
     toBoolean,
@@ -150,4 +150,4 @@ const configExports = {
     API_URL,
 };
 
-export default configExports;
+export default apiConfig;

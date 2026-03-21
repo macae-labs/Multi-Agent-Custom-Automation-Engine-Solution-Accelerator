@@ -33,10 +33,8 @@ class FoundryService:
     # Example convenience wrappers – adjust as your project needs evolve
     async def list_connections(self) -> list[Dict[str, Any]]:
         client = await self.get_client()
-        return [
-            c.as_dict() if hasattr(c, "as_dict") else dict(c)
-            async for c in client.connections.list()
-        ]
+        conns = await client.connections.list()
+        return [c.as_dict() if hasattr(c, "as_dict") else dict(c) for c in conns]
 
     async def get_connection(self, name: str) -> Dict[str, Any]:
         client = await self.get_client()

@@ -1,9 +1,9 @@
 # File: test_message.py
 
 import uuid
-from models.messages_kernel import (
+from src.backend.common.models.messages_af import (
     DataType,
-    AgentType,
+    AgentType as BAgentType,   # map to your enum
     StepStatus,
     PlanStatus,
     HumanFeedbackStatus,
@@ -20,7 +20,7 @@ def test_enum_values():
     """Test enumeration values for consistency."""
     assert DataType.session == "session"
     assert DataType.plan == "plan"
-    assert AgentType.HUMAN.value == "Human_Agent"
+    assert BAgentType.HUMAN == "Human_Agent"   # was human_agent / "HumanAgent"
     assert StepStatus.completed == "completed"
     assert PlanStatus.in_progress == "in_progress"
     assert HumanFeedbackStatus.requested == "requested"
@@ -31,7 +31,7 @@ def test_plan_with_steps_update_counts():
     step1 = Step(
         plan_id=str(uuid.uuid4()),
         action="Review document",
-        agent=AgentType.HUMAN.value,
+        agent=BAgentType.HUMAN,
         status=StepStatus.completed,
         session_id=str(uuid.uuid4()),
         user_id=str(uuid.uuid4()),
@@ -39,7 +39,7 @@ def test_plan_with_steps_update_counts():
     step2 = Step(
         plan_id=str(uuid.uuid4()),
         action="Approve document",
-        agent=AgentType.HR.value,
+        agent=BAgentType.HR,
         status=StepStatus.failed,
         session_id=str(uuid.uuid4()),
         user_id=str(uuid.uuid4()),
@@ -78,10 +78,10 @@ def test_action_request_creation():
         plan_id=str(uuid.uuid4()),
         session_id=str(uuid.uuid4()),
         action="Review and approve",
-        agent=AgentType.PROCUREMENT.value,
+        agent=BAgentType.PROCUREMENT,
     )
     assert action_request.action == "Review and approve"
-    assert action_request.agent == AgentType.PROCUREMENT.value
+    assert action_request.agent == BAgentType.PROCUREMENT
 
 
 def test_human_feedback_creation():
@@ -114,7 +114,7 @@ def test_step_defaults():
     step = Step(
         plan_id=str(uuid.uuid4()),
         action="Prepare report",
-        agent=AgentType.GENERIC.value,
+        agent=BAgentType.GENERIC,
         session_id=str(uuid.uuid4()),
         user_id=str(uuid.uuid4()),
     )

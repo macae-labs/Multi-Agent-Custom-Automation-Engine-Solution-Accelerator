@@ -1,16 +1,16 @@
 {
     "name": "Multi Agent Custom Automation Engine Solution Accelerator",
-    "image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },    
     "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {"version": "latest"},
         "ghcr.io/azure/azure-dev/azd:latest": {},
         "ghcr.io/devcontainers/features/node:1": {},
         "ghcr.io/devcontainers/features/azure-cli:1": {},
-        "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}
+        "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {"shellautocompletion": true,
+            "version": "latest"}
     },
-    "mounts": [
-      "source=C:/Users/admin/fibroskin-academic-7txy1f,target=/workspaces/projects/fibroskin-academic-7txy1f,type=bind,consistency=cached"
-    ],
     "customizations": {
         "vscode": {
             "extensions": [
@@ -33,8 +33,7 @@
                 "shardulm94.trailing-spaces",
                 "tamasfe.even-better-toml",
                 "yzhang.markdown-all-in-one",
-                "ms-vscode.azure-account",
-                "Anthropic.claude-code"
+                "ms-vscode.azure-account"
             ]
         }
     },

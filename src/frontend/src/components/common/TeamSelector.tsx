@@ -240,7 +240,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
       }
 
       const fileText = await file.text();
-      let teamData;
+      let teamData: TeamConfig;
       try {
         teamData = JSON.parse(fileText);
       } catch (parseError) {
@@ -341,7 +341,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
 
     try {
       const fileText = await file.text();
-      let teamData;
+      let teamData: TeamConfig;
       try {
         teamData = JSON.parse(fileText);
       } catch (parseError) {

@@ -40,6 +40,9 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
     // ✅ Allow parent to access textarea DOM node
     useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement);
 
+    // Display name for debugging
+    ChatInput.displayName = 'ChatInput';
+
     // ✅ Use useLayoutEffect to prevent visual jumping
     useLayoutEffect(() => {
       if (textareaRef.current) {
@@ -166,7 +169,5 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
     );
   }
 );
-
-ChatInput.displayName = 'ChatInput';
 
 export default ChatInput;

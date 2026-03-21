@@ -132,8 +132,7 @@ const isClarificationMessage = (content: string): boolean => {
   return clarificationKeywords.some(keyword => lowerContent.includes(keyword));
 };
 
-// Renamed to PascalCase to be a proper React component that can use hooks
-const StreamingAgentMessages: React.FC<StreamingAgentMessageProps> = ({
+const RenderAgentMessages: React.FC<StreamingAgentMessageProps> = ({
   agentMessages,
   planData,
   planApprovalRequest
@@ -197,10 +196,9 @@ const StreamingAgentMessages: React.FC<StreamingAgentMessageProps> = ({
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypePrism]}
                   components={{
-                      a: ({ children, ...props }) => (
+                      a: ({ node, children, ...props }) => (
                         <a
                           {...props}
-                          aria-label={children ? undefined : 'link'}
                           style={{
                             color: 'var(--colorNeutralBrandForeground1)',
                             textDecoration: 'none'
@@ -228,4 +226,4 @@ const StreamingAgentMessages: React.FC<StreamingAgentMessageProps> = ({
   );
 };
 
-export default StreamingAgentMessages;
+export default RenderAgentMessages;

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { PlanStatus } from '../models';
 import { APIService } from '../api/apiService';
 
@@ -16,6 +16,8 @@ export const usePlanCancellationAlert = ({
   planApprovalRequest,
   onNavigate
 }: UsePlanCancellationAlertProps) => {
+  const apiService = useMemo(() => new APIService(), []);
+
   /**
    * Check if a plan is currently active/running
    */
@@ -43,9 +45,6 @@ export const usePlanCancellationAlert = ({
       return;
     }
 
-    // Create apiService inside callback to avoid dependency issues
-    const apiService = new APIService();
-
     try {
       // User confirmed, cancel the plan
       if (planApprovalRequest?.id) {
@@ -65,7 +64,7 @@ export const usePlanCancellationAlert = ({
       alert('Failed to cancel the plan properly, but navigation will continue.');
       onNavigate();
     }
-  }, [isPlanActive, onNavigate, planApprovalRequest, planData]);
+  }, [isPlanActive, onNavigate, planApprovalRequest, planData, apiService]);
 
   return {
     isPlanActive,

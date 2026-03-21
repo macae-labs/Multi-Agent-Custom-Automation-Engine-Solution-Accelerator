@@ -16,26 +16,25 @@ const AppWrapper = () => {
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
   type ConfigType = typeof defaultConfig;
-  const [, setConfig] = useState<ConfigType>(defaultConfig);
+  const [config, setConfig] = useState<ConfigType>(defaultConfig);
   useEffect(() => {
     const initConfig = async () => {
-      // Use defaultConfig for initial setup (config === defaultConfig at this point)
-      window.appConfig = defaultConfig;
-      setEnvData(defaultConfig);
-      setApiUrl(defaultConfig.API_URL);
+      window.appConfig = config;
+      setEnvData(config);
+      setApiUrl(config.API_URL);
       try {
         const response = await fetch('/config');
-        let fetchedConfig = defaultConfig;
+        let config = defaultConfig;
         if (response.ok) {
-          fetchedConfig = await response.json();
-          fetchedConfig.ENABLE_AUTH = toBoolean(fetchedConfig.ENABLE_AUTH);
+          config = await response.json();
+          config.ENABLE_AUTH = toBoolean(config.ENABLE_AUTH);
         }
 
-        window.appConfig = fetchedConfig;
-        setEnvData(fetchedConfig);
-        setApiUrl(fetchedConfig.API_URL);
-        setConfig(fetchedConfig);
-        const defaultUserInfo = await getUserInfo();
+        window.appConfig = config;
+        setEnvData(config);
+        setApiUrl(config.API_URL);
+        setConfig(config);
+        let defaultUserInfo = await getUserInfo();
         window.userInfo = defaultUserInfo;
         setUserInfoGlobal(defaultUserInfo);
         await apiService.sendUserBrowserLanguage();
@@ -48,7 +47,7 @@ const AppWrapper = () => {
     };
 
     initConfig(); // Call the async function inside useEffect
-  }, []);
+  }, [config]);
   // Effect to listen for changes in the user's preferred color scheme
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");

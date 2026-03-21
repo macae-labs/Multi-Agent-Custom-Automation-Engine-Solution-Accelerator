@@ -566,7 +566,7 @@ const PlanPage: React.FC = () => {
                 setLoading(false);
             }
         },
-        [planId, resetPlanVariables, setLoading, setShowApprovalButtons, setWaitingForPlan, setContinueWithWebsocketFlow, setAgentMessages, setPlanApprovalRequest, setStreamingMessageBuffer, setShowBufferingText, setPlanData, setErrorLoading]
+        [planId, resetPlanVariables]
     );
 
 
@@ -596,7 +596,7 @@ const PlanPage: React.FC = () => {
         } finally {
             setProcessingApproval(false);
         }
-    }, [planApprovalRequest, planData, showToast, dismissToast, setProcessingApproval, setShowProcessingPlanSpinner, setShowApprovalButtons]);
+    }, [dismissToast, planApprovalRequest, planData?.plan?.id, showToast]);
 
     // Handle plan rejection
     const handleRejectPlan = useCallback(async () => {
@@ -624,7 +624,7 @@ const PlanPage: React.FC = () => {
         } finally {
             setProcessingApproval(false);
         }
-    }, [planApprovalRequest, planData, navigate, showToast, dismissToast, setProcessingApproval]);
+    }, [planApprovalRequest, showToast, planData?.plan?.id, dismissToast, navigate]);
     // Chat submission handler - updated for v4 backend compatibility
 
     const handleOnchatSubmit = useCallback(
@@ -681,7 +681,7 @@ const PlanPage: React.FC = () => {
 
             }
         },
-        [planData?.plan, clarificationMessage, planApprovalRequest, showToast, dismissToast, scrollToBottom, setInput, setSubmittingChatDisableInput, setAgentMessages, setShowProcessingPlanSpinner]
+        [planData?.plan, showToast, clarificationMessage?.request_id, planApprovalRequest?.id, dismissToast, scrollToBottom]
     );
 
 

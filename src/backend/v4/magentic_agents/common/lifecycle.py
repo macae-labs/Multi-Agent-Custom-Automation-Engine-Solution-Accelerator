@@ -5,15 +5,14 @@ from contextlib import AsyncExitStack
 from typing import Any, Optional
 
 from agent_framework import (
-    ChatAgent,
-    HostedMCPTool,
+    Agent,
     MCPStreamableHTTPTool,
 )
 
 # from agent_framework.azure import AzureAIClient
 from agent_framework_azure_ai import AzureAIClient
 from azure.ai.agents.aio import AgentsClient
-from azure.identity.aio import DefaultAzureCredential
+from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
 from common.utils.utils_agents import (
@@ -46,13 +45,13 @@ class MCPEnabledBase:
     ) -> None:
         self._stack: AsyncExitStack | None = None
         self.mcp_cfg: MCPConfig | None = mcp
-        self.mcp_tool: HostedMCPTool | None = None
-        self._agent: ChatAgent | None = None
+        self.mcp_tool: MCPStreamableHTTPTool | None = None
+        self._agent: Agent | None = None
         self.team_service: TeamService | None = team_service
         self.team_config: TeamConfiguration | None = team_config
         self.client: Optional[AgentsClient] = None
         self.project_endpoint = project_endpoint
-        self.creds: Optional[DefaultAzureCredential] = None
+        self.creds = None
         self.memory_store: Optional[DatabaseBase] = memory_store
         self.agent_name: str | None = agent_name
         self.agent_description: str | None = agent_description
@@ -66,8 +65,8 @@ class MCPEnabledBase:
             return self
         self._stack = AsyncExitStack()
 
-        # Acquire credential
-        self.creds = DefaultAzureCredential()
+        # Acquire credential using centralized config method
+        self.creds = config.get_azure_credential_async(config.AZURE_CLIENT_ID)
         if self._stack:
             await self._stack.enter_async_context(self.creds)
         # Create AgentsClient
@@ -155,9 +154,9 @@ class MCPEnabledBase:
         """
         if (
             self._agent
-            and self._agent.chat_client
+            and self._agent.client
         ):
-            return self._agent.chat_client  # type: ignore
+            return self._agent.client  # type: ignore
         chat_client = AzureAIClient(
             project_endpoint=self.project_endpoint,
             agent_name=self.agent_name,
