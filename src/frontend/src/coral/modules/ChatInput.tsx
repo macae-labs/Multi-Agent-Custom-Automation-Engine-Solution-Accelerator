@@ -40,16 +40,19 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
     // ✅ Allow parent to access textarea DOM node
     useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement);
 
+    // Display name for debugging
+    ChatInput.displayName = 'ChatInput';
+
     // ✅ Use useLayoutEffect to prevent visual jumping
     useLayoutEffect(() => {
       if (textareaRef.current) {
         // Store the current scroll position to prevent jumping
         const scrollTop = textareaRef.current.scrollTop;
-        
+
         textareaRef.current.style.height = "auto";
         const newHeight = Math.max(textareaRef.current.scrollHeight, 24);
         textareaRef.current.style.height = `${newHeight}px`;
-        
+
         // Restore scroll position
         textareaRef.current.scrollTop = scrollTop;
       }

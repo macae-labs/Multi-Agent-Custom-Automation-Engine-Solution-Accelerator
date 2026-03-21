@@ -270,7 +270,7 @@ const PlanPage: React.FC = () => {
     //(WebsocketMessageType.AGENT_MESSAGE_STREAMING
     useEffect(() => {
         const unsubscribe = webSocketService.on(WebsocketMessageType.AGENT_MESSAGE_STREAMING, (streamingMessage: any) => {
-            
+
             //console.log('📋 Streaming Message', streamingMessage);
             // if is final true clear buffer and add final message to agent messages
             const line = PlanDataService.simplifyHumanClarification(streamingMessage.data.content);
@@ -348,7 +348,7 @@ const PlanPage: React.FC = () => {
 
 
             console.log('✅ Parsed final result message:', agentMessageData);
-            // we ignore the terminated message 
+            // we ignore the terminated message
             if (finalMessage?.data?.status === PlanStatus.COMPLETED) {
 
                 setShowBufferingText(true);
@@ -381,10 +381,10 @@ const PlanPage: React.FC = () => {
         const unsubscribe = webSocketService.on(WebsocketMessageType.ERROR_MESSAGE, (errorMessage: any) => {
             console.log('❌ Received ERROR_MESSAGE:', errorMessage);
             console.log('❌ Error message data:', errorMessage?.data);
-            
+
             // Try multiple ways to extract the error message
             let errorContent = "An unexpected error occurred. Please try again later.";
-            
+
             // Check for double-nested data structure
             if (errorMessage?.data?.data?.content) {
                 const content = errorMessage.data.data.content.trim();
@@ -566,7 +566,7 @@ const PlanPage: React.FC = () => {
                 setLoading(false);
             }
         },
-        [planId, navigate, resetPlanVariables]
+        [planId, resetPlanVariables]
     );
 
 
@@ -584,7 +584,7 @@ const PlanPage: React.FC = () => {
                 approved: true,
                 feedback: 'Plan approved by user'
             });
-            
+
             dismissToast(id);
             setShowProcessingPlanSpinner(true);
             setShowApprovalButtons(false);
@@ -596,9 +596,9 @@ const PlanPage: React.FC = () => {
         } finally {
             setProcessingApproval(false);
         }
-    }, [planApprovalRequest, planData, setProcessingApproval]);
+    }, [dismissToast, planApprovalRequest, planData?.plan?.id, showToast]);
 
-    // Handle plan rejection  
+    // Handle plan rejection
     const handleRejectPlan = useCallback(async () => {
         if (!planApprovalRequest) return;
 
@@ -624,7 +624,7 @@ const PlanPage: React.FC = () => {
         } finally {
             setProcessingApproval(false);
         }
-    }, [planApprovalRequest, planData, navigate, setProcessingApproval]);
+    }, [planApprovalRequest, showToast, planData?.plan?.id, dismissToast, navigate]);
     // Chat submission handler - updated for v4 backend compatibility
 
     const handleOnchatSubmit = useCallback(
@@ -681,7 +681,7 @@ const PlanPage: React.FC = () => {
 
             }
         },
-        [planData?.plan, showToast, dismissToast, loadPlanData]
+        [planData?.plan, showToast, clarificationMessage?.request_id, planApprovalRequest?.id, dismissToast, scrollToBottom]
     );
 
 
@@ -776,7 +776,7 @@ const PlanPage: React.FC = () => {
                         </>
                     ) : (
                         <>
-                            
+
                             <ContentToolbar
                                 panelTitle="Multi-Agent Planner"
                             >
@@ -784,7 +784,7 @@ const PlanPage: React.FC = () => {
                                     <TaskListSquareLtr />
                                 </PanelRightToggles> */}
                             </ContentToolbar>
-                            
+
                             <PlanChat
                                 planData={planData}
                                 OnChatSubmit={handleOnchatSubmit}

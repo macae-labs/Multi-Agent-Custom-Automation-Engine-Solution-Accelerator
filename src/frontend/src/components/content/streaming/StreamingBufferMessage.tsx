@@ -162,7 +162,7 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                     remarkPlugins={[remarkGfm]}
                                     rehypePlugins={[rehypePrism]}
                                     components={{
-                                        a: ({ node, ...props }) => (
+                                        a: ({ node, children, ...props }) => (
                                             <a
                                                 {...props}
                                                 style={{
@@ -175,7 +175,9 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                                 onMouseLeave={(e) => {
                                                     e.currentTarget.style.textDecoration = 'none';
                                                 }}
-                                            />
+                                            >
+                                                {children}
+                                            </a>
                                         ),
                                         p: ({ node, ...props }) => (
                                             <p {...props} style={{ margin: '0 0 8px 0' }} />
@@ -199,7 +201,7 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                             remarkPlugins={[remarkGfm]}
                             rehypePlugins={[rehypePrism]}
                             components={{
-                                a: ({ node, ...props }) => (
+                                a: ({ node, children, ...props }) => (
                                     <a
                                         {...props}
                                         style={{
@@ -212,7 +214,9 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                         onMouseLeave={(e) => {
                                             e.currentTarget.style.textDecoration = 'none';
                                         }}
-                                    />
+                                    >
+                                        {children}
+                                    </a>
                                 )
                             }}
                         >

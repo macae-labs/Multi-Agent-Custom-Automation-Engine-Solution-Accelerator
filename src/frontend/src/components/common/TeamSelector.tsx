@@ -69,8 +69,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
   const isDefaultTeam = (team: TeamConfig): boolean => {
     const defaultTeamIds = ['team-1', 'team-2', 'team-3','team-clm-1', 'team-compliance-1'];
     const defaultTeamNames = ['Human Resources Team', 'Product Marketing Team', 'Retail Customer Success Team','RFP Team', 'Contract Compliance Review Team'];
-    
-    return defaultTeamIds.includes(team.team_id) || 
+
+    return defaultTeamIds.includes(team.team_id) ||
            defaultTeamNames.includes(team.name);
   };
   const loadTeams = async () => {
@@ -240,7 +240,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
       }
 
       const fileText = await file.text();
-      let teamData;
+      let teamData: TeamConfig;
       try {
         teamData = JSON.parse(fileText);
       } catch (parseError) {
@@ -341,7 +341,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
 
     try {
       const fileText = await file.text();
-      let teamData;
+      let teamData: TeamConfig;
       try {
         teamData = JSON.parse(fileText);
       } catch (parseError) {
@@ -596,7 +596,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
                     ) : searchQuery ? (
                       <div className={styles.noTeamsContainer}>
                         <Text size={400} className={styles.noTeamsText}>
-                          No teams found matching "{searchQuery}"
+                          No teams found matching &quot;{searchQuery}&quot;
                         </Text>
                       </div>
                     ) : (
@@ -722,7 +722,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
           <DialogContent className={styles.deleteDialogContent}>
             <DialogBody className={styles.deleteDialogBody}>
               <DialogTitle className={styles.deleteDialogTitle}>
-                Are you sure you want to delete "{teamToDelete?.name}"?
+                Are you sure you want to delete &quot;{teamToDelete?.name}&quot;?
               </DialogTitle>
               <Text className={styles.deleteConfirmText}>
                 This team configurations and its agents are shared across all users in the system. Deleting this team will permanently remove it for everyone, and this action cannot be undone.

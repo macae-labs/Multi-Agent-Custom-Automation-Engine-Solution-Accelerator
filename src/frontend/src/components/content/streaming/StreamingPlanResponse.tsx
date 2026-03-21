@@ -1,14 +1,14 @@
 import { MPlanData } from "@/models";
-import { 
-    Button, 
-    Text,  
-    Body1, 
+import {
+    Button,
+    Text,
+    Body1,
     Tag,
     makeStyles,
     tokens
 } from "@fluentui/react-components";
-import { 
-    CheckmarkCircle20Regular 
+import {
+    CheckmarkCircle20Regular
 } from "@fluentui/react-icons";
 import React, { useState } from 'react';
 import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
@@ -181,9 +181,9 @@ const getAgentDisplayNameFromPlan = (planApprovalRequest: MPlanData | null): str
 };
 
 // Dynamically extract content from whatever fields contain data
-const extractDynamicContent = (planApprovalRequest: MPlanData): { 
-    factsContent: string; 
-    planSteps: Array<{ type: 'heading' | 'substep'; text: string }> 
+const extractDynamicContent = (planApprovalRequest: MPlanData): {
+    factsContent: string;
+    planSteps: Array<{ type: 'heading' | 'substep'; text: string }>
 } => {
     if (!planApprovalRequest) return { factsContent: '', planSteps: [] };
 
@@ -194,7 +194,7 @@ const extractDynamicContent = (planApprovalRequest: MPlanData): {
     const factsSources: string[] = [];
 
     // Add team assembly if available
-    if (planApprovalRequest.context?.participant_descriptions && 
+    if (planApprovalRequest.context?.participant_descriptions &&
         Object.keys(planApprovalRequest.context.participant_descriptions).length > 0) {
         let teamContent = 'Team Assembly:\n\n';
         Object.entries(planApprovalRequest.context.participant_descriptions).forEach(([agent, description]) => {
@@ -232,30 +232,30 @@ const extractDynamicContent = (planApprovalRequest: MPlanData): {
         // Look in user_request or facts for plan content
         const searchContent = planApprovalRequest.user_request || planApprovalRequest.facts || '';
         const lines = searchContent.split('\n');
-        
+
         for (const line of lines) {
             const trimmedLine = line.trim();
-            
+
             // Skip empty lines and section headers
-            if (!trimmedLine || 
+            if (!trimmedLine ||
                 trimmedLine.toLowerCase().includes('plan created') ||
                 trimmedLine.toLowerCase().includes('user request') ||
                 trimmedLine.toLowerCase().includes('team assembly') ||
                 trimmedLine.toLowerCase().includes('fact sheet')) {
                 continue;
             }
-            
+
             // Look for bullet points, dashes, or numbered items
-            if (trimmedLine.match(/^[-•*]\s+/) || 
+            if (trimmedLine.match(/^[-•*]\s+/) ||
                 trimmedLine.match(/^\d+\.\s+/) ||
                 trimmedLine.match(/^[a-zA-Z][\w\s]*:$/)) {
-                
+
                 // Remove bullet/number prefixes for clean display
                 let cleanText = trimmedLine
                     .replace(/^[-•*]\s+/, '')
                     .replace(/^\d+\.\s+/, '')
                     .trim();
-                
+
                 if (cleanText.length > 3) {
                     // Determine if it's a heading (ends with colon) or substep
                     if (cleanText.endsWith(':')) {
@@ -277,17 +277,26 @@ const getFactsPreview = (content: string): string => {
     return content.length > 200 ? content.substring(0, 200) + "..." : content;
 };
 
+// Props interface for the plan response component
+interface RenderPlanResponseProps {
+    planApprovalRequest: MPlanData | null;
+    handleApprovePlan: () => void;
+    handleRejectPlan: () => void;
+    processingApproval: boolean;
+    showApprovalButtons: boolean;
+}
+
 // FluentUI-based plan response component with consistent spacing and proper colors
-const renderPlanResponse = (
-    planApprovalRequest: MPlanData | null, 
-    handleApprovePlan: () => void, 
-    handleRejectPlan: () => void, 
-    processingApproval: boolean, 
-    showApprovalButtons: boolean
-) => {
+const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
+    planApprovalRequest,
+    handleApprovePlan,
+    handleRejectPlan,
+    processingApproval,
+    showApprovalButtons
+}) => {
     const styles = useStyles();
     const [isFactsExpanded, setIsFactsExpanded] = useState(false);
-    
+
     if (!planApprovalRequest) return null;
 
     const agentName = getAgentDisplayNameFromPlan(planApprovalRequest);
@@ -316,7 +325,7 @@ const renderPlanResponse = (
                         {agentName}
                     </Text>
                     {!isCreatingPlan && (
-                        <Tag 
+                        <Tag
                             appearance="brand"
                         >
                             AI Agent
@@ -343,9 +352,9 @@ const renderPlanResponse = (
                                     Analysis
                                 </span>
                             </div>
-                            
-                            <Button 
-                                appearance="secondary" 
+
+                            <Button
+                                appearance="secondary"
                                 size="small"
                                 onClick={() => setIsFactsExpanded(!isFactsExpanded)}
                                 className={styles.factsButton}
@@ -353,13 +362,13 @@ const renderPlanResponse = (
                                 {isFactsExpanded ? 'Hide' : 'Details'}
                             </Button>
                         </div>
-                        
+
                         {!isFactsExpanded && (
                             <div className={styles.factsPreview}>
                                 {factsPreview}
                             </div>
                         )}
-                        
+
                         {isFactsExpanded && (
                             <div className={styles.factsContent}>
                                 {factsContent}
@@ -433,4 +442,4 @@ const renderPlanResponse = (
     );
 };
 
-export default renderPlanResponse;
+export default RenderPlanResponse;

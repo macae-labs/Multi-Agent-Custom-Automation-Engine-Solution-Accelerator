@@ -45,9 +45,9 @@ const AppWrapper = () => {
         setIsUserInfoLoaded(true);
       }
     };
-    
+
     initConfig(); // Call the async function inside useEffect
-  }, []);
+  }, [config]);
   // Effect to listen for changes in the user's preferred color scheme
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -62,7 +62,7 @@ const AppWrapper = () => {
 
     mediaQuery.addEventListener("change", handleThemeChange);
     return () => mediaQuery.removeEventListener("change", handleThemeChange);
-  }, []);
+  }, [isDarkMode]);
   if (!isConfigLoaded || !isUserInfoLoaded) return <div>Loading...</div>;
   return (
     <StrictMode>

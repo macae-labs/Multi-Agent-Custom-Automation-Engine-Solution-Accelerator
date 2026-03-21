@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { PlanStatus } from '../models';
 import { APIService } from '../api/apiService';
 
@@ -16,7 +16,7 @@ export const usePlanCancellationAlert = ({
   planApprovalRequest,
   onNavigate
 }: UsePlanCancellationAlertProps) => {
-  const apiService = new APIService();
+  const apiService = useMemo(() => new APIService(), []);
 
   /**
    * Check if a plan is currently active/running

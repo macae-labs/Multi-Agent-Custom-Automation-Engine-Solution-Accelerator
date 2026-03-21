@@ -85,11 +85,11 @@ const useStyles = makeStyles({
     alignSelf: 'flex-start',
 
   },
- 
+
   clarificationBubble: {
     backgroundColor: 'var(--colorNeutralBackground2)',
     color: 'var(--colorNeutralForeground1)',
-    padding: '6px 8px', 
+    padding: '6px 8px',
     borderRadius: '8px',
     fontSize: '14px',
     lineHeight: '1.5',
@@ -105,7 +105,7 @@ const useStyles = makeStyles({
     paddingTop: '8px',
     borderTop: '1px solid var(--colorNeutralStroke2)'
   },
-  
+
   copyButton: {
     height: '28px',
     width: '28px'
@@ -127,18 +127,18 @@ const isClarificationMessage = (content: string): boolean => {
     'what do you mean by',
     'clarification about'
   ];
-  
+
   const lowerContent = content.toLowerCase();
   return clarificationKeywords.some(keyword => lowerContent.includes(keyword));
 };
 
-const renderAgentMessages = (
-  agentMessages: AgentMessageData[], 
-  planData?: any, 
-  planApprovalRequest?: any
-) => {
+const RenderAgentMessages: React.FC<StreamingAgentMessageProps> = ({
+  agentMessages,
+  planData,
+  planApprovalRequest
+}) => {
   const styles = useStyles();
-  
+
   if (!agentMessages?.length) return null;
 
   // Filter out messages with empty content
@@ -186,17 +186,17 @@ const renderAgentMessages = (
 
               {/* Message Bubble */}
               <div className={
-                isHuman 
+                isHuman
                   ? `${styles.messageBubble} ${styles.humanBubble}`
-                  : isClarification 
-                    ? styles.clarificationBubble 
+                  : isClarification
+                    ? styles.clarificationBubble
                     : `${styles.messageBubble} ${styles.botBubble}`
               }>
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypePrism]}
                   components={{
-                      a: ({ node, ...props }) => (
+                      a: ({ node, children, ...props }) => (
                         <a
                           {...props}
                           style={{
@@ -209,7 +209,9 @@ const renderAgentMessages = (
                           onMouseLeave={(e) => {
                             e.currentTarget.style.textDecoration = 'none';
                           }}
-                        />
+                        >
+                          {children}
+                        </a>
                       )
                     }}
                 >
@@ -224,4 +226,4 @@ const renderAgentMessages = (
   );
 };
 
-export default renderAgentMessages;
+export default RenderAgentMessages;

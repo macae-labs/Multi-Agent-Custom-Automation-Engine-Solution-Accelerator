@@ -68,7 +68,7 @@ const RAIErrorCard: React.FC<RAIErrorCardProps> = ({
                         <div className="rai-suggestions-header">
                             <Lightbulb20Regular className="rai-suggestion-icon" />
                             <Text size={300} weight="semibold">
-                                Here's how to fix this:
+                                Here&apos;s how to fix this:
                             </Text>
                         </div>
                         <ul className="rai-suggestions-list">
