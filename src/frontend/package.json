@@ -62,6 +62,7 @@
     "@vitejs/plugin-react": "^4.5.1",
     "@vitest/ui": "^3.2.4",
     "eslint": "^8.57.1",
+    "eslint-config-react-app": "^7.0.1",
     "eslint-plugin-react": "^7.37.5",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
