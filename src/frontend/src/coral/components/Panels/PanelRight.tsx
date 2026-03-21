@@ -53,7 +53,7 @@ const PanelRight: React.FC<PanelRightProps> = ({
       panelType,
       isActive,
     });
-  }, []);
+  }, [panelType, isActive]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!panelResize) return;

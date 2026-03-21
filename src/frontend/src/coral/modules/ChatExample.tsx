@@ -45,7 +45,7 @@ const ChatExample: React.FC = () => {
             <div className="bot-tag">BOT</div>
           </div>
           <div className="message-content">
-            You got it! I've initiated a background check and everything looks good to go— You're ready to move onto helping Jessica set up and Office 365 account. Want me to hand that over to your Manager Agent?
+            You got it! I&apos;ve initiated a background check and everything looks good to go— You&apos;re ready to move onto helping Jessica set up and Office 365 account. Want me to hand that over to your Manager Agent?
           </div>
           <div className="message-actions">
             <button className="action-button">👍</button>
@@ -57,7 +57,7 @@ const ChatExample: React.FC = () => {
         {/* System action message */}
         <div className="message system">
           <div className="system-message">
-            Let's skip that step for now
+            Let&apos;s skip that step for now
           </div>
         </div>
 
@@ -68,7 +68,7 @@ const ChatExample: React.FC = () => {
             <div className="bot-tag">BOT</div>
           </div>
           <div className="message-content">
-            Alright, let's skip Office 365 onboarding.
+            Alright, let&apos;s skip Office 365 onboarding.
 
             Want to move onto helping get her set up with a laptop for now? I can call your IT Agent.
           </div>
@@ -82,7 +82,7 @@ const ChatExample: React.FC = () => {
         {/* System action message */}
         <div className="message system">
           <div className="system-message">
-            Let's do it!
+            Let&apos;s do it!
           </div>
         </div>
 
@@ -93,7 +93,7 @@ const ChatExample: React.FC = () => {
             <div className="bot-tag">BOT</div>
           </div>
           <div className="message-content">
-            Nice move - okay we've set her up with a Surface Laptop 15 with a Snapdragon Elite. Given her role as a Product Manager, this should be more than enough power to get her killing it through her workflows.
+            Nice move - okay we&apos;ve set her up with a Surface Laptop 15 with a Snapdragon Elite. Given her role as a Product Manager, this should be more than enough power to get her killing it through her workflows.
 
             We can now move onto registering her with benefit— want me to get that going?
           </div>
@@ -108,7 +108,7 @@ const ChatExample: React.FC = () => {
       {/* Input area */}
       <div className="input-wrapper">
         <div className="input-container">
-          <textarea 
+          <textarea
             className="input-field"
             placeholder="Describe what you'd like to do or use / to reference files, people, and more"
             rows={1}
@@ -124,4 +124,4 @@ const ChatExample: React.FC = () => {
   );
 };
 
-export default ChatExample; 
+export default ChatExample;
