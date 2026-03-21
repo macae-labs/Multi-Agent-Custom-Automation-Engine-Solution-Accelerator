@@ -159,6 +159,7 @@ jobs:
 
       - name: Run integration tests
         env:
+          PYTHONPATH: src:src/backend
           # Azure AI / Foundry
           AZURE_AI_AGENT_ENDPOINT: ${{ secrets.AZURE_AI_AGENT_ENDPOINT }}
           AZURE_AI_PROJECT_NAME: ${{ secrets.AZURE_AI_PROJECT_NAME }}
@@ -173,7 +174,7 @@ jobs:
 
         run: |
           cd src/backend
-          pytest -m "integration" \
+          python -m pytest ../tests/backend/v4 -m "integration" \
             -v -rs --tb=short --maxfail=3
 
   frontend-tests:

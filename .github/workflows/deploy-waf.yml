@@ -138,7 +138,6 @@ jobs:
               enableEncryptionAtHost=false \
               enableProximityPlacement=false \
               enableMaintenanceConfig=false \
-              existingContainerAppsEnvironmentResourceId="${{ vars.EXISTING_CAE_RESOURCE_ID }}" \
               createdBy="Pipeline" \
               tags="{'Purpose':'Deploying and Cleaning Up Resources for Validation','CreatedDate':'$current_date'}"
 
