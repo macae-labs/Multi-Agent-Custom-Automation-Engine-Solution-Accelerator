@@ -46,6 +46,11 @@ on:
         required: false
         default: ''
         type: string
+      env_name:
+        description: 'Environment Name (Optional - leave empty for auto-generate, use existing like pslc25991vme66 to update)'
+        required: false
+        default: ''
+        type: string
 
       waf_enabled:
         description: 'Enable WAF'
@@ -106,6 +111,7 @@ jobs:
       runner_os: ${{ steps.validate.outputs.runner_os }}
       azure_location: ${{ steps.validate.outputs.azure_location }}
       resource_group_name: ${{ steps.validate.outputs.resource_group_name }}
+      env_name: ${{ steps.validate.outputs.env_name }}
       waf_enabled: ${{ steps.validate.outputs.waf_enabled }}
       exp: ${{ steps.validate.outputs.exp }}
       build_docker_image: ${{ steps.validate.outputs.build_docker_image }}
@@ -122,6 +128,7 @@ jobs:
           INPUT_RUNNER_OS: ${{ github.event.inputs.runner_os }}
           INPUT_AZURE_LOCATION: ${{ github.event.inputs.azure_location }}
           INPUT_RESOURCE_GROUP_NAME: ${{ github.event.inputs.resource_group_name }}
+          INPUT_ENV_NAME: ${{ github.event.inputs.env_name }}
           INPUT_WAF_ENABLED: ${{ github.event.inputs.waf_enabled }}
           INPUT_EXP: ${{ github.event.inputs.EXP }}
           INPUT_BUILD_DOCKER_IMAGE: ${{ github.event.inputs.build_docker_image }}
@@ -273,6 +280,7 @@ jobs:
           echo "runner_os=$RUNNER_OS" >> $GITHUB_OUTPUT
           echo "azure_location=$LOCATION" >> $GITHUB_OUTPUT
           echo "resource_group_name=$INPUT_RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
+          echo "env_name=$INPUT_ENV_NAME" >> $GITHUB_OUTPUT
           echo "waf_enabled=$WAF_ENABLED" >> $GITHUB_OUTPUT
           echo "exp=$EXP_ENABLED" >> $GITHUB_OUTPUT
           echo "build_docker_image=$BUILD_DOCKER" >> $GITHUB_OUTPUT
@@ -290,6 +298,7 @@ jobs:
       runner_os: ${{ needs.validate-inputs.outputs.runner_os || 'ubuntu-latest' }}
       azure_location: ${{ needs.validate-inputs.outputs.azure_location || 'australiaeast' }}
       resource_group_name: ${{ needs.validate-inputs.outputs.resource_group_name || '' }}
+      env_name: ${{ needs.validate-inputs.outputs.env_name || '' }}
       waf_enabled: ${{ needs.validate-inputs.outputs.waf_enabled == 'true' }}
       EXP: ${{ needs.validate-inputs.outputs.exp == 'true' }}
       build_docker_image: ${{ needs.validate-inputs.outputs.build_docker_image == 'true' }}
