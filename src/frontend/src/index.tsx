@@ -1,4 +1,4 @@
-import React, { StrictMode, useEffect, useState } from 'react';
+import React, { StrictMode, useEffect, useState, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
@@ -17,7 +17,12 @@ const AppWrapper = () => {
   );
   type ConfigType = typeof defaultConfig;
   const [config, setConfig] = useState<ConfigType>(defaultConfig);
+  const configInitialized = useRef(false);
   useEffect(() => {
+    // Prevent re-running if already initialized
+    if (configInitialized.current) return;
+    configInitialized.current = true;
+
     const initConfig = async () => {
       window.appConfig = config;
       setEnvData(config);
@@ -47,7 +52,8 @@ const AppWrapper = () => {
     };
 
     initConfig(); // Call the async function inside useEffect
-  }, [config]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only once on mount
   // Effect to listen for changes in the user's preferred color scheme
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
