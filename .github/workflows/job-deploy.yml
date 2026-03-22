@@ -21,6 +21,11 @@ on:
         required: false
         default: ''
         type: string
+      env_name:
+        description: 'Environment Name (Optional - leave empty for auto-generate)'
+        required: false
+        default: ''
+        type: string
       waf_enabled:
         description: 'Enable WAF'
         required: false
@@ -434,13 +439,21 @@ jobs:
       - name: Generate Unique Environment Name
         id: generate_env_name
         shell: bash
+        env:
+          INPUT_ENV_NAME: ${{ inputs.env_name }}
         run: |
-          COMMON_PART="pslc"
-          TIMESTAMP=$(date +%s)
-          UPDATED_TIMESTAMP=$(echo $TIMESTAMP | tail -c 6)
-          UNIQUE_ENV_NAME="${COMMON_PART}${UPDATED_TIMESTAMP}"
+          # Use provided env_name or generate a new one
+          if [[ -n "$INPUT_ENV_NAME" ]]; then
+            UNIQUE_ENV_NAME="$INPUT_ENV_NAME"
+            echo "✅ Using provided Environment Name: ${UNIQUE_ENV_NAME}"
+          else
+            COMMON_PART="pslc"
+            TIMESTAMP=$(date +%s)
+            UPDATED_TIMESTAMP=$(echo $TIMESTAMP | tail -c 6)
+            UNIQUE_ENV_NAME="${COMMON_PART}${UPDATED_TIMESTAMP}"
+            echo "🆕 Generated new Environment Name: ${UNIQUE_ENV_NAME}"
+          fi
           echo "ENV_NAME=${UNIQUE_ENV_NAME}" >> $GITHUB_ENV
-          echo "Generated Environment Name: ${UNIQUE_ENV_NAME}"
           echo "ENV_NAME=${UNIQUE_ENV_NAME}" >> $GITHUB_OUTPUT
 
       - name: Display Workflow Configuration to GitHub Summary
