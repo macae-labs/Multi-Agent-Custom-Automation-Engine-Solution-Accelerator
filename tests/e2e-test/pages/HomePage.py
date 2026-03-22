@@ -81,8 +81,8 @@ class BIABPage(BasePage):
         """Reload the home page URL."""
         from config.constants import URL
         logger.info("Reloading home page...")
-        self.page.goto(URL)
-        self.page.wait_for_load_state("networkidle")
+        self.page.goto(URL, wait_until="domcontentloaded")
+        self.page.wait_for_timeout(3000)
         logger.info("✓ Home page reloaded successfully")
 
     def validate_home_page(self):
