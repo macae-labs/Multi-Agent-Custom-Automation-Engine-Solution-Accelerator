@@ -1,6 +1,7 @@
 """
 Pytest configuration and fixtures for KM Generic Golden Path tests
 """
+
 import os
 import io
 import logging
@@ -17,11 +18,14 @@ from config.constants import URL
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
+
 @pytest.fixture
 def subtests(request):
     """Fixture to enable subtests for step-by-step reporting in HTML"""
+
     class SubTests:
         """SubTests class for managing subtest contexts"""
+
         def __init__(self, request):
             self.request = request
             self._current_subtest = None
@@ -32,6 +36,7 @@ def subtests(request):
 
     class SubTestContext:
         """Context manager for individual subtests"""
+
         def __init__(self, parent, msg):
             self.parent = parent
             self.msg = msg
@@ -55,13 +60,16 @@ def subtests(request):
                 self.logger.removeHandler(self.handler)
 
                 # Create a report entry for this subtest
-                if hasattr(self.parent.request.node, 'user_properties'):
+                if hasattr(self.parent.request.node, "user_properties"):
                     self.parent.request.node.user_properties.append(
-                        ("subtest", {
-                            "msg": self.msg,
-                            "logs": log_output,
-                            "passed": exc_type is None
-                        })
+                        (
+                            "subtest",
+                            {
+                                "msg": self.msg,
+                                "logs": log_output,
+                                "passed": exc_type is None,
+                            },
+                        )
                     )
 
             # Don't suppress exceptions - let them propagate
@@ -69,13 +77,13 @@ def subtests(request):
 
     return SubTests(request)
 
+
 @pytest.fixture(scope="session")
 def login_logout():
     """Perform login and browser close once in a session"""
     with sync_playwright() as playwright_instance:
         browser = playwright_instance.chromium.launch(
-            headless=False,
-            args=["--start-maximized"]
+            headless=False, args=["--start-maximized"]
         )
         context = browser.new_context(no_viewport=True)
         context.set_default_timeout(150000)
@@ -107,7 +115,6 @@ def pytest_runtest_setup(item):
     log_streams[item.nodeid] = (handler, stream)
 
 
-
 @pytest.hookimpl(tryfirst=True)
 def pytest_html_report_title(report):
     """Set custom HTML report title"""
@@ -132,25 +139,25 @@ def pytest_runtest_makereport(item, call):
                     test_name = item.name.replace(" ", "_").replace("/", "_")
                     screenshot_name = f"screenshot_{test_name}_{timestamp}.png"
                     screenshot_path = os.path.join(SCREENSHOTS_DIR, screenshot_name)
-                    
+
                     # Take screenshot
                     page.screenshot(path=screenshot_path)
-                    
+
                     # Add screenshot link to report
-                    if not hasattr(report, 'extra'):
+                    if not hasattr(report, "extra"):
                         report.extra = []
-                    
+
                     # Add screenshot as a link in the Links column
                     # Use relative path from report.html location
                     relative_path = os.path.relpath(
-                        screenshot_path,
-                        os.path.dirname(os.path.abspath("report.html"))
+                        screenshot_path, os.path.dirname(os.path.abspath("report.html"))
                     )
-                    
+
                     # pytest-html expects this format for extras
                     from pytest_html import extras
-                    report.extra.append(extras.url(relative_path, name='Screenshot'))
-                    
+
+                    report.extra.append(extras.url(relative_path, name="Screenshot"))
+
                     logging.info("Screenshot saved: %s", screenshot_path)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     logging.error("Failed to capture screenshot: %s", str(exc))
@@ -168,7 +175,7 @@ def pytest_runtest_makereport(item, call):
 
         # Check if there are subtests
         subtests_html = ""
-        if hasattr(item, 'user_properties'):
+        if hasattr(item, "user_properties"):
             item_subtests = [
                 prop[1] for prop in item.user_properties if prop[0] == "subtest"
             ]
@@ -179,8 +186,8 @@ def pytest_runtest_makereport(item, call):
                     "<ul style='list-style: none; padding-left: 0;'>"
                 )
                 for idx, subtest in enumerate(item_subtests, 1):
-                    status = "✅ PASSED" if subtest.get('passed') else "❌ FAILED"
-                    status_color = "green" if subtest.get('passed') else "red"
+                    status = "✅ PASSED" if subtest.get("passed") else "❌ FAILED"
+                    status_color = "green" if subtest.get("passed") else "red"
                     subtests_html += (
                         f"<li style='margin: 10px 0; padding: 10px; "
                         f"border-left: 3px solid {status_color}; "
@@ -190,7 +197,7 @@ def pytest_runtest_makereport(item, call):
                         f"<div style='font-weight: bold; color: {status_color};'>"
                         f"{status} - {subtest.get('msg', f'Step {idx}')}</div>"
                     )
-                    if subtest.get('logs'):
+                    if subtest.get("logs"):
                         subtests_html += (
                             f"<pre style='margin: 5px 0; padding: 5px; "
                             f"background-color: #fff; border: 1px solid #ddd; "
@@ -210,10 +217,11 @@ def pytest_runtest_makereport(item, call):
     else:
         report.description = ""
 
+
 def pytest_collection_modifyitems(items):
     """Modify test items to use custom node IDs"""
     for item in items:
-        if hasattr(item, 'callspec'):
+        if hasattr(item, "callspec"):
             # Check for 'description' parameter first (for Golden Path tests)
             description = item.callspec.params.get("description")
             if description:
@@ -235,19 +243,19 @@ def rename_duration_column():
         print("Report file not found, skipping column rename.")
         return
 
-    with open(report_path, 'r', encoding='utf-8') as report_file:
-        soup = BeautifulSoup(report_file, 'html.parser')
+    with open(report_path, "r", encoding="utf-8") as report_file:
+        soup = BeautifulSoup(report_file, "html.parser")
 
     # Find and rename the header
-    headers = soup.select('table#results-table thead th')
+    headers = soup.select("table#results-table thead th")
     for header_th in headers:
-        if header_th.text.strip() == 'Duration':
-            header_th.string = 'Execution Time'
+        if header_th.text.strip() == "Duration":
+            header_th.string = "Execution Time"
             break
     else:
         print("'Duration' column not found in report.")
 
-    with open(report_path, 'w', encoding='utf-8') as report_file:
+    with open(report_path, "w", encoding="utf-8") as report_file:
         report_file.write(str(soup))
 
 
