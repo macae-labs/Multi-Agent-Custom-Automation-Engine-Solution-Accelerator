@@ -57,6 +57,7 @@ const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
                     onClick={() => OnChatSubmit(input)}
                     disabled={submittingChatDisableInput || !input.trim()}
                     icon={<Send />}
+                    aria-label="Send message"
                     style={{
                         height: '32px',
                         width: '32px',

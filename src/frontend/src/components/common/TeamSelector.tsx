@@ -478,6 +478,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
               disabled={true}
               className={`${styles.deleteButton} ${styles.deleteButtonDisabled || ''}`}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              aria-label="Delete team (disabled)"
             />
           </Tooltip>
         ) : (
@@ -487,6 +488,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
             size="small"
             onClick={(e: React.MouseEvent) => handleDeleteTeam(team, e)}
             className={styles.deleteButton}
+            aria-label="Delete team"
           />
         )}
       </div>
@@ -522,6 +524,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
               size="small"
               onClick={handleCancel}
               className={styles.closeButton}
+              aria-label="Close dialog"
             />
           </DialogTitle>
           <DialogContent className={styles.dialogContent}>
