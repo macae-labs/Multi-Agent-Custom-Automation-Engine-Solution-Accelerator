@@ -358,6 +358,8 @@ const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
                                 size="small"
                                 onClick={() => setIsFactsExpanded(!isFactsExpanded)}
                                 className={styles.factsButton}
+                                aria-label={isFactsExpanded ? 'Hide analysis details' : 'Show analysis details'}
+                                aria-expanded={isFactsExpanded}
                             >
                                 {isFactsExpanded ? 'Hide' : 'Details'}
                             </Button>
@@ -424,6 +426,7 @@ const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
                             size="medium"
                             onClick={handleApprovePlan}
                             disabled={processingApproval}
+                            aria-label={processingApproval ? 'Processing task plan' : 'Approve Task Plan'}
                         >
                             {processingApproval ? 'Processing...' : 'Approve Task Plan'}
                         </Button>
@@ -432,6 +435,7 @@ const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
                             size="medium"
                             onClick={handleRejectPlan}
                             disabled={processingApproval}
+                            aria-label="Cancel task plan"
                         >
                             Cancel
                         </Button>

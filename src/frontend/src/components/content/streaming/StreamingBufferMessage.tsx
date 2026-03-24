@@ -102,6 +102,8 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                             padding: '4px 12px',
                             fontSize: '14px'
                         }}
+                        aria-label={isExpanded ? 'Hide AI thinking process' : 'Show AI thinking process'}
+                        aria-expanded={isExpanded}
                     >
                         {isExpanded ? 'Hide' : 'Details'}
                     </Button>

@@ -45,18 +45,20 @@ const PlanCancellationDialog: React.FC<PlanCancellationDialogProps> = ({
           </DialogContent>
           <DialogActions>
             <DialogTrigger disableButtonEnhancement>
-              <Button 
-                appearance="secondary" 
+              <Button
+                appearance="secondary"
                 onClick={onCancel}
                 disabled={loading}
+                aria-label="Cancel and keep plan"
               >
                 Cancel
               </Button>
             </DialogTrigger>
-            <Button 
-              appearance="primary" 
+            <Button
+              appearance="primary"
               onClick={onConfirm}
               disabled={loading}
+              aria-label={loading ? 'Cancelling plan' : 'Yes, cancel the plan'}
             >
               {loading ? 'Cancelling...' : 'Yes'}
             </Button>

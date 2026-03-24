@@ -98,6 +98,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
             onBlur={() => setIsFocused(false)}
             placeholder={placeholder}
             rows={1}
+            aria-label={placeholder}
+            aria-describedby="chat-input-char-count chat-input-ai-disclaimer"
             style={{
               resize: "none",
               overflowY: "auto",
@@ -129,6 +131,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
             }}
           >
             <span
+              id="chat-input-char-count"
+              aria-live="polite"
               style={{
                 fontSize: "12px",
                 color: "var(--colorNeutralForeground3)",
@@ -152,10 +156,12 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
               transform: isFocused ? "scaleX(1)" : "scaleX(0)",
               transition: "transform 0.2s ease-in-out",
             }}
+            aria-hidden="true"
           />
         </div>
 
         <div
+          id="chat-input-ai-disclaimer"
           style={{
             color: "var(--colorNeutralForeground3)",
             marginTop: "8px",

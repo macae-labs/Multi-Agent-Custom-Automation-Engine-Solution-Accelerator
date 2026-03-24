@@ -61,7 +61,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
       setPlansError(null);
       const plansData = await apiService.getPlans(undefined, !forceRefresh); // Invert forceRefresh for useCache
       setPlans(plansData);
-      
+
       // Reset the reload flag after successful load
       if (forceRefresh && restReload) {
         restReload();
@@ -71,7 +71,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
       setPlansError(
         error instanceof Error ? error : new Error("Failed to load plans")
       );
-      
+
       // Reset the reload flag even on error to prevent infinite loops
       if (forceRefresh && restReload) {
         restReload();
@@ -228,6 +228,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
           onClick={onNewTaskButton}
           tabIndex={0} // ✅ allows tab focus
           role="button" // ✅ announces as button
+          aria-label="New task"
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
