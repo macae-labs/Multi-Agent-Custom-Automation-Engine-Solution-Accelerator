@@ -478,6 +478,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
               disabled={true}
               className={`${styles.deleteButton} ${styles.deleteButtonDisabled || ''}`}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              aria-label="Delete team (disabled)"
             />
           </Tooltip>
         ) : (
@@ -487,6 +488,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
             size="small"
             onClick={(e: React.MouseEvent) => handleDeleteTeam(team, e)}
             className={styles.deleteButton}
+            aria-label="Delete team"
           />
         )}
       </div>
@@ -501,6 +503,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
             appearance="subtle"
             className={styles.teamSelectorButton}
             size="medium"
+            aria-label={`Current Team: ${selectedTeam ? selectedTeam.name : 'No team selected'}. Click to change team.`}
+            aria-haspopup="dialog"
           >
             <div className={styles.teamSelectorContent}>
               <Caption1 className={styles.currentTeamLabel}>
@@ -510,7 +514,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
                 {selectedTeam ? selectedTeam.name : 'No team selected'}
               </Body1>
             </div>
-            <ChevronUpDown16Regular className={styles.chevronIcon} />
+            <ChevronUpDown16Regular className={styles.chevronIcon} aria-hidden="true" />
           </Button>
         </DialogTrigger>
         <DialogSurface className={styles.dialogSurface}>
@@ -522,6 +526,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
               size="small"
               onClick={handleCancel}
               className={styles.closeButton}
+              aria-label="Close dialog"
             />
           </DialogTitle>
           <DialogContent className={styles.dialogContent}>
@@ -710,6 +715,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
               onClick={handleContinue}
               disabled={!tempSelectedTeam || selectionLoading}
               className={styles.continueButton}
+              aria-label={selectionLoading ? 'Selecting team' : 'Continue with selected team'}
             >
               {selectionLoading ? 'Selecting...' : 'Continue'}
             </Button>
@@ -737,6 +743,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
                   setTeamToDelete(null);
                 }}
                 className={styles.cancelButton}
+                aria-label="Cancel team deletion"
               >
                 Cancel
               </Button>
@@ -747,6 +754,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
                 onClick={confirmDeleteTeam}
                 icon={<Delete20Filled className={styles.deleteIcon} />}
                 style={{ backgroundColor: 'var(--colorStatusDangerBackground1)' }}
+                aria-label={deleteLoading ? 'Deleting team' : 'Confirm delete team for everyone'}
               >
                 {deleteLoading ? 'Deleting...' : 'Delete for Everyone'}
               </Button>

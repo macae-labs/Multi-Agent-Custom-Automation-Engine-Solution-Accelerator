@@ -8,7 +8,7 @@ type PromptCardProps = {
   description: string;
   icon?: React.ReactNode;
   onClick?: () => void;
-  disabled?: boolean; 
+  disabled?: boolean;
 };
 
 const PromptCard: React.FC<PromptCardProps> = ({
@@ -20,7 +20,17 @@ const PromptCard: React.FC<PromptCardProps> = ({
 }) => {
   return (
     <Card
-      onClick={!disabled ? onClick : undefined} 
+      onClick={!disabled ? onClick : undefined}
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={`Quick task: ${title}. ${description}`}
+      aria-disabled={disabled}
+      onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!disabled && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
       style={{
         flex: "1",
         display: "flex",
@@ -33,7 +43,7 @@ const PromptCard: React.FC<PromptCardProps> = ({
         borderRadius: "8px",
         cursor: disabled ? "not-allowed" : "pointer",
         boxShadow: "none",
-        opacity: disabled ? 0.4 : 1, // 
+        opacity: disabled ? 0.4 : 1, //
         transition: "background-color 0.2s ease-in-out",
       }}
       // 🧠 Only apply hover if not disabled
