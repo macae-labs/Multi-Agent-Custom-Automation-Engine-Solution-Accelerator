@@ -228,6 +228,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
           onClick={onNewTaskButton}
           tabIndex={0} // ✅ allows tab focus
           role="button" // ✅ announces as button
+          aria-label="New task"
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();

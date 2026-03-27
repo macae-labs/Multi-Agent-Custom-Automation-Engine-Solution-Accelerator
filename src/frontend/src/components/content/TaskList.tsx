@@ -60,6 +60,7 @@ const TaskList: React.FC<TaskListProps> = ({
               icon={<MoreHorizontal20Regular />}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
               className="task-menu-button"
+              aria-label="Task options"
             />
           </MenuTrigger>
         </Menu>

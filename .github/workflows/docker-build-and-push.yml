@@ -1,48 +1,24 @@
 name: Build Docker and Optional Push v4
 
+# SECURITY: Changed to manual-only trigger to prevent automatic deployments
+# Previously triggered on push to main/dev-v4/demo-v4/hotfix
+# To run: Go to Actions tab > Select this workflow > Run workflow
 on:
-  push:
-    branches:
-      - main
-      - dev-v4
-      - demo-v4
-      - hotfix
-    paths:
-      - 'src/frontend/**'
-      - 'src/backend/**'
-      - 'src/mcp_server/**'
-      - '.github/workflows/docker-build-and-push.yml'
-      - 'infra/main.bicep'
-      - 'infra/modules/**/*.bicep'
-      - 'infra/*.parameters.json'
-      - 'infra/scripts/**'
-      - '.github/workflows/deploy.yml'
-      - 'azure.yaml'
-      - 'azure_custom.yaml'
-  pull_request:
-    types:
-      - opened
-      - ready_for_review
-      - reopened
-      - synchronize
-    branches:
-      - main
-      - dev-v4
-      - demo-v4
-      - hotfix
-    paths:
-      - 'src/frontend/**'
-      - 'src/backend/**'
-      - 'src/mcp_server/**'
-      - '.github/workflows/docker-build-and-push.yml'
-      - 'infra/main.bicep'
-      - 'infra/modules/**/*.bicep'
-      - 'infra/*.parameters.json'
-      - 'infra/scripts/**'
-      - '.github/workflows/deploy.yml'
-      - 'azure.yaml'
-      - 'azure_custom.yaml'
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      push_images:
+        description: 'Push images to ACR'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   id-token: write

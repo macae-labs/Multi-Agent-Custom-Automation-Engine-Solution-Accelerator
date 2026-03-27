@@ -232,8 +232,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
               className="home-input-send-button"
               onClick={handleSubmit}
               disabled={submitting}
-              icon={<Send />}
-            />
+              icon={<Send />}              aria-label="Send message"            />
           </ChatInput>
 
           <InlineToaster />

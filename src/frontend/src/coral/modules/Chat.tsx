@@ -251,6 +251,7 @@ const Chat: React.FC<ChatProps> = ({
               appearance="transparent"
               onClick={sendMessage}
               icon={<Send />}
+              aria-label="Send message"
               disabled={isTyping || !input.trim()}
             />
 
@@ -258,10 +259,10 @@ const Chat: React.FC<ChatProps> = ({
               <HeaderTools>
                 <ToolbarDivider />
                 <Button
-
                   onClick={clearChat}
                   appearance="transparent"
                   icon={<ChatDismiss20Regular />}
+                  aria-label="Clear chat"
                   disabled={isTyping || messages.length === 0} />
 
               </HeaderTools>

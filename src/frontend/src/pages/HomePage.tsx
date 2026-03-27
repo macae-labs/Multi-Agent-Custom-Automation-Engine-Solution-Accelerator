@@ -88,7 +88,8 @@ const HomePage: React.FC = () => {
         };
 
         initTeam();
-    }, [showToast]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Run only once on mount - showToast is stable via module-level state
 
     /**
     * Handle new task creation from the "New task" button
@@ -158,7 +159,8 @@ const HomePage: React.FC = () => {
                 "info"
             );
         }
-    }, [showToast, setReloadLeftList]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [setReloadLeftList]); // showToast is stable via module-level state
 
 
     /**
@@ -184,7 +186,8 @@ const HomePage: React.FC = () => {
         } catch (error) {
             console.error('Error refreshing teams after upload:', error);
         }
-    }, [showToast]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // showToast is stable via module-level state
 
 
     return (
