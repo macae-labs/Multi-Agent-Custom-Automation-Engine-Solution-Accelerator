@@ -4,13 +4,25 @@ permissions:
   id-token: write
   contents: read
   actions: read
+
+# SECURITY: Changed to manual-only trigger to prevent automatic infrastructure deployments
+# Previously triggered on push to main with infra/** changes
+# To run: Go to Actions tab > Select this workflow > Run workflow
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'infra/**'
-      - 'azure.yaml'
+  workflow_dispatch:
+    inputs:
+      resource_group_name:
+        description: 'Target Resource Group (required - no auto-creation)'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
   # schedule:
   #   - cron: "0 11,23 * * *" # Runs at 11:00 AM and 11:00 PM GMT
 

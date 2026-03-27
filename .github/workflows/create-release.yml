@@ -1,7 +1,18 @@
+# SECURITY: Changed to manual-only trigger to control release creation
+# Previously triggered on every push to main
+# To run: Go to Actions tab > Select this workflow > Run workflow
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
