@@ -6,17 +6,14 @@ Handles Azure OpenAI, MCP, and environment setup (agent_framework version).
 import asyncio
 import json
 import logging
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
+
+from agent_framework import ChatOptions
+from agent_framework.azure import AzureOpenAIChatClient
+from fastapi import WebSocket
 
 from common.config.app_config import config
 from common.models.messages_af import TeamConfiguration
-from fastapi import WebSocket
-
-# agent_framework substitutes
-from agent_framework.azure import AzureOpenAIChatClient
-# from agent_framework_azure_ai import AzureOpenAIChatClient
-from agent_framework import ChatOptions
-
 from v4.models.messages import MPlan, WebsocketMessageType
 
 logger = logging.getLogger(__name__)
@@ -39,12 +36,16 @@ class AzureConfig:
         token = self.credential.get_token(config.AZURE_COGNITIVE_SERVICES)
         return token.token
 
-    async def create_chat_completion_service(self, use_reasoning_model: bool = False) -> AzureOpenAIChatClient:
+    async def create_chat_completion_service(
+        self, use_reasoning_model: bool = False
+    ) -> AzureOpenAIChatClient:
         """
         Create an AzureOpenAIChatClient (agent_framework) for the selected model.
         Matches former AzureChatCompletion usage.
         """
-        model_name = self.reasoning_model if use_reasoning_model else self.standard_model
+        model_name = (
+            self.reasoning_model if use_reasoning_model else self.standard_model
+        )
         return AzureOpenAIChatClient(
             endpoint=self.endpoint,
             model_deployment_name=model_name,
@@ -58,7 +59,7 @@ class AzureConfig:
         return ChatOptions(
             max_output_tokens=4000,
             temperature=0.1,
-        )
+        )  # type: ignore[call-overload]
 
 
 class MCPConfig:
@@ -88,9 +89,13 @@ class OrchestrationConfig:
         # Previously Dict[str, MagenticOrchestration]; now generic workflow objects from MagenticBuilder.build()
         self.orchestrations: Dict[str, Any] = {}  # user_id -> workflow instance
         self.plans: Dict[str, MPlan] = {}  # plan_id -> plan details
-        self.approvals: Dict[str, bool] = {}  # m_plan_id -> approval status (None pending)
+        self.approvals: Dict[
+            str, Optional[bool]
+        ] = {}  # m_plan_id -> approval status (None pending)
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
-        self.clarifications: Dict[str, str] = {}  # m_plan_id -> clarification response
+        self.clarifications: Dict[
+            str, Optional[str]
+        ] = {}  # m_plan_id -> clarification response (None pending)
         self.max_rounds: int = 20  # Maximum replanning rounds
 
         # Event-driven notification system for approvals and clarifications
@@ -118,7 +123,9 @@ class OrchestrationConfig:
         if plan_id in self._approval_events:
             self._approval_events[plan_id].set()
 
-    async def wait_for_approval(self, plan_id: str, timeout: Optional[float] = None) -> bool:
+    async def wait_for_approval(
+        self, plan_id: str, timeout: Optional[float] = None
+    ) -> bool:
         """
         Wait for an approval decision with timeout.
 
@@ -141,16 +148,24 @@ class OrchestrationConfig:
             raise KeyError(f"Plan ID {plan_id} not found in approvals")
 
         # Already decided
-        if self.approvals[plan_id] is not None:
-            return self.approvals[plan_id]
+        approval_result = self.approvals[plan_id]
+        if approval_result is not None:
+            return approval_result
 
         if plan_id not in self._approval_events:
             self._approval_events[plan_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._approval_events[plan_id].wait(), timeout=timeout)
+            await asyncio.wait_for(
+                self._approval_events[plan_id].wait(), timeout=timeout
+            )
             logger.info(f"Approval received: {plan_id}")
-            return self.approvals[plan_id]
+            # After event.wait(), the value is guaranteed to be set (not None)
+            result = self.approvals[plan_id]
+            assert result is not None, (
+                f"Approval result for {plan_id} should not be None after event"
+            )
+            return result
         except asyncio.TimeoutError:
             # Clean up on timeout
             logger.warning(f"Approval timeout: {plan_id}")
@@ -180,7 +195,9 @@ class OrchestrationConfig:
         if request_id in self._clarification_events:
             self._clarification_events[request_id].set()
 
-    async def wait_for_clarification(self, request_id: str, timeout: Optional[float] = None) -> str:
+    async def wait_for_clarification(
+        self, request_id: str, timeout: Optional[float] = None
+    ) -> str:
         """Wait for clarification response with timeout."""
         if timeout is None:
             timeout = self.default_timeout
@@ -188,15 +205,23 @@ class OrchestrationConfig:
         if request_id not in self.clarifications:
             raise KeyError(f"Request ID {request_id} not found in clarifications")
 
-        if self.clarifications[request_id] is not None:
-            return self.clarifications[request_id]
+        clarification_result = self.clarifications[request_id]
+        if clarification_result is not None:
+            return clarification_result
 
         if request_id not in self._clarification_events:
             self._clarification_events[request_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._clarification_events[request_id].wait(), timeout=timeout)
-            return self.clarifications[request_id]
+            await asyncio.wait_for(
+                self._clarification_events[request_id].wait(), timeout=timeout
+            )
+            # After event.wait(), the value is guaranteed to be set (not None)
+            result = self.clarifications[request_id]
+            assert result is not None, (
+                f"Clarification for {request_id} should not be None after event"
+            )
+            return result
         except asyncio.TimeoutError:
             self.cleanup_clarification(request_id)
             raise
@@ -204,10 +229,15 @@ class OrchestrationConfig:
             logger.debug("Clarification request %s was cancelled", request_id)
             raise
         except Exception as e:
-            logger.error("Unexpected error waiting for clarification %s: %s", request_id, e)
+            logger.error(
+                "Unexpected error waiting for clarification %s: %s", request_id, e
+            )
             raise
         finally:
-            if request_id in self.clarifications and self.clarifications[request_id] is None:
+            if (
+                request_id in self.clarifications
+                and self.clarifications[request_id] is None
+            ):
                 self.cleanup_clarification(request_id)
 
     def cleanup_approval(self, plan_id: str) -> None:
@@ -228,13 +258,19 @@ class ConnectionConfig:
         self.connections: Dict[str, WebSocket] = {}
         self.user_to_process: Dict[str, str] = {}
 
-    def add_connection(self, process_id: str, connection: WebSocket, user_id: str = None):
+    def add_connection(
+        self, process_id: str, connection: WebSocket, user_id: Optional[str] = None
+    ):
         """Add or replace a connection for a process/user."""
         if process_id in self.connections:
             try:
                 asyncio.create_task(self.connections[process_id].close())
             except Exception as e:
-                logger.error("Error closing existing connection for process %s: %s", process_id, e)
+                logger.error(
+                    "Error closing existing connection for process %s: %s",
+                    process_id,
+                    e,
+                )
 
         self.connections[process_id] = connection
 
@@ -247,12 +283,22 @@ class ConnectionConfig:
                     try:
                         asyncio.create_task(old_conn.close())
                         del self.connections[old_process_id]
-                        logger.info("Closed old connection %s for user %s", old_process_id, user_id)
+                        logger.info(
+                            "Closed old connection %s for user %s",
+                            old_process_id,
+                            user_id,
+                        )
                     except Exception as e:
-                        logger.error("Error closing old connection for user %s: %s", user_id, e)
+                        logger.error(
+                            "Error closing old connection for user %s: %s", user_id, e
+                        )
 
             self.user_to_process[user_id] = process_id
-            logger.info("WebSocket connection added for process: %s (user: %s)", process_id, user_id)
+            logger.info(
+                "WebSocket connection added for process: %s (user: %s)",
+                process_id,
+                user_id,
+            )
         else:
             logger.info("WebSocket connection added for process: %s", process_id)
 
@@ -299,7 +345,9 @@ class ConnectionConfig:
         process_id = self.user_to_process.get(user_id)
         if not process_id:
             logger.warning("No active WebSocket process found for user ID: %s", user_id)
-            logger.debug("Available user mappings: %s", list(self.user_to_process.keys()))
+            logger.debug(
+                "Available user mappings: %s", list(self.user_to_process.keys())
+            )
             return
 
         try:
@@ -320,12 +368,16 @@ class ConnectionConfig:
         if connection:
             try:
                 await connection.send_text(json.dumps(payload, default=str))
-                logger.debug("Message sent to user %s via process %s", user_id, process_id)
+                logger.debug(
+                    "Message sent to user %s via process %s", user_id, process_id
+                )
             except Exception as e:
                 logger.error("Failed to send message to user %s: %s", user_id, e)
                 self.remove_connection(process_id)
         else:
-            logger.warning("No connection found for process ID: %s (user: %s)", process_id, user_id)
+            logger.warning(
+                "No connection found for process ID: %s (user: %s)", process_id, user_id
+            )
             self.user_to_process.pop(user_id, None)
 
     def send_status_update(self, message: str, process_id: str):
@@ -351,7 +403,7 @@ class TeamConfig:
         """Store current team configuration for user."""
         self.teams[user_id] = team_configuration
 
-    def get_current_team(self, user_id: str) -> TeamConfiguration:
+    def get_current_team(self, user_id: str) -> Optional[TeamConfiguration]:
         """Retrieve current team configuration for user."""
         return self.teams.get(user_id, None)
 

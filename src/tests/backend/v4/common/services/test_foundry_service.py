@@ -301,47 +301,69 @@ class TestFoundryServiceModelDeployments:
     @pytest.mark.asyncio
     async def test_list_model_deployments_empty_response(self):
         """Test handling of empty deployment list."""
-        mock_response = AsyncMock()
-        mock_response.json.return_value = {"value": []}
+        with patch.object(foundry_service_module, "config", mock_config):
+            with patch("aiohttp.ClientSession") as mock_session_cls:
+                mock_response = MagicMock()
+                mock_response.status = 200
+                mock_response.json = AsyncMock(return_value={"value": []})
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.get.return_value.__aenter__.return_value = mock_response
+                mock_session = MagicMock()
+                mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session.__aexit__ = AsyncMock(return_value=None)
+                mock_session.get.return_value.__aenter__ = AsyncMock(
+                    return_value=mock_response
+                )
+                mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            service = FoundryService()
-            deployments = await service.list_model_deployments()
+                mock_session_cls.return_value = mock_session
 
-            assert deployments == []
+                service = FoundryService()
+                deployments = await service.list_model_deployments()
+
+                assert deployments == []
 
     @pytest.mark.asyncio
     async def test_list_model_deployments_malformed_response(self):
         """Test handling of malformed response data."""
-        mock_response = AsyncMock()
-        mock_response.json.return_value = {"error": "some error"}  # Missing 'value' key
+        with patch.object(foundry_service_module, "config", mock_config):
+            with patch("aiohttp.ClientSession") as mock_session_cls:
+                mock_response = MagicMock()
+                mock_response.status = 200
+                mock_response.json = AsyncMock(
+                    return_value={"error": "some error"}
+                )  # Missing 'value' key
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.get.return_value.__aenter__.return_value = mock_response
+                mock_session = MagicMock()
+                mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session.__aexit__ = AsyncMock(return_value=None)
+                mock_session.get.return_value.__aenter__ = AsyncMock(
+                    return_value=mock_response
+                )
+                mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            service = FoundryService()
-            deployments = await service.list_model_deployments()
+                mock_session_cls.return_value = mock_session
 
-            assert deployments == []
+                service = FoundryService()
+                deployments = await service.list_model_deployments()
+
+                assert deployments == []
 
     @pytest.mark.asyncio
     async def test_list_model_deployments_http_error(self):
         """Test handling of HTTP errors during deployment listing."""
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.get.side_effect = Exception("HTTP Error")
+        with patch.object(foundry_service_module, "config", mock_config):
+            with patch("aiohttp.ClientSession") as mock_session_cls:
+                mock_session = MagicMock()
+                mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session.__aexit__ = AsyncMock(return_value=None)
+                mock_session.get.side_effect = Exception("HTTP Error")
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            service = FoundryService()
-            deployments = await service.list_model_deployments()
+                mock_session_cls.return_value = mock_session
 
-            assert deployments == []
+                service = FoundryService()
+                deployments = await service.list_model_deployments()
+
+                assert deployments == []
 
     @pytest.mark.asyncio
     async def test_list_model_deployments_multiple_deployments(self):

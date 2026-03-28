@@ -4,8 +4,8 @@ Enhanced response callbacks (agent_framework version) for employee onboarding ag
 
 import asyncio
 import logging
-import time
 import re
+import time
 from typing import Any
 
 from agent_framework import Message
@@ -26,12 +26,12 @@ def clean_citations(text: str) -> str:
     """Remove citation markers from agent responses while preserving formatting."""
     if not text:
         return text
-    text = re.sub(r'\[\d+:\d+\|source\]', '', text)
-    text = re.sub(r'\[\s*source\s*\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[\d+\]', '', text)
-    text = re.sub(r'【[^】]*】', '', text)
-    text = re.sub(r'\(source:[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[source:[^\]]*\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\d+:\d+\|source\]", "", text)
+    text = re.sub(r"\[\s*source\s*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\d+\]", "", text)
+    text = re.sub(r"【[^】]*】", "", text)
+    text = re.sub(r"\(source:[^)]*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[source:[^\]]*\]", "", text, flags=re.IGNORECASE)
     return text
 
 
@@ -43,7 +43,11 @@ def _is_function_call_item(item: Any) -> bool:
     if getattr(item, "content_type", None) == "function_call":
         return True
     # Agent framework may surface something with name & arguments but no text
-    if hasattr(item, "name") and hasattr(item, "arguments") and not hasattr(item, "text"):
+    if (
+        hasattr(item, "name")
+        and hasattr(item, "arguments")
+        and not hasattr(item, "text")
+    ):
         return True
     return False
 
@@ -91,7 +95,7 @@ def agent_response_callback(
     try:
         final_message = AgentMessage(
             agent_name=agent_name,
-            timestamp=time.time(),
+            timestamp=str(time.time()),
             content=text,
         )
         asyncio.create_task(
@@ -101,7 +105,9 @@ def agent_response_callback(
                 message_type=WebsocketMessageType.AGENT_MESSAGE,
             )
         )
-        logger.info("%s message (agent=%s): %s", str(role).capitalize(), agent_name, text[:200])
+        logger.info(
+            "%s message (agent=%s): %s", str(role).capitalize(), agent_name, text[:200]
+        )
     except Exception as e:
         logger.error("agent_response_callback error sending WebSocket message: %s", e)
 
@@ -159,6 +165,11 @@ async def streaming_agent_response_callback(
                 user_id,
                 message_type=WebsocketMessageType.AGENT_MESSAGE_STREAMING,
             )
-            logger.debug("Streaming chunk (agent=%s final=%s len=%d)", agent_id, is_final, len(cleaned))
+            logger.debug(
+                "Streaming chunk (agent=%s final=%s len=%d)",
+                agent_id,
+                is_final,
+                len(cleaned),
+            )
     except Exception as e:
         logger.error("streaming_agent_response_callback error: %s", e)

@@ -4,10 +4,20 @@ import logging
 import uuid
 from typing import Optional
 
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from opentelemetry import trace
 
 import v4.models.messages as messages
-from v4.models.messages import WebsocketMessageType
 from auth.auth_utils import get_authenticated_user_details
 from common.database.database_factory import DatabaseFactory
 from common.models.messages_af import (
@@ -22,17 +32,6 @@ from common.utils.utils_af import (
     rai_success,
     rai_validate_team_config,
 )
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    File,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
-)
 from v4.common.services.plan_service import PlanService
 from v4.common.services.team_service import TeamService
 from v4.config.settings import (
@@ -40,6 +39,7 @@ from v4.config.settings import (
     orchestration_config,
     team_config,
 )
+from v4.models.messages import WebsocketMessageType
 from v4.orchestration.orchestration_manager import OrchestrationManager
 
 router = APIRouter()
@@ -75,7 +75,7 @@ async def start_comms(
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
             if plan:
-                session_id = getattr(plan, 'session_id', None)
+                session_id = getattr(plan, "session_id", None)
                 if session_id:
                     ws_span.set_attribute("session_id", session_id)
         except Exception as e:
@@ -98,7 +98,9 @@ async def start_comms(
                 # the connection open and does not take cpu cycle
                 try:
                     message = await websocket.receive_text()
-                    logging.debug(f"Received WebSocket message from {user_id}: {message}")
+                    logging.debug(
+                        f"Received WebSocket message from {user_id}: {message}"
+                    )
                 except asyncio.TimeoutError:
                     # Ignore timeouts to keep the WebSocket connection open, but avoid a tight loop.
                     logging.debug(
@@ -179,7 +181,9 @@ async def init_team(
         if team_configuration is None:
             # If team doesn't exist, clear current team and return empty state
             await memory_store.delete_current_team(user_id)
-            print(f"Team configuration '{init_team_id}' not found. Cleared current team.")
+            print(
+                f"Team configuration '{init_team_id}' not found. Cleared current team."
+            )
             return {
                 "status": "Current team configuration not found. Please select or upload a team configuration.",
                 "team_id": None,
@@ -274,22 +278,29 @@ async def process_request(
     user_id = authenticated_user["user_principal_id"]
     if not user_id:
         event_props = {"status_code": 400, "detail": "no user"}
-        if input_task and hasattr(input_task, 'session_id') and input_task.session_id:
+        if input_task and hasattr(input_task, "session_id") and input_task.session_id:
             event_props["session_id"] = input_task.session_id
         track_event_if_configured("Error_User_Not_Found", event_props)
         raise HTTPException(status_code=400, detail="no user found")
     try:
         memory_store = await DatabaseFactory.get_database(user_id=user_id)
         user_current_team = await memory_store.get_current_team(user_id=user_id)
-        team_id = None
+        team_id: str | None = None
         if user_current_team:
             team_id = user_current_team.team_id
+        if not team_id:
+            raise HTTPException(
+                status_code=404,
+                detail="No team configured. Please select a team first.",
+            )
         team = await memory_store.get_team_by_id(team_id=team_id)
         if not team:
             raise HTTPException(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -459,7 +470,9 @@ async def plan_approval(
     if human_feedback.plan_id:
         try:
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            plan = await memory_store.get_plan_by_plan_id(plan_id=human_feedback.plan_id)
+            plan = await memory_store.get_plan_by_plan_id(
+                plan_id=human_feedback.plan_id
+            )
             if plan and plan.session_id:
                 session_id = plan.session_id
                 span = trace.get_current_span()
@@ -534,7 +547,7 @@ async def plan_approval(
             else:
                 logging.warning(
                     "No orchestration or plan found for plan_id: %s",
-                    human_feedback.m_plan_id
+                    human_feedback.m_plan_id,
                 )
                 raise HTTPException(
                     status_code=404, detail="No active plan found for approval"
@@ -625,7 +638,9 @@ async def user_clarification(
         memory_store = await DatabaseFactory.get_database(user_id=user_id)
         if human_feedback.plan_id:
             try:
-                plan = await memory_store.get_plan_by_plan_id(plan_id=human_feedback.plan_id)
+                plan = await memory_store.get_plan_by_plan_id(
+                    plan_id=human_feedback.plan_id
+                )
                 if plan and plan.session_id:
                     session_id = plan.session_id
                     span = trace.get_current_span()
@@ -634,15 +649,22 @@ async def user_clarification(
             except Exception:
                 pass  # Don't fail request if span attribute fails
         user_current_team = await memory_store.get_current_team(user_id=user_id)
-        team_id = None
+        team_id: str | None = None
         if user_current_team:
             team_id = user_current_team.team_id
+        if not team_id:
+            raise HTTPException(
+                status_code=404,
+                detail="No team configured. Please select a team first.",
+            )
         team = await memory_store.get_team_by_id(team_id=team_id)
         if not team:
             raise HTTPException(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -651,7 +673,10 @@ async def user_clarification(
     # Set the approval in the orchestration config
     if user_id and human_feedback.request_id:
         # validate rai
-        if human_feedback.answer is not None and str(human_feedback.answer).strip() != "":
+        if (
+            human_feedback.answer is not None
+            and str(human_feedback.answer).strip() != ""
+        ):
             if not await rai_success(human_feedback.answer, team, memory_store):
                 event_props = {
                     "status": "Plan Clarification ",
@@ -791,7 +816,6 @@ async def agent_message_user(
     # Set the approval in the orchestration config
 
     try:
-
         result = await PlanService.handle_agent_messages(agent_message, user_id)
         print("Agent message processed:", result)
     except ValueError as ve:
@@ -867,7 +891,7 @@ async def upload_team_config(
     if not file:
         raise HTTPException(status_code=400, detail="No file provided")
 
-    if not file.filename.endswith(".json"):
+    if not file.filename or not file.filename.endswith(".json"):
         raise HTTPException(status_code=400, detail="File must be a JSON file")
 
     try:
@@ -882,7 +906,9 @@ async def upload_team_config(
 
         # Validate content with RAI before processing
         if not team_id:
-            rai_valid, rai_error = await rai_validate_team_config(json_data, memory_store)
+            rai_valid, rai_error = await rai_validate_team_config(
+                json_data, memory_store
+            )
             if not rai_valid:
                 track_event_if_configured(
                     "Error_Config_RAI_Validation_Failed",
@@ -932,7 +958,9 @@ async def upload_team_config(
             json_data
         )
         if not search_valid:
-            logger.warning(f"❌ Search validation failed for user {user_id}: {search_errors}")
+            logger.warning(
+                f"❌ Search validation failed for user {user_id}: {search_errors}"
+            )
             error_message = (
                 f"Search index validation failed:\n\n{chr(10).join([f'• {error}' for error in search_errors])}\n\n"
                 f"Please ensure all referenced search indexes exist in your Azure AI Search service."
@@ -1501,7 +1529,9 @@ async def get_plan_by_id(
 
             # Use get_steps_by_plan to match the original implementation
 
-            team = await memory_store.get_team_by_id(team_id=plan.team_id)
+            team = None
+            if plan.team_id:
+                team = await memory_store.get_team_by_id(team_id=plan.team_id)
             agent_messages = await memory_store.get_agent_messages(plan_id=plan.plan_id)
             mplan = plan.m_plan if plan.m_plan else None
             streaming_message = plan.streaming_message if plan.streaming_message else ""
