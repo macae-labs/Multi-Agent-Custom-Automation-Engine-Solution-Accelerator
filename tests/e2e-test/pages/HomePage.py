@@ -16,7 +16,7 @@ class BIABPage(BasePage):
     NEW_TASK_PROMPT = "//div[@class='tab tab-new-task']"
     SEND_BUTTON = "//button[contains(@class, 'home-input-send-button')]"
     PROMPT_INPUT = '//textarea[@placeholder="Tell us what needs planning, building, or connecting—we\'ll handle the rest."]'
-    QUICK_TASK = "//div[@role='group']"
+    QUICK_TASK = "//div[@role='button' and contains(@aria-label, 'Quick task:')]"
     CURRENT_TEAM = "//button[contains(.,'Current Team')]"
     RETAIL_CUSTOMER_SUCCESS = "//div[normalize-space()='Retail Customer Success Team']"
     RETAIL_CUSTOMER_SUCCESS_SELECTED = "//span[.='Retail Customer Success Team']"
@@ -679,7 +679,9 @@ class BIABPage(BasePage):
             task_found = False
             for pattern in hr_task_patterns:
                 if self.page.locator(pattern).first.is_visible(timeout=5000):
-                    logger.info(f"✓ HR onboarding task validated with pattern: {pattern}")
+                    logger.info(
+                        f"✓ HR onboarding task validated with pattern: {pattern}"
+                    )
                     task_found = True
                     break
 

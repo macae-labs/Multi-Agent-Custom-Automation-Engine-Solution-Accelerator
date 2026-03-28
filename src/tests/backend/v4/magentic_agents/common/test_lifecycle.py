@@ -71,7 +71,7 @@ sys.modules["common.utils.utils_agents"].get_database_team_agent_id = AsyncMock(
 )
 
 # Import the module under test
-from backend.v4.magentic_agents.common.lifecycle import MCPEnabledBase, AzureAgentBase
+from backend.v4.magentic_agents.common.lifecycle import MCPEnabledBase, AzureAgentBase  # noqa: E402
 
 
 class TestMCPEnabledBase:

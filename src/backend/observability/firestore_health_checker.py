@@ -2,9 +2,11 @@
 
 import logging
 import os
-from typing import Optional, Dict, Any
+import time
 from datetime import datetime
+from typing import Any, Dict, Optional
 
+from adapters.firestore_adapter import FirestoreAdapter
 from observability.provider_health_checker import (
     BaseProviderHealthChecker,
     ProviderHealthMetrics,
@@ -31,8 +33,6 @@ class FirestoreHealthChecker(BaseProviderHealthChecker):
 
     async def check_health(self) -> ProviderHealthMetrics:
         """Check Firestore health: read, write, latency SLA, and quota."""
-        from adapters.firestore_adapter import FirestoreAdapter
-        import time
 
         adapter = FirestoreAdapter(
             project_id=self.project_id or "default",

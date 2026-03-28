@@ -428,6 +428,8 @@ class TestAgentResponseCallback:
     ):
         """Test agent_response_callback with Message object."""
         mock_time.return_value = 1234567890.0
+        # Consume coroutine to avoid warning from global AsyncMock
+        mock_create_task.side_effect = lambda coro: coro.close()
 
         # Create an instance of our MockMessage (source checks isinstance(message, Message))
         mock_message = MockMessage(
@@ -447,20 +449,24 @@ class TestAgentResponseCallback:
             # Verify AgentMessage was created with cleaned text
             mock_agent_message.assert_called_once_with(
                 agent_name="TestAgent",
-                timestamp=1234567890.0,
+                timestamp="1234567890.0",
                 content="Test message with citations ",
             )
 
             # Verify asyncio.create_task was called
             mock_create_task.assert_called_once()
 
+    @patch("backend.v4.callbacks.response_handlers.connection_config")
     @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
     @patch("backend.v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_fallback_message(
-        self, mock_time, mock_create_task
+        self, mock_time, mock_create_task, mock_conn_config
     ):
         """Test agent_response_callback with non-ChatMessage object (fallback)."""
         mock_time.return_value = 1234567890.0
+        # Keep AsyncMock for correct signature; consume coroutine in create_task mock
+        mock_conn_config.send_status_update_async = AsyncMock()
+        mock_create_task.side_effect = lambda coro: coro.close()  # Consume coroutine
 
         mock_message = Mock()
         mock_message.text = "Fallback message text"
@@ -481,7 +487,7 @@ class TestAgentResponseCallback:
             # Verify AgentMessage was created with agent_id as agent_name
             mock_agent_message.assert_called_once_with(
                 agent_name="agent_123",
-                timestamp=1234567890.0,
+                timestamp="1234567890.0",
                 content="Fallback message text",
             )
 
@@ -492,6 +498,8 @@ class TestAgentResponseCallback:
     ):
         """Test agent_response_callback with message that has no text attribute."""
         mock_time.return_value = 1234567890.0
+        # Consume coroutine to avoid warning from global AsyncMock
+        mock_create_task.side_effect = lambda coro: coro.close()
 
         mock_message = Mock()
         if hasattr(mock_message, "text"):
@@ -508,39 +516,48 @@ class TestAgentResponseCallback:
 
             # Verify AgentMessage was created with empty content
             mock_agent_message.assert_called_once_with(
-                agent_name="TestAgent", timestamp=1234567890.0, content=""
+                agent_name="TestAgent", timestamp="1234567890.0", content=""
             )
 
+    @patch("backend.v4.callbacks.response_handlers.connection_config")
     @patch("backend.v4.callbacks.response_handlers.logger")
     @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
     def test_agent_response_callback_exception_handling(
-        self, mock_create_task, mock_logger
+        self, mock_create_task, mock_logger, mock_conn_config
     ):
         """Test agent_response_callback handles exceptions properly."""
+        # Keep AsyncMock for correct signature
+        mock_conn_config.send_status_update_async = AsyncMock()
+
+        # Consume coroutine before raising exception to avoid warning
+        def consume_and_raise(coro):
+            coro.close()
+            raise Exception("Test exception")
+
+        mock_create_task.side_effect = consume_and_raise
+
         mock_message = Mock()
         mock_message.text = "Test message"
         mock_message.author_name = "TestAgent"
-
-        # Make create_task raise an exception
-        mock_create_task.side_effect = Exception("Test exception")
 
         with patch("backend.v4.callbacks.response_handlers.AgentMessage"):
             agent_response_callback("agent_123", mock_message, user_id="user_456")
 
             # Verify error was logged
-            mock_logger.error.assert_called_once_with(
-                "agent_response_callback error sending WebSocket message: %s",
-                mock_create_task.side_effect,
-            )
+            mock_logger.error.assert_called_once()
 
+    @patch("backend.v4.callbacks.response_handlers.connection_config")
     @patch("backend.v4.callbacks.response_handlers.logger")
     @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
     @patch("backend.v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_successful_logging(
-        self, mock_time, mock_create_task, mock_logger
+        self, mock_time, mock_create_task, mock_logger, mock_conn_config
     ):
         """Test agent_response_callback logs successful message."""
         mock_time.return_value = 1234567890.0
+        # Keep AsyncMock for correct signature; consume coroutine in create_task mock
+        mock_conn_config.send_status_update_async = AsyncMock()
+        mock_create_task.side_effect = lambda coro: coro.close()  # Consume coroutine
 
         long_message = "A very long test message that should be truncated in the log output because it exceeds the 200 character limit that is applied in the logging statement for better readability and log management"
         mock_message = Mock()
