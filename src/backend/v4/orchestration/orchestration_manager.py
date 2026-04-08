@@ -252,8 +252,6 @@ class OrchestrationManager:
                     "team_service with initialized memory_context is required"
                 )
 
-            memory_store: DatabaseBase = team_service.memory_context
-
             if current is not None and (team_switched or force_rebuild):
                 reason = (
                     "team switched" if team_switched else "force rebuild for new task"
