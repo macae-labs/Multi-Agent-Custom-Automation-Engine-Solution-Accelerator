@@ -82,7 +82,9 @@ class TestGetAuthenticatedUserDetails:
                 pass
 
             # Verify logging was called regardless
-            mock_log.assert_called_once_with("No user principal found in headers")
+            mock_log.assert_called_once_with(
+                "No user principal found in headers \u2014 using sample_user (dev mode)"
+            )
 
     def test_with_partial_auth_headers(self):
         """Test behavior with only some authentication headers present."""
@@ -113,9 +115,9 @@ class TestGetAuthenticatedUserDetails:
 
         result = get_authenticated_user_details(empty_headers)
 
-        # Verify empty strings are preserved
+        # Verify empty strings are preserved (except user_name which falls back)
         assert result["user_principal_id"] == ""
-        assert result["user_name"] == ""
+        assert result["user_name"] == "dev-user@local"  # fallback for empty
         assert result["auth_provider"] == ""
         assert result["auth_token"] == ""
 
