@@ -10,6 +10,7 @@ import CoralShellColumn from "../coral/components/Layout/CoralShellColumn";
 import CoralShellRow from "../coral/components/Layout/CoralShellRow";
 import Content from "../coral/components/Content/Content";
 import ContentToolbar from "../coral/components/Content/ContentToolbar";
+import InspectorLink from "@/components/inspector/InspectorLink";
 import {
     useInlineToaster,
 } from "../components/toast/InlineToaster";
@@ -521,7 +522,7 @@ const PlanPage: React.FC = () => {
                 webSocketService.disconnect();
             };
         }
-    }, [planId, loading, continueWithWebsocketFlow]);
+    }, [planId, continueWithWebsocketFlow]);
 
     // Create loadPlanData function with useCallback to memoize it
     const loadPlanData = useCallback(
@@ -780,9 +781,7 @@ const PlanPage: React.FC = () => {
                             <ContentToolbar
                                 panelTitle="Multi-Agent Planner"
                             >
-                                {/* <PanelRightToggles>
-                                    <TaskListSquareLtr />
-                                </PanelRightToggles> */}
+                                <InspectorLink />
                             </ContentToolbar>
 
                             <PlanChat

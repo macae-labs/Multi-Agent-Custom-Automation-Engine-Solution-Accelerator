@@ -38,6 +38,58 @@ class CredentialResolver:
 
         return self._kv_client
 
+    async def resolve_by_secret_ref(
+        self, secret_ref: str
+    ) -> Optional[Dict[str, str]]:
+        """Resolve credentials directly from a Key Vault secret URI.
+
+        Args:
+            secret_ref: Full Key Vault secret URI,
+                        e.g. 'https://kv.vault.azure.net/secrets/mcp-user-github-abc123'
+                        or just the secret name 'mcp-user-github-abc123'.
+
+        Returns:
+            Dict of credential key-value pairs, or None if not found.
+        """
+        if not secret_ref:
+            return None
+
+        # Check cache
+        if secret_ref in self._cache:
+            return self._cache[secret_ref]
+
+        try:
+            kv_client = self._get_keyvault_client()
+
+            # Accept full URI or bare secret name
+            if secret_ref.startswith("https://"):
+                # Extract secret name from URI:
+                # https://kv.vault.azure.net/secrets/my-secret/version
+                parts = secret_ref.rstrip("/").split("/secrets/")
+                secret_name = parts[-1].split("/")[0]
+            else:
+                secret_name = secret_ref
+
+            secret = await kv_client.get_secret(secret_name)
+            if secret.value is None:
+                logging.warning(f"Secret '{secret_name}' has no value")
+                return None
+
+            # Value may be JSON dict or a plain token string
+            try:
+                credentials = json.loads(secret.value)
+            except json.JSONDecodeError:
+                # Plain string token — wrap as {"token": value}
+                credentials = {"token": secret.value}
+
+            self._cache[secret_ref] = credentials
+            logging.info(f"Resolved credentials via secret_ref: {secret_name}")
+            return credentials
+
+        except Exception as e:
+            logging.warning(f"Failed to resolve secret_ref '{secret_ref}': {e}")
+            return None
+
     async def resolve_credentials(
         self, project_id: str, provider_id: str
     ) -> Optional[Dict[str, str]]:

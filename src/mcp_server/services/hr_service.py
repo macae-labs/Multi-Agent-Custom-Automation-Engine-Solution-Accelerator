@@ -2,7 +2,6 @@
 Human Resources MCP tools service.
 """
 
-
 from core.factory import Domain, MCPToolBase
 from utils.date_utils import format_date_for_user
 from utils.formatters import format_error_response, format_success_response
@@ -21,7 +20,7 @@ class HRService(MCPToolBase):
         async def employee_onboarding_blueprint_flat(
             employee_name: str | None = None,
             start_date: str | None = None,
-            role: str | None = None
+            role: str | None = None,
         ) -> dict:
             """
             Ultra-minimal onboarding blueprint (flat list).
@@ -36,7 +35,7 @@ class HRService(MCPToolBase):
                 "employee": {
                     "name": employee_name,
                     "start_date": start_date,
-                    "role": role
+                    "role": role,
                 },
                 "steps": [
                     # Pre-boarding
@@ -46,23 +45,22 @@ class HRService(MCPToolBase):
                         "action": "Initiate background check",
                         "tool": "initiate_background_check",
                         "required": True,
-                        "params": ["employee_name", "check_type?"]
+                        "params": ["employee_name", "check_type?"],
                     },
                     {
                         "id": "configure_laptop",
                         "domain": "TECH_SUPPORT",
                         "action": "Provision and configure laptop",
                         "tool": "configure_laptop",
-                        "required": True
+                        "required": True,
                     },
                     {
                         "id": "create_accounts",
                         "domain": "TECH_SUPPORT",
                         "action": "Create system accounts",
                         "tool": "create_system_accounts",
-                        "required": True
+                        "required": True,
                     },
-
                     # Day 1
                     {
                         "id": "orientation",
@@ -71,7 +69,7 @@ class HRService(MCPToolBase):
                         "tool": "schedule_orientation_session",
                         "required": True,
                         "depends_on": ["bg_check"],
-                        "params": ["employee_name", "date"]
+                        "params": ["employee_name", "date"],
                     },
                     {
                         "id": "handbook",
@@ -79,7 +77,7 @@ class HRService(MCPToolBase):
                         "action": "Provide employee handbook",
                         "tool": "provide_employee_handbook",
                         "required": True,
-                        "params": ["employee_name"]
+                        "params": ["employee_name"],
                     },
                     {
                         "id": "welcome_email",
@@ -87,9 +85,8 @@ class HRService(MCPToolBase):
                         "action": "Send welcome email",
                         "tool": "send_welcome_email",
                         "required": False,
-                        "depends_on": ["create_accounts"]
+                        "depends_on": ["create_accounts"],
                     },
-
                     # Week 1
                     {
                         "id": "mentor",
@@ -97,7 +94,7 @@ class HRService(MCPToolBase):
                         "action": "Assign mentor",
                         "tool": "assign_mentor",
                         "required": False,
-                        "params": ["employee_name", "mentor_name?"]
+                        "params": ["employee_name", "mentor_name?"],
                     },
                     {
                         "id": "vpn",
@@ -105,7 +102,7 @@ class HRService(MCPToolBase):
                         "action": "Set up VPN access",
                         "tool": "setup_vpn_access",
                         "required": False,
-                        "depends_on": ["create_accounts"]
+                        "depends_on": ["create_accounts"],
                     },
                     {
                         "id": "benefits",
@@ -113,7 +110,7 @@ class HRService(MCPToolBase):
                         "action": "Register employee for benefits",
                         "tool": "register_for_benefits",
                         "required": True,
-                        "params": ["employee_name", "benefits_package?"]
+                        "params": ["employee_name", "benefits_package?"],
                     },
                     {
                         "id": "payroll",
@@ -121,7 +118,7 @@ class HRService(MCPToolBase):
                         "action": "Set up payroll",
                         "tool": "set_up_payroll",
                         "required": True,
-                        "params": ["employee_name", "salary?"]
+                        "params": ["employee_name", "salary?"],
                     },
                     {
                         "id": "id_card",
@@ -130,10 +127,11 @@ class HRService(MCPToolBase):
                         "tool": "request_id_card",
                         "required": False,
                         "depends_on": ["bg_check"],
-                        "params": ["employee_name", "department?"]
-                    }
-                ]
+                        "params": ["employee_name", "department?"],
+                    },
+                ],
             }
+
         @mcp.tool(tags={self.domain.value})
         async def schedule_orientation_session(employee_name: str, date: str) -> str:
             """Schedule an orientation session for a new employee."""

@@ -10,9 +10,13 @@ from config.settings import config
 from core.factory import MCPToolFactory
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from services.hr_service import HRService
+from services.inspector_service import InspectorService
 from services.marketing_service import MarketingService
 from services.product_service import ProductService
+from services.product_service_widgets import ProductServiceWithWidgets
 from services.tech_support_service import TechSupportService
+from services.general_service import GeneralService
+from services.data_tool_service import DataToolService
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -23,10 +27,13 @@ factory = MCPToolFactory()
 
 # Initialize services
 factory.register_service(HRService())
+factory.register_service(InspectorService())
 factory.register_service(TechSupportService())
 factory.register_service(MarketingService())
 factory.register_service(ProductService())
-
+factory.register_service(ProductServiceWithWidgets())
+factory.register_service(GeneralService())
+factory.register_service(DataToolService(config.dataset_path))
 
 
 def create_fastmcp_server():
@@ -94,7 +101,7 @@ def run_server(
     logger.info(f"🤖 Starting FastMCP server with {transport} transport")
     if transport in ["http", "streamable-http", "sse"]:
         logger.info(f"🌐 Server will be available at: http://{host}:{port}/mcp/")
-        mcp.run(transport=transport, host=host, port=port, **kwargs)
+        mcp.run(transport=transport, host=host, port=port, json_response=True, **kwargs)
     else:
         # For STDIO transport, only pass kwargs that are supported
         stdio_kwargs = {k: v for k, v in kwargs.items() if k not in ["log_level"]}

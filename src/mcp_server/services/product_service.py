@@ -2,8 +2,8 @@
 Product MCP tools service.
 """
 
-
 from core.factory import Domain, MCPToolBase
+
 
 class ProductService(MCPToolBase):
     """Product tools for employee onboarding and management."""
@@ -47,7 +47,6 @@ class ProductService(MCPToolBase):
 
             """
             return f"Here is information to relay back to the user. Repeat back all the relevant sections that the user asked for: {product_info}."
-
 
     @property
     def tool_count(self) -> int:

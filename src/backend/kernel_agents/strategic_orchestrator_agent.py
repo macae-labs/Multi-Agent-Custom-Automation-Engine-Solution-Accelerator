@@ -49,7 +49,7 @@ class StrategicOrchestratorAgent(BaseAgent):
             agent_name=agent_name,
             session_id=session_id,
             user_id=user_id,
-            memory_store=memory_store,  # type: ignore
+            memory_store=memory_store,
             **kwargs,
         )
 

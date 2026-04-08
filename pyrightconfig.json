@@ -1,12 +1,19 @@
 {
   "include": [
     "src/backend",
-    "src/frontend"
+    "src/frontend",
+    "src/mcp_server"
   ],
   "extraPaths": [
     "src/backend",
-    "src/frontend"
+    "src/frontend",
+    "src/mcp_server",
+    "src"
   ],
-  "venvPath": "src/backend",
-  "venv": ".venv"
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none"
 }

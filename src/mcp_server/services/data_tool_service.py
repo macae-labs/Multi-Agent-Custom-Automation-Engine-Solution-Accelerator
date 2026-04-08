@@ -33,7 +33,7 @@ class DataToolService(MCPToolBase):
     def tool_count(self) -> int:
         """Return the number of tools provided by this service."""
         return 2
-    
+
     def _find_file(self, filename: str) -> str:
         """
         Searches recursively within the dataset_path for an exact filename match (case-sensitive).
@@ -93,8 +93,3 @@ class DataToolService(MCPToolBase):
                     "No allowed CSV tables found in '%s' directory.", self.dataset_path
                 )
             return found_tables
-
-    @property
-    def tool_count(self) -> int:
-        """Return the number of tools provided by this service."""
-        return 2  # data_provider and show_tables

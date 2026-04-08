@@ -15,6 +15,7 @@ import "./../../styles/HomeInput.css";
 import { HomeInputProps, iconMap, QuickTask } from "../../models/homeInput";
 import { TaskService } from "../../services/TaskService";
 import { NewTaskService } from "../../services/NewTaskService";
+import { ChatService } from "../../services/ChatService";
 
 import ChatInput from "@/coral/modules/ChatInput";
 import InlineToaster, { useInlineToaster } from "../toast/InlineToaster";
@@ -93,41 +94,56 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
   const handleSubmit = async () => {
     if (input.trim()) {
       setSubmitting(true);
-      let id = showToast("Creating a plan", "progress");
+      let id = showToast("Analyzing your request…", "progress");
 
       try {
-        const response = await TaskService.createPlan(
-          input.trim(),
-          selectedTeam?.team_id
-        );
-        console.log("Plan created:", response);
-        setInput("");
+        // ── Route through IntentRouter ───────────────────────────
+        const response = await ChatService.sendMessage(input.trim());
+        console.log("IntentRouter:", response.intent, response.confidence);
 
+        setInput("");
         if (textareaRef.current) {
           textareaRef.current.style.height = "auto";
         }
 
-        if (response.plan_id && response.plan_id !== null) {
+        if (response.intent === "task" && response.redirect_to_plan) {
+          // ── TASK intent → redirect to plan (existing flow) ────
           showToast("Plan created!", "success");
           dismissToast(id);
-
-          navigate(`/plan/${response.plan_id}`);
-        } else {
-          showToast("Failed to create plan", "error");
+          navigate(`/plan/${response.redirect_to_plan}`);
+        } else if (
+          response.intent === "conversational" ||
+          response.intent === "mcp_query"
+        ) {
+          // ── CONVERSATIONAL / MCP → open chat page ─────────────
           dismissToast(id);
+          const sessionId = response.session_id;
+          const initialMessages = ChatService.getMessages(sessionId);
+          navigate(`/chat/${sessionId}`, {
+            state: { initialMessages },
+          });
+        } else {
+          // Fallback: treat as task
+          dismissToast(id);
+          showToast("Processing request…", "progress");
+          const planResponse = await TaskService.createPlan(
+            input.trim(),
+            selectedTeam?.team_id
+          );
+          if (planResponse.plan_id) {
+            showToast("Plan created!", "success");
+            navigate(`/plan/${planResponse.plan_id}`);
+          }
         }
       } catch (error: any) {
-        console.log("Error creating plan:", error);
-        let errorMessage = "Unable to create plan. Please try again.";
+        console.log("Error processing message:", error);
+        let errorMessage = "Unable to process message. Please try again.";
         dismissToast(id);
-        // Check if this is an RAI validation error
         try {
-          // errorDetail = JSON.parse(error);
           errorMessage = error?.message || errorMessage;
         } catch (parseError) {
           console.error("Error parsing error detail:", parseError);
         }
-
         showToast(errorMessage, "error");
       } finally {
         setInput("");

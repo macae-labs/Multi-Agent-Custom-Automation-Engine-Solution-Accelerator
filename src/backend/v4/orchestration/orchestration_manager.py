@@ -35,9 +35,9 @@ from v4.callbacks.response_handlers import (
     streaming_agent_response_callback,
 )
 from v4.config.settings import connection_config, orchestration_config
+from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
 from v4.models.messages import WebsocketMessageType
 from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
-from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
 
 
 class OrchestrationManager:
@@ -128,9 +128,9 @@ class OrchestrationManager:
         # Sanitize agent name: must start/end with alphanumeric, only hyphens allowed, max 63 chars
         raw_name = team_config.name if team_config.name else "OrchestratorAgent"
         # Replace spaces and invalid chars with hyphens, strip leading/trailing hyphens
-        sanitized_name = re.sub(r'[^a-zA-Z0-9-]', '-', raw_name)
-        sanitized_name = re.sub(r'-+', '-', sanitized_name)  # Collapse multiple hyphens
-        sanitized_name = sanitized_name.strip('-')[:63]  # Trim and limit length
+        sanitized_name = re.sub(r"[^a-zA-Z0-9-]", "-", raw_name)
+        sanitized_name = re.sub(r"-+", "-", sanitized_name)  # Collapse multiple hyphens
+        sanitized_name = sanitized_name.strip("-")[:63]  # Trim and limit length
         agent_name = sanitized_name if sanitized_name else "OrchestratorAgent"
 
         try:
@@ -146,7 +146,9 @@ class OrchestrationManager:
             manager_agent = Agent(
                 client=chat_client,
                 name="MagenticManager",
-                default_options=ChatOptions(store=False),  # Client-managed conversation to avoid stale tool call IDs across rounds
+                default_options=ChatOptions(
+                    store=False
+                ),  # Client-managed conversation to avoid stale tool call IDs across rounds
             )
 
             cls.logger.info(
@@ -166,7 +168,7 @@ class OrchestrationManager:
                 agent=manager_agent,  # New API: pass agent instead of chat_client
                 max_round_count=orchestration_config.max_rounds,
                 max_stall_count=3,
-                max_reset_count=2
+                max_reset_count=2,
             )
             cls.logger.info(
                 "Created HumanApprovalMagenticManager for user '%s' with max_rounds=%d",
@@ -232,7 +234,7 @@ class OrchestrationManager:
         user_id: str,
         team_config: TeamConfiguration,
         team_switched: bool,
-        team_service: TeamService = None,
+        team_service: Optional[TeamService] = None,
         force_rebuild: bool = False,
     ):
         """
@@ -245,10 +247,21 @@ class OrchestrationManager:
         needs_rebuild = current is None or team_switched or force_rebuild
 
         if needs_rebuild:
+            if team_service is None or team_service.memory_context is None:
+                raise ValueError(
+                    "team_service with initialized memory_context is required"
+                )
+
+            memory_store: DatabaseBase = team_service.memory_context
+
             if current is not None and (team_switched or force_rebuild):
-                reason = "team switched" if team_switched else "force rebuild for new task"
+                reason = (
+                    "team switched" if team_switched else "force rebuild for new task"
+                )
                 cls.logger.info(
-                    "Rebuilding orchestration for user '%s' (reason: %s)", user_id, reason
+                    "Rebuilding orchestration for user '%s' (reason: %s)",
+                    user_id,
+                    reason,
                 )
                 # Close prior agents (same logic as old version)
                 for agent in getattr(current, "_participants", {}).values():
@@ -387,17 +400,20 @@ class OrchestrationManager:
             async for event in workflow.run(task_text, stream=True):
                 try:
                     # WorkflowEvent has a .type field (string) instead of specific event classes
-                    event_type = event.type if hasattr(event, "type") else type(event).__name__
+                    event_type = (
+                        event.type if hasattr(event, "type") else type(event).__name__
+                    )
                     if event_type not in ("status", "output"):
                         self.logger.info("[EVENT] type=%s", event_type)
 
                     # Handle orchestrator events (plan, progress ledger)
                     if event_type == "magentic_orchestrator":
-                        self.logger.info(
-                            "[Magentic Orchestrator Event]"
-                        )
+                        self.logger.info("[Magentic Orchestrator Event]")
                         if isinstance(event.data, Message):
-                            self.logger.info("Plan message: %s", event.data.text[:200] if event.data.text else "")
+                            self.logger.info(
+                                "Plan message: %s",
+                                event.data.text[:200] if event.data.text else "",
+                            )
                         elif isinstance(event.data, MagenticProgressLedger):
                             self.logger.info("Progress ledger received")
 
@@ -406,31 +422,38 @@ class OrchestrationManager:
                         # Check if this is a request or response via the data type
                         if isinstance(event.data, GroupChatRequestSentEvent):
                             agent_name = event.data.participant_name
-                            agent_call_counts[agent_name] = agent_call_counts.get(agent_name, 0) + 1
+                            agent_call_counts[agent_name] = (
+                                agent_call_counts.get(agent_name, 0) + 1
+                            )
                             call_num = agent_call_counts[agent_name]
 
                             self.logger.info(
                                 "[REQUEST SENT (round %d)] to agent: %s (call #%d)",
                                 event.data.round_index,
                                 agent_name,
-                                call_num
+                                call_num,
                             )
 
                             if call_num > 1:
-                                self.logger.warning("Agent '%s' called %d times", agent_name, call_num)
+                                self.logger.warning(
+                                    "Agent '%s' called %d times", agent_name, call_num
+                                )
 
                         elif isinstance(event.data, GroupChatResponseReceivedEvent):
                             agent_name = event.data.participant_name
                             self.logger.info(
                                 "[RESPONSE RECEIVED (round %d)] from agent: %s",
                                 event.data.round_index,
-                                agent_name
+                                agent_name,
                             )
                             # Flush accumulated streaming content as a complete AGENT_MESSAGE
                             buffered = agent_stream_buffers.pop(agent_name, "")
                             if buffered:
-                                from v4.callbacks.response_handlers import clean_citations
+                                from v4.callbacks.response_handlers import (
+                                    clean_citations,
+                                )
                                 from v4.models.messages import AgentMessage
+
                                 cleaned = clean_citations(buffered)
                                 if cleaned.strip():
                                     agent_msg = AgentMessage(
@@ -445,14 +468,15 @@ class OrchestrationManager:
                                     )
                                     self.logger.info(
                                         "Sent AGENT_MESSAGE for '%s' (%d chars)",
-                                        agent_name, len(cleaned)
+                                        agent_name,
+                                        len(cleaned),
                                     )
 
                     # Handle executor completed - just log, don't send to UI
                     elif event_type == "executor_completed":
                         self.logger.debug(
                             "[EXECUTOR COMPLETED] agent: %s",
-                            getattr(event, "executor_id", "unknown")
+                            getattr(event, "executor_id", "unknown"),
                         )
                         # Don't send to UI here - group_chat events already handle agent messages
 
@@ -462,14 +486,18 @@ class OrchestrationManager:
                         output_data = event.data
                         self.logger.info(
                             "[OUTPUT] executor=%s data_type=%s",
-                            executor_id, type(output_data).__name__
+                            executor_id,
+                            type(output_data).__name__,
                         )
 
                         # Streaming chunk from an agent executor
                         if isinstance(output_data, AgentResponseUpdate) and executor_id:
                             chunk_text = output_data.text or ""
                             if chunk_text:
-                                agent_stream_buffers[executor_id] = agent_stream_buffers.get(executor_id, "") + chunk_text
+                                agent_stream_buffers[executor_id] = (
+                                    agent_stream_buffers.get(executor_id, "")
+                                    + chunk_text
+                                )
                             try:
                                 await streaming_agent_response_callback(
                                     executor_id,
@@ -480,7 +508,8 @@ class OrchestrationManager:
                             except Exception as e:
                                 self.logger.error(
                                     "Error in streaming callback for agent %s: %s",
-                                    executor_id, e
+                                    executor_id,
+                                    e,
                                 )
                         # Final workflow output (list[Message] or Message)
                         elif isinstance(output_data, Message):
@@ -538,6 +567,32 @@ class OrchestrationManager:
             self.logger.info("Final result sent via WebSocket to user '%s'", user_id)
 
         except Exception as e:
+            # Approval timeout / rejection is an expected flow in HITL.
+            # Do not bubble it as an unhandled server error.
+            if str(e) == "Plan execution cancelled by user":
+                self.logger.warning(
+                    "Orchestration cancelled for user '%s' due to missing/negative approval",
+                    user_id,
+                )
+                try:
+                    await connection_config.send_status_update_async(
+                        {
+                            "type": WebsocketMessageType.FINAL_RESULT_MESSAGE,
+                            "data": {
+                                "content": "Plan execution cancelled by user or approval timeout.",
+                                "status": "cancelled",
+                                "timestamp": asyncio.get_event_loop().time(),
+                            },
+                        },
+                        user_id,
+                        message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+                    )
+                except Exception as send_error:
+                    self.logger.error(
+                        "Failed to send cancellation status: %s", send_error
+                    )
+                return
+
             # Error handling
             self.logger.error("Unexpected orchestration error: %s", e, exc_info=True)
             self.logger.error("Error type: %s", type(e).__name__)

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 # Enumerations
 # ---------------------------------------------------------------------------
 
+
 class DataType(str, Enum):
     session = "session"
     plan = "plan"
@@ -82,15 +83,20 @@ class AgentMessageType(str, Enum):
 # Base Models
 # ---------------------------------------------------------------------------
 
+
 class BaseDataModel(BaseModel):
     """Base data model with common fields."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 class AgentMessage(BaseDataModel):
     """Base class for messages sent between agents."""
+
     data_type: Literal[DataType.agent_message] = DataType.agent_message
     plan_id: str
     content: str
@@ -100,6 +106,7 @@ class AgentMessage(BaseDataModel):
 
 class Session(BaseDataModel):
     """Represents a user session."""
+
     data_type: Literal[DataType.session] = DataType.session
     user_id: str
     current_status: str
@@ -108,6 +115,7 @@ class Session(BaseDataModel):
 
 class UserCurrentTeam(BaseDataModel):
     """Represents the current team of a user."""
+
     data_type: Literal[DataType.user_current_team] = DataType.user_current_team
     user_id: str
     team_id: str
@@ -115,6 +123,7 @@ class UserCurrentTeam(BaseDataModel):
 
 class CurrentTeamAgent(BaseDataModel):
     """Represents the current agent of a user."""
+
     data_type: Literal[DataType.current_team_agent] = DataType.current_team_agent
     team_id: str
     team_name: str
@@ -126,6 +135,7 @@ class CurrentTeamAgent(BaseDataModel):
 
 class Plan(BaseDataModel):
     """Represents a plan containing multiple steps."""
+
     data_type: Literal[DataType.plan] = DataType.plan
     plan_id: str
     user_id: str
@@ -143,6 +153,7 @@ class Plan(BaseDataModel):
 
 class Step(BaseDataModel):
     """Represents an individual step (task) within a plan."""
+
     data_type: Literal[DataType.step] = DataType.step
     plan_id: str
     user_id: str
@@ -157,11 +168,13 @@ class Step(BaseDataModel):
 
 class TeamSelectionRequest(BaseDataModel):
     """Request model for team selection."""
+
     team_id: str
 
 
 class TeamAgent(BaseModel):
     """Represents an agent within a team."""
+
     input_key: str
     type: str
     name: str
@@ -179,6 +192,7 @@ class TeamAgent(BaseModel):
 
 class StartingTask(BaseModel):
     """Represents a starting task for a team."""
+
     id: str
     name: str
     prompt: str
@@ -189,6 +203,7 @@ class StartingTask(BaseModel):
 
 class TeamConfiguration(BaseDataModel):
     """Represents a team configuration stored in the database."""
+
     team_id: str
     data_type: Literal[DataType.team_config] = DataType.team_config
     session_id: str  # partition key
@@ -207,6 +222,7 @@ class TeamConfiguration(BaseDataModel):
 
 class PlanWithSteps(Plan):
     """Plan model that includes the associated steps."""
+
     steps: List[Step] = Field(default_factory=list)
     total_steps: int = 0
     planned: int = 0
@@ -247,6 +263,7 @@ class PlanWithSteps(Plan):
 
 class InputTask(BaseModel):
     """Message representing the initial input task from the user."""
+
     session_id: str
     description: str
 
@@ -257,6 +274,7 @@ class UserLanguage(BaseModel):
 
 class AgentMessageData(BaseDataModel):
     """Represents a multi-plan agent message."""
+
     data_type: Literal[DataType.m_plan_message] = DataType.m_plan_message
     plan_id: str
     user_id: str
@@ -267,3 +285,25 @@ class AgentMessageData(BaseDataModel):
     raw_data: str
     steps: List[Any] = Field(default_factory=list)
     next_steps: List[Any] = Field(default_factory=list)
+
+
+# ── Chat Mode Models (P0 — conversational without plan) ──────────────
+
+
+class ChatMessageRequest(BaseModel):
+    """Request body for POST /api/v4/chat/message."""
+
+    session_id: str = ""
+    message: str
+    model: Optional[str] = None  # Optional model selector
+
+
+class ChatMessageResponse(BaseModel):
+    """Response from the chat/message endpoint."""
+
+    session_id: str
+    intent: str  # "task" | "conversational" | "mcp_query"
+    confidence: float
+    response: str
+    agent: str = "assistant"
+    redirect_to_plan: Optional[str] = None  # plan_id if redirected to task flow

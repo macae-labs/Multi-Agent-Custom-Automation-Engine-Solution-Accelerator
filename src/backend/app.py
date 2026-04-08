@@ -1,32 +1,22 @@
 # app.py
 import logging
-
 from contextlib import asynccontextmanager
 
-from common.config.app_config import config
-
-# Configure logging levels FIRST, before any logging calls
-logging.basicConfig(level=getattr(logging, config.AZURE_BASIC_LOGGING_LEVEL.upper(), logging.INFO))
-
-
 from azure.monitor.opentelemetry import configure_azure_monitor
-# from common.config.app_config import config
-from common.models.messages_af import UserLanguage
-
-# FastAPI imports
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-# Local imports
+from common.config.app_config import config
+from common.models.messages_af import UserLanguage
 from middleware.health_check import HealthCheckMiddleware
 from v4.api.router import app_v4
-
-# Azure monitoring
-
-
 from v4.config.agent_registry import agent_registry
+
+# Configure logging levels FIRST, before any logging calls
+logging.basicConfig(
+    level=getattr(logging, config.AZURE_BASIC_LOGGING_LEVEL.upper(), logging.INFO)
+)
 
 
 @asynccontextmanager
@@ -57,19 +47,27 @@ async def lifespan(app: FastAPI):
 # logging.basicConfig(level=getattr(logging, config.AZURE_BASIC_LOGGING_LEVEL.upper(), logging.INFO))
 
 # Configure Azure package logging levels
-azure_level = getattr(logging, config.AZURE_PACKAGE_LOGGING_LEVEL.upper(), logging.WARNING)
+azure_level = getattr(
+    logging, config.AZURE_PACKAGE_LOGGING_LEVEL.upper(), logging.WARNING
+)
 # Parse comma-separated logging packages
 if config.AZURE_LOGGING_PACKAGES:
-    packages = [pkg.strip() for pkg in config.AZURE_LOGGING_PACKAGES.split(",") if pkg.strip()]
+    packages = [
+        pkg.strip() for pkg in config.AZURE_LOGGING_PACKAGES.split(",") if pkg.strip()
+    ]
     for logger_name in packages:
         logging.getLogger(logger_name).setLevel(azure_level)
 
 logging.getLogger("opentelemetry.sdk").setLevel(logging.ERROR)
 
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 
 # Suppress noisy Azure Monitor exporter "Transmission succeeded" logs
-logging.getLogger("azure.monitor.opentelemetry.exporter.export._base").setLevel(logging.WARNING)
+logging.getLogger("azure.monitor.opentelemetry.exporter.export._base").setLevel(
+    logging.WARNING
+)
 
 # Initialize the FastAPI app
 app = FastAPI(lifespan=lifespan)
@@ -81,24 +79,28 @@ if config.APPLICATIONINSIGHTS_CONNECTION_STRING:
     # Configure Application Insights telemetry with live metrics
     configure_azure_monitor(
         connection_string=config.APPLICATIONINSIGHTS_CONNECTION_STRING,
-        enable_live_metrics=True
+        enable_live_metrics=True,
     )
 
     # Instrument FastAPI app — exclude WebSocket URLs to reduce telemetry noise
-    FastAPIInstrumentor.instrument_app(
-        app,
-        excluded_urls="socket,ws"
+    FastAPIInstrumentor.instrument_app(app, excluded_urls="socket,ws")
+    logging.info(
+        "Application Insights configured with live metrics and WebSocket filtering"
     )
-    logging.info("Application Insights configured with live metrics and WebSocket filtering")
 else:
     logging.warning(
         "No Application Insights connection string found. Telemetry disabled."
     )
 
-# Add this near the top of your app.py, after initializing the app
+# CORS — restrict to frontend origin in production, allow all in dev
+_cors_origins = (
+    ["*"]
+    if str(config.APP_ENV).lower() == "dev"
+    else [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development; restrict in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,6 +111,15 @@ app.add_middleware(HealthCheckMiddleware, password="", checks={})
 # v4 endpoints
 app.include_router(app_v4)
 logging.info("Added health check middleware")
+
+
+@app.get("/config")
+async def get_frontend_config():
+    """Expose runtime frontend config for local/prod parity."""
+    return {
+        "API_URL": "/api",
+        "ENABLE_AUTH": str(config.APP_ENV).lower() != "dev",
+    }
 
 
 @app.post("/api/user_browser_language")

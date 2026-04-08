@@ -9,9 +9,11 @@ from typing import List, Optional, Union
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
+
 from v4.common.services.team_service import TeamService
 from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
 from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
+
 # from v4.magentic_agents.models.agent_models import (BingConfig, MCPConfig,
 #                                                     SearchConfig)
 from v4.magentic_agents.proxy_agent import ProxyAgent
@@ -156,7 +158,6 @@ class MagenticAgentFactory:
         # self.logger.info(f"Loading team configuration from: {file_path}")
 
         try:
-
             initalized_agents = []
 
             for i, agent_cfg in enumerate(team_config_input.agents, 1):
@@ -165,7 +166,7 @@ class MagenticAgentFactory:
                         "Creating agent %d/%d: %s",
                         i,
                         len(team_config_input.agents),
-                        agent_cfg.name
+                        agent_cfg.name,
                     )
 
                     agent = await self.create_agent_from_config(
@@ -178,7 +179,7 @@ class MagenticAgentFactory:
                         "✅ Agent %d/%d created: %s",
                         i,
                         len(team_config_input.agents),
-                        agent_cfg.name
+                        agent_cfg.name,
                     )
 
                 except (UnsupportedModelError, InvalidConfigurationError) as e:
@@ -194,7 +195,7 @@ class MagenticAgentFactory:
                 "Successfully created %d/%d agents for team '%s'",
                 len(initalized_agents),
                 len(team_config_input.agents),
-                team_config_input.name
+                team_config_input.name,
             )
             return initalized_agents
 

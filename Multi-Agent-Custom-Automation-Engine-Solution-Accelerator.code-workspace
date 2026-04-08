@@ -15,6 +15,7 @@
         "terminal.integrated.suggest.selectionMode": "never",
         "debug.internalConsoleOptions": "neverOpen",
         "remote.autoForwardPortsFallback": 0,
-        "files.trimTrailingWhitespace": true
+        "files.trimTrailingWhitespace": true,
+        "python.defaultInterpreterPath": "python"
     }
 }

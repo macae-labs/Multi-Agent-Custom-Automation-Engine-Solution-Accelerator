@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Body1,
 } from "@fluentui/react-components";
@@ -8,6 +8,8 @@ import {
 import { PlanDetailsProps } from "../../models";
 import { getAgentIcon, getAgentDisplayNameWithSuffix } from '../../utils/agentIconUtils';
 import ContentNotFound from "../NotFound/ContentNotFound";
+import { apiClient } from "../../api/apiClient";
+import WidgetFrame from "../../coral/components/WidgetFrame";
 import "../../styles/planpanelright.css";
 
 
@@ -16,6 +18,15 @@ const PlanPanelRight: React.FC<PlanDetailsProps> = ({
   loading,
   planApprovalRequest
 }) => {
+  const [widgets, setWidgets] = useState<any[]>([]);
+
+  useEffect(() => {
+    apiClient.get('/v4/mcp/discovery')
+      .then((result: any) => setWidgets(result?.widgets || []))
+      .catch(() => setWidgets([]));
+  }, []);
+
+  const proactiveWidgets = widgets.filter((w: any) => w?.proactive !== false);
 
   if (!planData && !loading) {
     return <ContentNotFound subtitle="The requested page could not be found." />;
@@ -127,6 +138,20 @@ const PlanPanelRight: React.FC<PlanDetailsProps> = ({
   // Main render
   return (
     <div className="plan-panel-right">
+      {/* MCP Widgets */}
+      {proactiveWidgets.length > 0 && (
+        <div className="widgets-section">
+          <Body1 className="widgets-section__title">🧩 Widgets</Body1>
+          {proactiveWidgets.map((w: any, i: number) => (
+            <WidgetFrame
+              key={w.resource_uri || i}
+              resourceUri={w.resource_uri}
+              fallbackContent={w.description}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Plan section on top */}
       {renderPlanSection()}
 

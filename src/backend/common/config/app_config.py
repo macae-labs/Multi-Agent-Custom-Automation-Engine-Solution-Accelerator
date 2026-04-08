@@ -32,6 +32,9 @@ class AppConfig:
         self.COSMOSDB_ENDPOINT = self._get_optional("COSMOSDB_ENDPOINT")
         self.COSMOSDB_DATABASE = self._get_optional("COSMOSDB_DATABASE")
         self.COSMOSDB_CONTAINER = self._get_optional("COSMOSDB_CONTAINER")
+        self.COSMOSDB_MCP_CONNECTIONS_CONTAINER = self._get_optional(
+            "COSMOSDB_MCP_CONNECTIONS_CONTAINER", "mcp_connections"
+        )
 
         self.APPLICATIONINSIGHTS_CONNECTION_STRING = self._get_required(
             "APPLICATIONINSIGHTS_CONNECTION_STRING"
@@ -55,7 +58,7 @@ class AppConfig:
             "AZURE_OPENAI_RAI_DEPLOYMENT_NAME", "gpt-4.1"
         )
         self.AZURE_OPENAI_API_VERSION = self._get_required(
-            "AZURE_OPENAI_API_VERSION", "2024-11-20"
+            "AZURE_OPENAI_API_VERSION", "2025-01-01-preview"
         )
         self.AZURE_OPENAI_ENDPOINT = self._get_required("AZURE_OPENAI_ENDPOINT")
         self.REASONING_MODEL_NAME = self._get_optional("REASONING_MODEL_NAME", "o3")
@@ -79,8 +82,12 @@ class AppConfig:
         self.AZURE_SEARCH_ENDPOINT = self._get_optional("AZURE_AI_SEARCH_ENDPOINT")
 
         # Logging settings
-        self.AZURE_BASIC_LOGGING_LEVEL = self._get_optional("AZURE_BASIC_LOGGING_LEVEL", "INFO")
-        self.AZURE_PACKAGE_LOGGING_LEVEL = self._get_optional("AZURE_PACKAGE_LOGGING_LEVEL", "WARNING")
+        self.AZURE_BASIC_LOGGING_LEVEL = self._get_optional(
+            "AZURE_BASIC_LOGGING_LEVEL", "INFO"
+        )
+        self.AZURE_PACKAGE_LOGGING_LEVEL = self._get_optional(
+            "AZURE_PACKAGE_LOGGING_LEVEL", "WARNING"
+        )
         self.AZURE_LOGGING_PACKAGES = self._get_optional("AZURE_LOGGING_PACKAGES")
 
         # Optional MCP server endpoint (for local MCP server or remote)
@@ -128,7 +135,9 @@ class AppConfig:
             Credential object: Either DefaultAzureCredential or ManagedIdentityCredential.
         """
         if self.APP_ENV == "dev":
-            return DefaultAzureCredential(exclude_environment_credential=True)  # CodeQL [SM05139]: DefaultAzureCredential is safe here
+            return DefaultAzureCredential(
+                exclude_environment_credential=True
+            )  # CodeQL [SM05139]: DefaultAzureCredential is safe here
         else:
             return ManagedIdentityCredential(client_id=client_id)
 

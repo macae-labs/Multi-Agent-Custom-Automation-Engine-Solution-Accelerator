@@ -3,15 +3,15 @@
 import logging
 from typing import List, Optional
 
-from agent_framework import (Agent, Message, ChatOptions)
-from agent_framework_azure_ai import \
-    AzureAIClient  # Provided by agent_framework
+from agent_framework import Agent, ChatOptions, Message
+from agent_framework_azure_ai import AzureAIClient  # Azure Search path only
 from azure.ai.projects.models import (
-    PromptAgentDefinition,
+    AISearchIndexResource,
     AzureAISearchTool,
     AzureAISearchToolResource,
-    AISearchIndexResource,
+    PromptAgentDefinition,
 )
+
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
@@ -97,7 +97,9 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Code Interpreter is now handled server-side via AzureAIClient agent definition.
         # HostedCodeInterpreterTool was removed in rc4.
         if self.enable_code_interpreter:
-            self.logger.info("Code Interpreter requested — handled server-side by AzureAIClient.")
+            self.logger.info(
+                "Code Interpreter requested — handled server-side by AzureAIClient."
+            )
 
         # MCP Tool (from base class)
         if self.mcp_tool:
@@ -136,7 +138,9 @@ class FoundryAgentTemplate(AzureAgentBase):
         if not connection_name:
             # Fallback to environment variable
             connection_name = config.AZURE_AI_SEARCH_CONNECTION_NAME
-            self.logger.info("Using connection_name from environment: %s", connection_name)
+            self.logger.info(
+                "Using connection_name from environment: %s", connection_name
+            )
 
         index_name = getattr(self.search, "index_name", "")
         query_type = getattr(self.search, "search_query_type", "simple")
@@ -239,7 +243,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                 self.logger.info(
                     "Initializing agent '%s' in Azure AI Search mode (exclusive) with index=%s.",
                     self.agent_name,
-                    getattr(self.search, "index_name", "N/A") if self.search else "N/A"
+                    getattr(self.search, "index_name", "N/A") if self.search else "N/A",
                 )
                 chat_client = await self._create_azure_search_enabled_client()
                 if not chat_client:
@@ -264,9 +268,24 @@ class FoundryAgentTemplate(AzureAgentBase):
                 # MCP path (also used by RAI agent which has no tools)
                 self.logger.info("Initializing agent in MCP mode.")
                 tools = await self._collect_tools()
+
+                # Hybrid approach:
+                # - With runtime tools (MCP): use AzureOpenAIResponsesClient
+                #   (supports dynamic tools at execution time) + register in
+                #   Foundry separately via create_version for portal visibility.
+                # - Without tools: use AzureAIClient (simpler, auto-persists).
+                if tools:
+                    client = self.get_responses_client()
+                    self.logger.info(
+                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools enabled).",
+                        self.agent_name,
+                    )
+                else:
+                    client = self.get_chat_client()
+
                 self._agent = Agent(
                     id=self.get_agent_id(),
-                    client=self.get_chat_client(),
+                    client=client,
                     instructions=self.agent_instructions,
                     name=self.agent_name,
                     description=self.agent_description,
@@ -277,6 +296,12 @@ class FoundryAgentTemplate(AzureAgentBase):
                         temperature=temp,
                     ),
                 )
+
+                # For agents using AzureOpenAIResponsesClient, register in
+                # Foundry so they appear in the portal / VS Code extension.
+                if tools:
+                    await self._register_in_foundry()
+
             self.logger.info("Initialized Agent '%s'", self.agent_name)
 
         except Exception as ex:

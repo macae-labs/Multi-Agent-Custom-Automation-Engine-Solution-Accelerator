@@ -8,8 +8,22 @@ def get_authenticated_user_details(request_headers):
 
     # check the headers for the Principal-Id (the guid of the signed in user)
     if "x-ms-client-principal-id" not in request_headers:
-        logging.info("No user principal found in headers")
-        # if it's not, assume we're in development mode and return a default user
+        # In production, missing auth headers means misconfigured EasyAuth
+        import os
+
+        app_env = os.environ.get("APP_ENV", "dev").lower()
+        if app_env not in ("dev", "development", "local"):
+            logging.warning(
+                "SECURITY: Request without EasyAuth headers in %s environment",
+                app_env,
+            )
+            raise PermissionError(
+                "Authentication required. No EasyAuth principal found in headers."
+            )
+
+        logging.info(
+            "No user principal found in headers — using sample_user (dev mode)"
+        )
         from . import sample_user
 
         raw_user_object = sample_user.sample_user
@@ -22,6 +36,9 @@ def get_authenticated_user_details(request_headers):
         "x-ms-client-principal-id"
     )
     user_object["user_name"] = normalized_headers.get("x-ms-client-principal-name")
+    # Dev fallback: ensure user_name is never None (prevents Cosmos added_by=None)
+    if not user_object["user_name"]:
+        user_object["user_name"] = "dev-user@local"
     user_object["auth_provider"] = normalized_headers.get("x-ms-client-principal-idp")
     user_object["auth_token"] = normalized_headers.get("x-ms-token-aad-id-token")
     user_object["client_principal_b64"] = normalized_headers.get(

@@ -2,6 +2,8 @@ import PanelLeft from "@/coral/components/Panels/PanelLeft";
 import PanelLeftToolbar from "@/coral/components/Panels/PanelLeftToolbar";
 import {
   Body1Strong,
+  Caption1,
+  Divider,
   Toast,
   ToastBody,
   ToastTitle,
@@ -9,7 +11,9 @@ import {
   useToastController,
 } from "@fluentui/react-components";
 import {
+  Chat20Regular,
   ChatAdd20Regular,
+  Delete20Regular,
   ErrorCircle20Regular,
 } from "@fluentui/react-icons";
 import TaskList from "./TaskList";
@@ -18,14 +22,17 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Plan, PlanPanelLefProps, Task, UserInfo } from "@/models";
 import { apiService } from "@/api";
 import { TaskService } from "@/services";
+import { ChatService } from "@/services/ChatService";
 import ContosoLogo from "../../coral/imports/ContosoLogo";
 import "../../styles/PlanPanelLeft.css";
+import "../../styles/EnhancedChat.css";
 import PanelFooter from "@/coral/components/Panels/PanelFooter";
 import PanelUserCard from "../../coral/components/Panels/UserCard";
 import { getUserInfoGlobal } from "@/api/config";
 import TeamSelector from "../common/TeamSelector";
 import { TeamConfig } from "../../models/Team";
 import TeamSelected from "../common/TeamSelected";
+import type { ChatSessionSummary } from "../../lib/types";
 
 const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
   reloadTasks,
@@ -49,6 +56,7 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
   const [userInfo, setUserInfo] = useState<UserInfo | null>(
     getUserInfoGlobal()
   );
+  const [recentChats, setRecentChats] = useState<ChatSessionSummary[]>([]);
 
   // Use parent's selected team if provided, otherwise use local state
   const [localSelectedTeam, setLocalSelectedTeam] = useState<TeamConfig | null>(null);
@@ -88,6 +96,10 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
   useEffect(() => {
     loadPlansData();
     setUserInfo(getUserInfoGlobal());
+    // Load recent chat sessions
+    ChatService.getRecentSessions()
+      .then((sessions) => setRecentChats(sessions))
+      .catch(() => {});
   }, [loadPlansData, setUserInfo]);
 
 
@@ -250,6 +262,41 @@ const PlanPanelLeft: React.FC<PlanPanelLefProps> = ({
           selectedTaskId={selectedTaskId ?? undefined}
           isLoadingTeam={isLoadingTeam}
         />
+
+        {/* ── Recent Chats ─────────────────────────────────── */}
+        {recentChats.length > 0 && (
+          <div className="echat-recent-section">
+            <Divider style={{ margin: '8px 0' }} />
+            <div className="echat-recent-header">
+              <Chat20Regular />
+              <Caption1 style={{ fontWeight: 600 }}>Recent Chats</Caption1>
+            </div>
+            <div className="echat-recent-list">
+              {recentChats.slice(0, 10).map((chat) => (
+                <div
+                  key={chat.id}
+                  className="echat-recent-item"
+                  onClick={() => navigate(`/chat/${chat.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/chat/${chat.id}`);
+                    }
+                  }}
+                >
+                  <Caption1 className="echat-recent-item-name">
+                    {chat.session_name || 'Untitled Chat'}
+                  </Caption1>
+                  <Caption1 className="echat-recent-item-meta">
+                    {chat.message_count || 0}
+                  </Caption1>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <PanelFooter>
           <div className="panel-footer-content">

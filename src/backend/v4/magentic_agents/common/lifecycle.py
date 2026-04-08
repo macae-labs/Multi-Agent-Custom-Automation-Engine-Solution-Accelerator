@@ -4,23 +4,24 @@ import logging
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
-from agent_framework import (
-    Agent,
-    MCPStreamableHTTPTool,
-)
-
-# from agent_framework.azure import AzureAIClient
+from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_azure_ai import AzureAIClient
 from azure.ai.agents.aio import AgentsClient
+from azure.ai.projects.models import PromptAgentDefinition
+
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
-from common.utils.utils_agents import (
-    generate_assistant_id,
-)
+from common.utils.utils_agents import generate_assistant_id
 from v4.common.services.team_service import TeamService
 from v4.config.agent_registry import agent_registry
 from v4.magentic_agents.models.agent_models import MCPConfig
+
+
+# Cache Foundry registrations per process so ephemeral runtime agents do not
+# recreate the same persisted agent on every request.
+_FOUNDRY_REGISTERED_AGENT_NAMES: set[str] = set()
 
 
 class MCPEnabledBase:
@@ -70,6 +71,8 @@ class MCPEnabledBase:
         if self._stack:
             await self._stack.enter_async_context(self.creds)
         # Create AgentsClient
+        if self.project_endpoint is None:
+            raise ValueError("project_endpoint cannot be None")
         self.client = AgentsClient(
             endpoint=self.project_endpoint,
             credential=self.creds,
@@ -147,15 +150,15 @@ class MCPEnabledBase:
         raise NotImplementedError
 
     def get_chat_client(self) -> AzureAIClient:
-        """Return the underlying ChatClientProtocol (AzureAIClient).
+        """Return AzureAIClient for agents WITHOUT runtime tools (e.g. Azure Search path).
 
         Uses agent_name with use_latest_version=True to get the latest agent version.
         Agent reuse is handled automatically by the SDK via agent_name.
+
+        WARNING: AzureAIClient does NOT support runtime tools (MCP, dynamic functions).
+        For agents with runtime tools, use get_responses_client() instead.
         """
-        if (
-            self._agent
-            and self._agent.client
-        ):
+        if self._agent and self._agent.client:
             return self._agent.client  # type: ignore
         chat_client = AzureAIClient(
             project_endpoint=self.project_endpoint,
@@ -169,6 +172,85 @@ class MCPEnabledBase:
             self.agent_name,
         )
         return chat_client
+
+    def get_responses_client(self) -> AzureOpenAIResponsesClient:
+        """Return AzureOpenAIResponsesClient for agents WITH runtime tools.
+
+        This client supports dynamic tools (MCP, functions) passed at runtime
+        via Agent(tools=[...]).  Uses the Foundry project_endpoint so the
+        execution goes through the same Azure AI project.
+
+        Agents using this client are NOT automatically persisted in Foundry.
+        Call _register_in_foundry() separately to make them visible in the
+        Azure AI Foundry portal and extension.
+        """
+        responses_client = AzureOpenAIResponsesClient(
+            project_endpoint=self.project_endpoint,
+            deployment_name=self.model_deployment_name,
+            credential=self.creds,
+        )
+        self.logger.info(
+            "Created AzureOpenAIResponsesClient (deployment=%s, project_endpoint=%s)",
+            self.model_deployment_name,
+            self.project_endpoint,
+        )
+        return responses_client
+
+    async def _register_in_foundry(self) -> None:
+        """Persist agent definition in Azure AI Foundry via create_version.
+
+        This ensures the agent is visible in the Foundry portal and VS Code
+        extension, even when using AzureOpenAIResponsesClient for execution.
+        Called from subclasses that use the responses client path.
+        """
+        if not self.project_client or not self.agent_name:
+            return
+
+        if self.agent_name in _FOUNDRY_REGISTERED_AGENT_NAMES:
+            self.logger.info(
+                "Agent '%s' already registered in Foundry (cached for this process).",
+                self.agent_name,
+            )
+            return
+
+        try:
+            existing_agent = None
+            async for agent in self.project_client.agents.list():
+                if getattr(agent, "name", None) == self.agent_name:
+                    existing_agent = agent
+                    break
+
+            if existing_agent is not None:
+                _FOUNDRY_REGISTERED_AGENT_NAMES.add(self.agent_name)
+                self.logger.info(
+                    "Agent '%s' already exists in Foundry (id=%s, version=%s); reusing it.",
+                    self.agent_name,
+                    getattr(existing_agent, "id", "unknown"),
+                    getattr(existing_agent, "version", "unknown"),
+                )
+                return
+
+            agent_def = await self.project_client.agents.create_version(
+                agent_name=self.agent_name,
+                description=self.agent_description or "",
+                definition=PromptAgentDefinition(
+                    model=self.model_deployment_name or "",
+                    instructions=self.agent_instructions or "",
+                ),
+            )
+            self.logger.info(
+                "Registered agent '%s' in Foundry (id=%s, version=%s)",
+                self.agent_name,
+                agent_def.id,
+                agent_def.version,
+            )
+            _FOUNDRY_REGISTERED_AGENT_NAMES.add(self.agent_name)
+        except Exception as exc:
+            self.logger.warning(
+                "Could not register agent '%s' in Foundry: %s",
+                self.agent_name,
+                exc,
+            )
 
     def get_agent_id(self) -> str:
         """Generate a local agent ID for the ChatAgent wrapper.
@@ -190,7 +272,8 @@ class MCPEnabledBase:
                 description=self.mcp_cfg.description,
                 url=self.mcp_cfg.url,
             )
-            await self._stack.enter_async_context(mcp_tool)
+            if self._stack:
+                await self._stack.enter_async_context(mcp_tool)
             self.mcp_tool = mcp_tool  # Store for later use
         except Exception:
             self.mcp_tool = None
@@ -272,31 +355,50 @@ class AzureAgentBase(MCPEnabledBase):
         optionally delete the agent definition here.
         """
         try:
-
             # Close underlying client via base close
             if self._agent and hasattr(self._agent, "close"):
                 try:
                     await self._agent.close()
                 except Exception as exc:
-                    logging.warning("Failed to close underlying agent %r: %s", self._agent, exc, exc_info=True)
+                    logging.warning(
+                        "Failed to close underlying agent %r: %s",
+                        self._agent,
+                        exc,
+                        exc_info=True,
+                    )
 
             # Unregister from registry
             try:
                 agent_registry.unregister_agent(self)
             except Exception as exc:
-                logging.warning("Failed to unregister agent %r from registry: %s", self, exc, exc_info=True)
+                logging.warning(
+                    "Failed to unregister agent %r from registry: %s",
+                    self,
+                    exc,
+                    exc_info=True,
+                )
 
             # Close credential and project client
             if self.client:
                 try:
                     await self.client.close()
                 except Exception as exc:
-                    logging.warning("Failed to close Azure AgentsClient %r: %s", self.client, exc, exc_info=True)
+                    logging.warning(
+                        "Failed to close Azure AgentsClient %r: %s",
+                        self.client,
+                        exc,
+                        exc_info=True,
+                    )
             if self.creds:
                 try:
                     await self.creds.close()
                 except Exception as exc:
-                    logging.warning("Failed to close credentials %r: %s", self.creds, exc, exc_info=True)
+                    logging.warning(
+                        "Failed to close credentials %r: %s",
+                        self.creds,
+                        exc,
+                        exc_info=True,
+                    )
 
         finally:
             await super().close()

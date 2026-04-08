@@ -11,6 +11,7 @@ import { NewTaskService } from '../services/NewTaskService';
 import PlanPanelLeft from '@/components/content/PlanPanelLeft';
 import ContentToolbar from '@/coral/components/Content/ContentToolbar';
 import { TeamConfig } from '../models/Team';
+import InspectorLink from '@/components/inspector/InspectorLink';
 import { TeamService } from '../services/TeamService';
 import InlineToaster, { useInlineToaster } from "../components/toast/InlineToaster";
 
@@ -207,7 +208,9 @@ const HomePage: React.FC = () => {
                     <Content>
                         <ContentToolbar
                             panelTitle={"Multi-Agent Planner"}
-                        ></ContentToolbar>
+                        >
+                            <InspectorLink />
+                        </ContentToolbar>
                         {!isLoadingTeam ? (
                             <HomeInput
                                 selectedTeam={selectedTeam}

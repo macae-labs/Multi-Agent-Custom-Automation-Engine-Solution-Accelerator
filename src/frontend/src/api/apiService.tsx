@@ -11,7 +11,9 @@ import {
     MPlanBE,
     TeamConfigurationBE,
     PlanFromAPI,
-    AgentMessageResponse
+    AgentMessageResponse,
+    ChatMessageRequest,
+    ChatMessageResponse,
 } from '../models';
 
 // Constants for endpoints
@@ -23,6 +25,10 @@ const API_ENDPOINTS = {
     HUMAN_CLARIFICATION: '/v4/user_clarification',
     USER_BROWSER_LANGUAGE: '/user_browser_language',
     AGENT_MESSAGE: '/v4/agent_message',
+    CHAT_MESSAGE: '/v4/chat/message',
+    CHAT_MESSAGE_STREAM: '/v4/chat/message/stream',
+    CHAT_SESSIONS: '/v4/chat/sessions',
+    CHAT_SESSION_NEW: '/v4/chat/sessions/new',
 };
 
 // Simple cache implementation
@@ -182,7 +188,7 @@ export class APIService {
 
 
     /**
-   * Approve a plan for execution 
+   * Approve a plan for execution
    * @param planApprovalData Plan approval data
    * @returns Promise with approval response
    */
@@ -268,6 +274,139 @@ export class APIService {
             type: data.agent_type
         });
         return result;
+    }
+
+    /**
+     * Send a chat message through IntentRouter classification
+     * @param chatRequest Chat message with optional session_id
+     * @returns Promise with intent classification + response
+     */
+    async sendChatMessage(chatRequest: ChatMessageRequest): Promise<ChatMessageResponse> {
+        const t0 = performance.now();
+        const result = await apiClient.post(API_ENDPOINTS.CHAT_MESSAGE, chatRequest);
+        console.log('[chat_message] intent=%s confidence=%.2f', result.intent, result.confidence, {
+            ms: +(performance.now() - t0).toFixed(1),
+            session_id: result.session_id,
+        });
+        return result;
+    }
+
+    /**
+     * Stream a chat message response via SSE.
+     * Calls POST /v4/chat/message/stream and reads the event stream.
+     */
+    async sendChatMessageStream(
+        chatRequest: ChatMessageRequest,
+        callbacks: {
+            onToken: (token: string) => void;
+            onIntent: (data: { intent: string; confidence: number; session_id: string }) => void;
+            onDone: (data: { intent: string; agent: string; confidence: number; session_id: string }) => void;
+            onRedirect: (planId: string) => void;
+            onError: (error: string) => void;
+        },
+    ): Promise<void> {
+        const t0 = performance.now();
+        const response = await apiClient.stream(
+            API_ENDPOINTS.CHAT_MESSAGE_STREAM,
+            chatRequest,
+        );
+
+        if (!response.body) {
+            throw new Error('No response body for streaming');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || '';
+
+                for (const event of events) {
+                    const dataLine = event
+                        .split('\n')
+                        .find((l) => l.startsWith('data: '));
+                    if (!dataLine) continue;
+
+                    try {
+                        const data = JSON.parse(dataLine.slice(6));
+                        switch (data.type) {
+                            case 'token':
+                                callbacks.onToken(data.content);
+                                break;
+                            case 'intent':
+                                callbacks.onIntent(data);
+                                break;
+                            case 'done':
+                                callbacks.onDone(data);
+                                break;
+                            case 'redirect':
+                                callbacks.onRedirect(data.redirect_to_plan);
+                                break;
+                            case 'error':
+                                callbacks.onError(data.message);
+                                break;
+                        }
+                    } catch {
+                        console.warn('[chat_stream] Failed to parse SSE event:', dataLine);
+                    }
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
+
+        console.log('[chat_stream] completed', {
+            ms: +(performance.now() - t0).toFixed(1),
+        });
+    }
+
+    // ── Chat Session CRUD ────────────────────────────────────────
+
+    /**
+     * Get all chat sessions for the current user.
+     */
+    async getChatSessions(): Promise<{ sessions: Array<{
+        id: string; user_id: string; session_name: string;
+        message_count: number; created_at: string; updated_at: string;
+        last_message_at: string | null; is_active: boolean;
+    }> }> {
+        return apiClient.get(API_ENDPOINTS.CHAT_SESSIONS);
+    }
+
+    /**
+     * Get a single chat session with messages.
+     */
+    async getChatSession(sessionId: string): Promise<{
+        id: string; session_name: string; messages: Array<{
+            id: string; content: string; sender: string;
+            timestamp: string; metadata: Record<string, unknown>;
+        }>;
+    }> {
+        return apiClient.get(`${API_ENDPOINTS.CHAT_SESSIONS}/${sessionId}`);
+    }
+
+    /**
+     * Create a new chat session.
+     */
+    async createChatSession(): Promise<{
+        success: boolean;
+        data: { session_id: string; session_name: string; created_at: string };
+    }> {
+        return apiClient.post(API_ENDPOINTS.CHAT_SESSION_NEW, {});
+    }
+
+    /**
+     * Delete a chat session.
+     */
+    async deleteChatSession(sessionId: string): Promise<{ success: boolean }> {
+        return apiClient.delete(`${API_ENDPOINTS.CHAT_SESSIONS}/${sessionId}`);
     }
 }
 
