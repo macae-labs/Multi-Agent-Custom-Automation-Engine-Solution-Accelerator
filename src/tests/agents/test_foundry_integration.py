@@ -1,6 +1,10 @@
 """
 Integration tests for FoundryAgentTemplate functionality.
 Tests Bing search, RAG, MCP tools, and Code Interpreter capabilities.
+
+These tests require real Azure infrastructure and credentials.
+They are marked as 'integration' and will be skipped when backend
+unit test sys.modules mocks contaminate the import namespace.
 """
 # pylint: disable=E0401, E0611, C0413
 
@@ -13,11 +17,24 @@ import pytest
 backend_path = Path(__file__).parent.parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
-# Now import from the v4 package
-from src.backend.v4.magentic_agents.foundry_agent import FoundryAgentTemplate
-from src.backend.v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
+# Guard against sys.modules mock contamination from backend unit tests.
+# When collected alongside backend tests, those tests mock
+# sys.modules["v4.magentic_agents.models.agent_models"] = Mock(),
+# which makes `MCPConfig | None` type annotations fail with TypeError.
+try:
+    from src.backend.v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+    from src.backend.v4.magentic_agents.models.agent_models import (
+        MCPConfig,
+        SearchConfig,
+    )
+except (TypeError, AttributeError):
+    pytest.skip(
+        "Skipping: sys.modules mock contamination from backend unit tests",
+        allow_module_level=True,
+    )
 
 
+@pytest.mark.integration
 class TestFoundryAgentIntegration:
     """Integration tests for FoundryAgentTemplate capabilities."""
 
@@ -56,11 +73,17 @@ class TestFoundryAgentIntegration:
         )
         model_deployment_name = "gpt-4.1"
 
+        import os
+
         agent = FoundryAgentTemplate(
             agent_name=agent_name,
             agent_description=agent_description,
             agent_instructions=agent_instructions,
+            use_reasoning=False,
             model_deployment_name=model_deployment_name,
+            project_endpoint=os.environ.get(
+                "AZURE_AI_PROJECT_ENDPOINT", "https://test.services.ai.azure.com"
+            ),
             enable_code_interpreter=True,
             mcp_config=agent_configs["mcp_config"],
             # bing_config=agent_configs['bing_config'],
@@ -237,11 +260,17 @@ class TestFoundryAgentIntegration:
         """Test that agent handles missing configurations without crashing."""
         model_deployment_name = "gpt-4.1"
 
+        import os
+
         agent = FoundryAgentTemplate(
             agent_name="TestAgent",
             agent_description="Test agent",
             agent_instructions="Test instructions",
+            use_reasoning=False,
             model_deployment_name=model_deployment_name,
+            project_endpoint=os.environ.get(
+                "AZURE_AI_PROJECT_ENDPOINT", "https://test.services.ai.azure.com"
+            ),
             enable_code_interpreter=False,
             mcp_config=None,
             # bing_config=None,

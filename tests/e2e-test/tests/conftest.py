@@ -6,13 +6,20 @@ import os
 import io
 import logging
 import atexit
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-from config.constants import URL
+# Make the e2e-test package importable when pytest is launched from repo root.
+E2E_ROOT = Path(__file__).resolve().parents[1]
+if str(E2E_ROOT) not in sys.path:
+    sys.path.insert(0, str(E2E_ROOT))
+
+from e2e_constants import URL
 
 # Create screenshots directory if it doesn't exist
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -115,7 +122,7 @@ def pytest_runtest_setup(item):
     log_streams[item.nodeid] = (handler, stream)
 
 
-@pytest.hookimpl(tryfirst=True)
+@pytest.hookimpl(tryfirst=True, optionalhook=True)
 def pytest_html_report_title(report):
     """Set custom HTML report title"""
     report.title = "MACAE-v3_test_Automation_Report"

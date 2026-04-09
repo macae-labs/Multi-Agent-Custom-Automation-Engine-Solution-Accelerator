@@ -166,6 +166,24 @@ class Step(BaseDataModel):
     updated_action: Optional[str] = None
 
 
+class ActionRequest(BaseDataModel):
+    """Represents a request for an agent to take action on a step."""
+
+    step_id: str
+    plan_id: str
+    action: str
+    agent: AgentType
+
+
+class HumanFeedback(BaseDataModel):
+    """Represents human feedback on a step."""
+
+    step_id: str
+    plan_id: str
+    approved: bool
+    human_feedback: Optional[str] = None
+
+
 class TeamSelectionRequest(BaseDataModel):
     """Request model for team selection."""
 

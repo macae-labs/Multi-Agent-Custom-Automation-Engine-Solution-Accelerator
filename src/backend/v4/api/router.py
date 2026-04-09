@@ -773,6 +773,7 @@ async def chat_message_stream(
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
                     mcp_config=mcp_config,
+                    ephemeral=True,
                 )
                 await agent.open()
                 try:
@@ -953,6 +954,7 @@ async def _get_mcp_query_response(
             model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
             project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
             mcp_config=mcp_config,
+            ephemeral=True,
         )
         await agent.open()
         try:

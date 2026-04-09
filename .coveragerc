@@ -1,6 +1,6 @@
 [run]
 source = .
-omit = 
+omit =
     src/mcp_server/*
     src/backend/tests/*
     src/tests/mcp_server/*

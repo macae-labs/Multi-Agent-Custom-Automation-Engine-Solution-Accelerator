@@ -1,14 +1,17 @@
 {
     "folders": [
         {
+            "name": "MACAE",
             "path": "."
         },
-        // {
-        //     "path": "./src/frontend"
-        // },
-        // {
-        //     "path": "./src/backend"
-        // }
+        {
+            "name": "mcp-server",
+            "path": "./src/mcp_server"
+        },
+        {
+            "name": "e2e-tests",
+            "path": "./tests/e2e-test"
+        }
     ],
     "settings": {
         "terminal.integrated.suggest.suggestOnTriggerCharacters": true,
@@ -16,6 +19,12 @@
         "debug.internalConsoleOptions": "neverOpen",
         "remote.autoForwardPortsFallback": 0,
         "files.trimTrailingWhitespace": true,
-        "python.defaultInterpreterPath": "python"
+        "files.insertFinalNewline": true,
+        "[python]": {
+            "editor.defaultFormatter": "charliermarsh.ruff",
+            "editor.formatOnSave": true
+        },
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false
     }
 }

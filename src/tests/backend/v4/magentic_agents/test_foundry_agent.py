@@ -63,8 +63,6 @@ sys.modules["opentelemetry.sdk"] = Mock()
 sys.modules["opentelemetry.sdk.trace"] = Mock()
 sys.modules["opentelemetry.sdk.trace.export"] = Mock()
 sys.modules["opentelemetry.trace"] = Mock()
-sys.modules["pydantic"] = Mock()
-sys.modules["pydantic_settings"] = Mock()
 
 # Mock the specific problematic modules
 sys.modules["common.database.database_base"] = Mock(DatabaseBase=Mock)
@@ -1159,3 +1157,129 @@ class TestFoundryAgentTemplate:
             await agent.close()
 
         mock_super_close.assert_called_once()
+
+    # ── Hybrid responses_client path tests (commit 758204a6) ──
+
+    @pytest.mark.asyncio
+    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    async def test_after_open_with_tools_uses_responses_client(
+        self, mock_get_logger, mock_config, mock_registry
+    ):
+        """When _collect_tools returns tools, _after_open must call
+        get_responses_client (not get_chat_client) and call
+        _register_in_foundry for non-ephemeral agents."""
+        mock_logger = Mock()
+        mock_get_logger.return_value = mock_logger
+        mock_config.get_ai_project_client.return_value = AsyncMock()
+
+        agent = FoundryAgentTemplate(
+            agent_name="ToolAgent",
+            agent_description="Agent with tools",
+            agent_instructions="Use tools",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+        )
+
+        mock_tool = Mock()
+        agent._collect_tools = AsyncMock(return_value=[mock_tool])
+        agent.get_agent_id = Mock(return_value="agent-id")
+        agent.get_responses_client = Mock(return_value=Mock())
+        agent.get_chat_client = Mock(return_value=Mock())
+        agent._register_in_foundry = AsyncMock()
+
+        await agent._after_open()
+
+        agent.get_responses_client.assert_called_once()
+        agent.get_chat_client.assert_not_called()
+        agent._register_in_foundry.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    async def test_after_open_without_tools_uses_chat_client(
+        self, mock_get_logger, mock_config, mock_registry
+    ):
+        """When _collect_tools returns empty list, _after_open must call
+        get_chat_client (not get_responses_client) and skip _register_in_foundry."""
+        mock_logger = Mock()
+        mock_get_logger.return_value = mock_logger
+        mock_config.get_ai_project_client.return_value = AsyncMock()
+
+        agent = FoundryAgentTemplate(
+            agent_name="NoToolAgent",
+            agent_description="Agent without tools",
+            agent_instructions="No tools",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+        )
+
+        agent._collect_tools = AsyncMock(return_value=[])
+        agent.get_agent_id = Mock(return_value="agent-id")
+        agent.get_responses_client = Mock(return_value=Mock())
+        agent.get_chat_client = Mock(return_value=Mock())
+        agent._register_in_foundry = AsyncMock()
+
+        await agent._after_open()
+
+        agent.get_chat_client.assert_called_once()
+        agent.get_responses_client.assert_not_called()
+        agent._register_in_foundry.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    async def test_ephemeral_agent_skips_foundry_registration(
+        self, mock_get_logger, mock_config, mock_registry
+    ):
+        """Ephemeral agents (e.g. ChatMCPAgent) must skip _register_in_foundry
+        even when they have tools, to avoid 404 errors from create_version."""
+        mock_logger = Mock()
+        mock_get_logger.return_value = mock_logger
+        mock_config.get_ai_project_client.return_value = AsyncMock()
+
+        agent = FoundryAgentTemplate(
+            agent_name="ChatMCPAgent",
+            agent_description="Ephemeral MCP agent",
+            agent_instructions="Use MCP",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+            ephemeral=True,
+        )
+
+        assert agent._ephemeral is True
+
+        mock_tool = Mock()
+        agent._collect_tools = AsyncMock(return_value=[mock_tool])
+        agent.get_agent_id = Mock(return_value="agent-id")
+        agent.get_responses_client = Mock(return_value=Mock())
+        agent._register_in_foundry = AsyncMock()
+
+        await agent._after_open()
+
+        agent.get_responses_client.assert_called_once()
+        agent._register_in_foundry.assert_not_called()
+
+    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    def test_ephemeral_default_is_false(self, mock_get_logger, mock_config):
+        """By default, agents are NOT ephemeral."""
+        mock_get_logger.return_value = Mock()
+        mock_config.get_ai_project_client.return_value = AsyncMock()
+
+        agent = FoundryAgentTemplate(
+            agent_name="PersistentAgent",
+            agent_description="Normal agent",
+            agent_instructions="Test",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+        )
+
+        assert agent._ephemeral is False

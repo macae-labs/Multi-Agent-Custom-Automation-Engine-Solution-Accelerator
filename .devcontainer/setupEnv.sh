@@ -24,13 +24,22 @@ cd "$WS/src/mcp_server"
 uv sync --frozen
 echo "   ✅ MCP Server: $(uv pip list 2>/dev/null | wc -l) packages"
 
-# ── 3. Symlink root .venv → backend (VS Code + pytest default) ──────
+# ── 3. E2E test .venv (tests/e2e-test/.venv) ────────────────────────
+echo "🔧 Setting up E2E tests (.venv)..."
+cd "$WS/tests/e2e-test"
+uv venv .venv
+VIRTUAL_ENV="$WS/tests/e2e-test/.venv" uv pip install -r requirements.txt
+# Install Playwright browser (Chromium only to keep image small)
+.venv/bin/python -m playwright install --with-deps chromium
+echo "   ✅ E2E: $(VIRTUAL_ENV=.venv uv pip list 2>/dev/null | wc -l) packages"
+
+# ── 4. Symlink root .venv → backend (VS Code + pytest default) ──────
 echo "🔗 Linking root .venv → src/backend/.venv"
 cd "$WS"
 rm -rf .venv 2>/dev/null || true
 ln -sfn src/backend/.venv .venv
 
-# ── 4. Frontend ─────────────────────────────────────────────────────
+# ── 5. Frontend ─────────────────────────────────────────────────────
 echo "🔧 Setting up Frontend..."
 cd "$WS/src/frontend"
 npm install
@@ -38,7 +47,7 @@ if [ -f requirements.txt ]; then
   pip install -r requirements.txt
 fi
 
-# ── 5. Ensure gh CLI is available ───────────────────────────────────
+# ── 6. Ensure gh CLI is available ───────────────────────────────────
 if ! command -v gh >/dev/null 2>&1; then
   echo "📦 Installing GitHub CLI..."
   (type -p wget >/dev/null || (sudo apt-get update && sudo apt-get install wget -y)) \
@@ -58,5 +67,6 @@ echo ""
 echo "🎉 Setup complete!"
 echo "   Backend  → src/backend/.venv"
 echo "   MCP      → src/mcp_server/.venv"
+echo "   E2E      → tests/e2e-test/.venv"
 echo "   Root     → .venv (symlink → backend)"
 echo ""

@@ -44,6 +44,7 @@ class FoundryAgentTemplate(AzureAgentBase):
         team_service: TeamService | None = None,
         team_config: TeamConfiguration | None = None,
         memory_store: DatabaseBase | None = None,
+        ephemeral: bool = False,
     ) -> None:
         # Get project_client before calling super().__init__
         project_client = config.get_ai_project_client()
@@ -68,6 +69,10 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Decide early whether Azure Search mode should be activated
         self._use_azure_search = self._is_azure_search_requested()
         self.use_reasoning = use_reasoning
+
+        # Ephemeral agents (e.g. ChatMCPAgent) skip Foundry registration
+        # to avoid 404 errors from create_version on every request.
+        self._ephemeral = ephemeral
 
         # Placeholder for server-created Azure AI agent id (if Azure Search path)
         self._azure_server_agent_id: Optional[str] = None
@@ -299,7 +304,9 @@ class FoundryAgentTemplate(AzureAgentBase):
 
                 # For agents using AzureOpenAIResponsesClient, register in
                 # Foundry so they appear in the portal / VS Code extension.
-                if tools:
+                # Skip for ephemeral agents (e.g. ChatMCPAgent) to avoid
+                # 404 errors from create_version on every request.
+                if tools and not self._ephemeral:
                     await self._register_in_foundry()
 
             self.logger.info("Initialized Agent '%s'", self.agent_name)

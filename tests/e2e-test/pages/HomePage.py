@@ -90,7 +90,7 @@ class BIABPage(BasePage):
 
     def reload_home_page(self):
         """Reload the home page URL."""
-        from config.constants import URL
+        from e2e_constants import URL
 
         logger.info("Reloading home page...")
         self.page.goto(URL)

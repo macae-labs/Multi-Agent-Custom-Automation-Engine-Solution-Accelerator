@@ -2,6 +2,10 @@
 Tests for utility functions.
 """
 
+import pytest
+
+fastmcp = pytest.importorskip("fastmcp")
+
 from datetime import datetime
 from src.mcp_server.utils.date_utils import (
     format_date_for_user,

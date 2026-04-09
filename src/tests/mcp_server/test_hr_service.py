@@ -3,6 +3,9 @@ Tests for HR service.
 """
 
 import pytest
+
+fastmcp = pytest.importorskip("fastmcp")
+
 from src.mcp_server.core.factory import Domain
 
 
