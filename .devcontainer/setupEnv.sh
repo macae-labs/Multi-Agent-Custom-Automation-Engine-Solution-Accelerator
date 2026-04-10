@@ -36,7 +36,7 @@ echo "   ✅ Backend: $(uv pip list 2>/dev/null | wc -l) packages"
 # ── 2. MCP Server .venv (src/mcp_server/.venv) ──────────────────────
 echo "🔧 Setting up MCP Server (.venv)..."
 cd "$WS/src/mcp_server"
-if ! uv sync --frozen; then
+if ! uv sync --frozen --extra dev; then
   echo "❌ MCP Server venv setup FAILED — check pyproject.toml / uv.lock"
   exit 1
 fi
@@ -45,7 +45,7 @@ echo "   ✅ MCP Server: $(uv pip list 2>/dev/null | wc -l) packages"
 # ── 3. E2E test .venv (tests/e2e-test/.venv) ────────────────────────
 echo "🔧 Setting up E2E tests (.venv)..."
 cd "$WS/tests/e2e-test"
-if ! uv venv .venv; then
+if ! uv venv --allow-existing .venv; then
   echo "❌ E2E venv creation FAILED"
   exit 1
 fi
