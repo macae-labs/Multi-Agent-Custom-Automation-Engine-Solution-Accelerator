@@ -258,6 +258,30 @@ class ChatCosmosService:
                 session["session_name"] = content[:60]
 
             await self._container.upsert_item(session)
+
+            # Push to AI Search index (fire-and-forget for real-time RAG)
+            try:
+                import asyncio
+                from common.services.search_index_service import (
+                    get_search_index_service,
+                )
+
+                search_svc = await get_search_index_service()
+                asyncio.create_task(
+                    search_svc.index_chat_message(
+                        message_id=message["id"],
+                        session_id=session_id,
+                        user_id=user_id,
+                        role=role,
+                        content=content,
+                        intent=(metadata or {}).get("intent", ""),
+                        timestamp=message["timestamp"],
+                        session_name=session.get("session_name", ""),
+                    )
+                )
+            except Exception as search_err:
+                logger.debug("AI Search indexing skipped: %s", search_err)
+
             return message
 
         except Exception as e:

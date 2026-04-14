@@ -587,8 +587,11 @@ async def chat_message(
         )
 
     else:
-        # Conversational — LLM response via Azure OpenAI
-        response_text = await _get_conversational_response(
+        # Conversational — same FoundryAgent engine as MCP (unified brain).
+        # The agent has search_knowledge_base + MCP tools, so it can
+        # answer questions, recall history, AND take action if the
+        # conversation naturally evolves into an actionable request.
+        response_text = await _get_mcp_query_response(
             chat_request.message, chat_request.session_id, user_id, chat_svc
         )
 
@@ -649,9 +652,7 @@ async def chat_message_stream(
     - {type: "done", intent, agent, confidence, session_id}
     - {type: "error", message}
     """
-    from agent_framework import ChatOptions, Message  # noqa: E402
 
-    from v4.config.settings import AzureConfig
     from v4.orchestration.intent_router import Intent, IntentRouter
 
     authenticated_user = get_authenticated_user_details(request_headers=request.headers)
@@ -751,100 +752,110 @@ async def chat_message_stream(
             )
             return
 
-        # 3. Route by intent type
+        # 3. Unified FoundryAgent for ALL non-task intents
+        #    One brain: search_knowledge_base + MCP tools + reasoning.
+        #    Emits rich SSE events so the UI can show intermediate steps.
         full_text = ""
-        is_mcp = intent_result.intent == Intent.MCP_QUERY
 
-        if is_mcp:
-            # ── MCP query → FoundryAgentTemplate with real MCP tools ──
-            try:
-                from common.config.app_config import config as app_config
-                from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
-                from v4.magentic_agents.models.agent_models import (
-                    MCPConfig as AgentMCPConfig,
-                )
+        try:
+            from common.config.app_config import config as app_config
+            from v4.config.agent_pool import get_or_create
+            from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+            from v4.magentic_agents.models.agent_models import (
+                MCPConfig as AgentMCPConfig,
+            )
 
+            async def _factory():
                 mcp_config = AgentMCPConfig.from_env()
-                agent = FoundryAgentTemplate(
+                a = FoundryAgentTemplate(
                     agent_name="ChatMCPAgent",
-                    agent_description="MCP-aware chat agent with tool execution",
+                    agent_description="Unified chat agent with MCP tools and knowledge search",
                     agent_instructions=_MCP_AGENT_INSTRUCTIONS,
                     use_reasoning=False,
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
                     mcp_config=mcp_config,
-                    ephemeral=True,
+                    ephemeral=False,
+                    user_id=user_id,
+                    session_id=chat_request.session_id,
                 )
-                await agent.open()
-                try:
-                    async for update in agent.invoke(chat_request.message):
-                        token = getattr(update, "text", "") or ""
-                        if token:
-                            full_text += token
-                            yield _sse_event({"type": "token", "content": token})
-                finally:
-                    await agent.close()
+                await a.open()
+                return a
 
-            except Exception as e:
-                logger.warning("MCP agent streaming failed (%s), using fallback", e)
-                if not full_text:
-                    full_text = _mcp_fallback(chat_request.message)
-                    yield _sse_event({"type": "token", "content": full_text})
+            agent = await get_or_create(user_id, chat_request.session_id, _factory)
 
-        else:
-            # ── Conversational → AzureOpenAIChatClient (fast, no tools) ──
-            try:
-                azure_config = AzureConfig()
-                chat_client = await azure_config.create_chat_completion_service(
-                    use_reasoning_model=False,
-                )
+            async for update in agent.invoke(chat_request.message):
+                    # Process ALL content types from the agent framework
+                    for content in update.contents or []:
+                        ct = content.type
 
-                # Build conversation history from Cosmos
-                history_messages: list[Message] = []
-                try:
-                    session = await chat_svc.get_session(
-                        chat_request.session_id, user_id
-                    )
-                    if session and session.get("messages"):
-                        recent = session["messages"][-10:]
-                        for m in recent:
-                            role = (
-                                "user"
-                                if m.get("role", m.get("sender")) == "user"
-                                else "assistant"
+                        if ct == "text":
+                            token = content.text or ""
+                            if token:
+                                full_text += token
+                                yield _sse_event({"type": "token", "content": token})
+
+                        elif ct == "function_call":
+                            yield _sse_event(
+                                {
+                                    "type": "tool_activity",
+                                    "activity": "calling",
+                                    "tool": content.name or "unknown",
+                                    "args": str(content.arguments or "")[:200],
+                                }
                             )
-                            history_messages.append(
-                                Message(role=role, text=m.get("content", ""))
+
+                        elif ct == "function_result":
+                            yield _sse_event(
+                                {
+                                    "type": "tool_activity",
+                                    "activity": "result",
+                                    "tool": content.name or "unknown",
+                                    "success": content.exception is None,
+                                }
                             )
-                except Exception:
-                    pass
 
-                llm_messages: list[Message] = [
-                    Message(role="system", text=_CONVERSATIONAL_SYSTEM_PROMPT),
-                    *history_messages,
-                    Message(role="user", text=chat_request.message),
-                ]
+                        elif ct == "mcp_server_tool_call":
+                            yield _sse_event(
+                                {
+                                    "type": "tool_activity",
+                                    "activity": "calling",
+                                    "tool": content.tool_name or "unknown",
+                                    "server": content.server_name or "unknown",
+                                    "args": str(content.arguments or "")[:200],
+                                }
+                            )
 
-                options = ChatOptions(
-                    max_tokens=1000,
-                    temperature=0.7,
-                )
+                        elif ct == "mcp_server_tool_result":
+                            yield _sse_event(
+                                {
+                                    "type": "tool_activity",
+                                    "activity": "result",
+                                    "tool": content.tool_name or "unknown",
+                                    "server": content.server_name or "unknown",
+                                    "success": content.status != "error"
+                                    if content.status
+                                    else True,
+                                }
+                            )
 
-                # Stream tokens from LLM
-                response_stream = await chat_client.get_response(
-                    llm_messages, stream=True, options=options
-                )
-                async for update in response_stream:
-                    token = update.text or ""
-                    if token:
-                        full_text += token
-                        yield _sse_event({"type": "token", "content": token})
+                        elif ct == "text_reasoning":
+                            # Agent's internal reasoning — send as thinking indicator
+                            yield _sse_event(
+                                {
+                                    "type": "tool_activity",
+                                    "activity": "thinking",
+                                    "tool": "reasoning",
+                                }
+                            )
 
-            except Exception as e:
-                logger.warning("Streaming LLM failed (%s), using fallback", e)
-                if not full_text:
-                    full_text = _conversational_fallback(chat_request.message)
-                    yield _sse_event({"type": "token", "content": full_text})
+                        # usage, hosted_file, etc. — skip silently
+
+        except Exception as e:
+            logger.warning("FoundryAgent streaming failed (%s), using fallback", e)
+            if not full_text:
+                full_text = _mcp_fallback(chat_request.message)
+                yield _sse_event({"type": "token", "content": full_text})
 
         # 4. Persist full assistant response to Cosmos
         try:
@@ -873,7 +884,7 @@ async def chat_message_stream(
             {
                 "type": "done",
                 "intent": intent_result.intent.value,
-                "agent": "tech_support" if is_mcp else "assistant",
+                "agent": "assistant",
                 "confidence": intent_result.confidence,
                 "session_id": chat_request.session_id,
             }
@@ -893,36 +904,47 @@ async def chat_message_stream(
 # ── MCP Agent (FoundryAgentTemplate with tool execution) ────────
 
 _MCP_AGENT_INSTRUCTIONS = (
-    "You are the MACAE MCP assistant. You have access to real MCP tools via MacaeMcpServer.\n\n"
-    "IMPORTANT — You are EPHEMERAL:\n"
-    "Each user message creates a fresh agent instance. You have NO memory of previous tool calls, "
-    "connected servers, or discovered tools from earlier turns. The conversation history in your "
-    "messages gives you CONTEXT about what was discussed, but your MCP sessions start clean.\n"
-    "If the user refers to a server they connected before, you must reconnect it.\n"
-    "If the user asks about tools, you must call discover_mcp_capabilities again.\n\n"
+    "You are the MACAE assistant. You have two categories of tools:\n\n"
+    "═══ 1. KNOWLEDGE BASE (search_knowledge_base) ═══\n"
+    "You have a tool called search_knowledge_base that searches across ALL knowledge bases:\n"
+    "chat history, contracts, RFPs, customer data, order data, and compliance documents.\n\n"
+    "CRITICAL — MEMORY RULE:\n"
+    "You MUST call search_knowledge_base BEFORE saying you don't have memory or context.\n"
+    "When the user asks about:\n"
+    "  - Previous conversations, interactions, or history\n"
+    "  - Past errors, problems, or issues they had\n"
+    "  - What they discussed before, what happened earlier\n"
+    "  - Any domain knowledge (contracts, NDAs, policies, products, customers)\n"
+    "→ ALWAYS call search_knowledge_base(query='<relevant search terms>') FIRST.\n"
+    "→ NEVER say 'I don't have memory' without searching first.\n"
+    "→ If search returns results, use them to answer. If no results, then say so.\n\n"
+    "Parameters:\n"
+    "  - query: Natural language search (e.g. 'filesystem error', 'NDA Contoso risks')\n"
+    "  - source_type: 'all' (default), 'chat' (history only), 'documents' (docs only)\n\n"
+    "═══ 2. MCP TOOLS (external servers) ═══\n"
+    "You can connect to external MCP servers to perform real actions.\n\n"
+    "EPHEMERAL MCP SESSIONS:\n"
+    "Each request starts with a clean MCP session. If the user refers to a server they "
+    "connected before, you must reconnect it.\n\n"
     "CRITICAL RULES:\n"
-    "1. NEVER invent or guess tool names. If the user asks what tools or capabilities are available, "
-    "you MUST call discover_mcp_capabilities(server_name='<server>') and report ONLY the tools it returns.\n"
+    "1. NEVER invent or guess tool names. Call discover_mcp_capabilities to list available tools.\n"
     "2. Do NOT describe what a tool does from memory — EXECUTE it and return the real output.\n"
-    "3. If the user asks to perform a filesystem action, first check if the server is connected via "
-    "list_connected_servers(), reconnect with connect_stdio_server(server_name='filesystem') if needed, "
-    "then use call_external_tool.\n\n"
-    "WORKFLOW — Connecting to ANY external MCP server:\n"
-    "  a) Call list_connected_servers to see active sessions AND available servers from the inspector config.\n"
-    "  b) To connect to a STDIO server from inspector config:  connect_stdio_server(server_name='github')\n"
-    "     Supported stdio servers: github, filesystem, or any server in mcp-inspector-config.json.\n"
-    "  c) To connect by DIRECT URL:  connect_mcp_server(server_url='http://host:port/mcp', server_name='my-server')\n"
-    "  d) To connect from catalog:   connect_from_registry(server_name='catalog-name', user_id='sample_user')\n"
-    "  e) After connecting, call discover_mcp_capabilities(server_name='my-server') to list tools.\n"
-    "  f) Execute a tool: call_external_tool(server_name='my-server', target_tool='tool', arguments='{}')\n"
-    "  g) Read a resource: read_external_resource(server_name='my-server', resource_uri='res://...')\n"
-    "  h) When done: disconnect_mcp_server(server_name='my-server')\n\n"
-    "EXACT TOOL NAMES AND PARAMETERS (use these exactly, not variations):\n"
-    "  - connect_mcp_server(server_url, server_name)       — for HTTP/streamable-http servers\n"
-    "  - connect_stdio_server(server_name)                 — for stdio servers via Inspector proxy\n"
-    "  - connect_from_registry(server_name, user_id)       — for Cosmos DB catalog servers\n"
+    "3. For filesystem actions: check list_connected_servers(), reconnect if needed, then call_external_tool.\n\n"
+    "WORKFLOW — Connecting to external MCP servers:\n"
+    "  a) list_connected_servers() — see active sessions and available servers\n"
+    "  b) connect_stdio_server(server_name='github') — for stdio servers (github, filesystem, etc.)\n"
+    "  c) connect_mcp_server(server_url='http://host:port/mcp', server_name='x') — for HTTP servers\n"
+    "  d) connect_from_registry(server_name='x', user_id='x') — from Cosmos DB catalog\n"
+    "  e) discover_mcp_capabilities(server_name='x') — list tools\n"
+    "  f) call_external_tool(server_name='x', target_tool='tool', arguments='{}') — execute\n"
+    "  g) read_external_resource(server_name='x', resource_uri='res://...') — read resource\n"
+    "  h) disconnect_mcp_server(server_name='x') — cleanup\n\n"
+    "EXACT TOOL NAMES (use these exactly):\n"
+    "  - connect_mcp_server(server_url, server_name)\n"
+    "  - connect_stdio_server(server_name)\n"
+    "  - connect_from_registry(server_name, user_id)\n"
     "  - discover_mcp_capabilities(server_name)\n"
-    "  - call_external_tool(server_name, target_tool, arguments)  — NOTE: parameter is 'target_tool', NOT 'tool_name'\n"
+    "  - call_external_tool(server_name, target_tool, arguments) — param is 'target_tool', NOT 'tool_name'\n"
     "  - read_external_resource(server_name, resource_uri)\n"
     "  - list_connected_servers()\n"
     "  - disconnect_mcp_server(server_name)\n\n"
@@ -939,33 +961,38 @@ async def _get_mcp_query_response(
     user_id: str,
     chat_svc: Any,
 ) -> str:
-    """Get an MCP-aware response using FoundryAgentTemplate with real tool execution."""
+    """Get an MCP-aware response using a session-persistent FoundryAgentTemplate."""
     from common.config.app_config import config as app_config
+    from v4.config.agent_pool import get_or_create
     from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
     from v4.magentic_agents.models.agent_models import MCPConfig as AgentMCPConfig
 
     try:
-        mcp_config = AgentMCPConfig.from_env()
-        agent = FoundryAgentTemplate(
-            agent_name="ChatMCPAgent",
-            agent_description="MCP-aware chat agent with tool execution",
-            agent_instructions=_MCP_AGENT_INSTRUCTIONS,
-            use_reasoning=False,
-            model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
-            project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
-            mcp_config=mcp_config,
-            ephemeral=True,
-        )
-        await agent.open()
-        try:
-            full_text = ""
-            async for update in agent.invoke(message):
-                token = getattr(update, "text", "") or ""
-                if token:
-                    full_text += token
-            return full_text if full_text else _mcp_fallback(message)
-        finally:
-            await agent.close()
+        async def _factory():
+            mcp_config = AgentMCPConfig.from_env()
+            a = FoundryAgentTemplate(
+                agent_name="ChatMCPAgent",
+                agent_description="MCP-aware chat agent with tool execution",
+                agent_instructions=_MCP_AGENT_INSTRUCTIONS,
+                use_reasoning=False,
+                model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
+                project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
+                mcp_config=mcp_config,
+                ephemeral=False,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            await a.open()
+            return a
+
+        agent = await get_or_create(user_id, session_id, _factory)
+
+        full_text = ""
+        async for update in agent.invoke(message):
+            token = getattr(update, "text", "") or ""
+            if token:
+                full_text += token
+        return full_text if full_text else _mcp_fallback(message)
 
     except Exception as e:
         logger.warning("MCP agent query failed (%s), using fallback", e)
@@ -981,120 +1008,6 @@ def _mcp_fallback(message: str) -> str:
         "list_connected_servers, connect_from_registry, disconnect_mcp_server. "
         "To connect to stdio servers like GitHub or filesystem, use connect_stdio_server(server_name). "
         "Use the Inspector panel in the toolbar to browse and test tools interactively."
-    )
-
-
-# ── Conversational LLM Helper ───────────────────────────────────
-
-
-_CONVERSATIONAL_SYSTEM_PROMPT = (
-    "You are the MACAE Multi-Agent Planner assistant. You help users by chatting and answering questions.\n\n"
-    "CRITICAL LIMITATIONS:\n"
-    "- You have NO tools. You CANNOT create, read, delete, or modify files.\n"
-    "- You CANNOT connect to servers, execute commands, or perform any actions.\n"
-    "- You CANNOT interact with MCP servers, filesystem, GitHub, or any external service.\n"
-    "- If the user asks you to DO something (create a file, connect to a server, list a directory, etc.), "
-    "tell them: 'That requires the MCP agent. Please mention the service or action you need "
-    '(e.g. "connect to filesystem", "create a file") so I can route you correctly.\'\n'
-    "- NEVER say you performed an action. NEVER say 'Done', 'File created', 'Connected', etc.\n\n"
-    "What you CAN do: answer general questions, explain how the system works, "
-    "help the user formulate a task or MCP request, and have friendly conversation.\n\n"
-    "Be helpful, concise, and friendly. Respond in the same language the user writes in."
-)
-
-
-async def _get_conversational_response(
-    message: str,
-    session_id: str,
-    user_id: str,
-    chat_svc: Any,
-) -> str:
-    """Get a conversational response from the LLM.
-
-    Uses AzureOpenAIChatClient.get_response() (same client as orchestration agents).
-    Falls back to a simple keyword-based greeting if the LLM call fails.
-    """
-    from agent_framework import ChatOptions, Message  # noqa: E402
-
-    from v4.config.settings import AzureConfig
-
-    try:
-        azure_config = AzureConfig()
-        chat_client = await azure_config.create_chat_completion_service(
-            use_reasoning_model=False,
-        )
-
-        # Build conversation history from Cosmos (last N messages for context)
-        history_messages: list[Message] = []
-        try:
-            session = await chat_svc.get_session(session_id, user_id)
-            if session and session.get("messages"):
-                # Take last 10 messages for context window
-                recent = session["messages"][-10:]
-                for m in recent:
-                    role = (
-                        "user"
-                        if m.get("role", m.get("sender")) == "user"
-                        else "assistant"
-                    )
-                    history_messages.append(
-                        Message(role=role, text=m.get("content", ""))
-                    )
-        except Exception:
-            pass  # No history available, that's fine
-
-        # Build the messages list for the LLM
-        llm_messages: list[Message] = [
-            Message(role="system", text=_CONVERSATIONAL_SYSTEM_PROMPT),
-            *history_messages,
-            Message(role="user", text=message),
-        ]
-
-        # Call the LLM
-        options = ChatOptions(
-            max_tokens=1000,
-            temperature=0.7,
-        )
-
-        response = await chat_client.get_response(llm_messages, options=options)
-
-        # Extract text from ChatResponse
-        if response and response.text:
-            return response.text
-
-        logger.warning("LLM returned empty response, using fallback")
-        return _conversational_fallback(message)
-
-    except Exception as e:
-        logger.warning("LLM conversational call failed (%s), using fallback", e)
-        return _conversational_fallback(message)
-
-
-def _conversational_fallback(message: str) -> str:
-    """Simple keyword-based fallback when LLM is unavailable."""
-    msg_lower = message.strip().lower()
-
-    if any(g in msg_lower for g in ["hi", "hello", "hey", "hola"]):
-        return (
-            "Hello! I'm the Multi-Agent Planner assistant. "
-            "I can help you create plans, manage tasks, or query MCP tools. "
-            "What would you like to do today?"
-        )
-    if any(g in msg_lower for g in ["buenos", "buenas"]):
-        return (
-            "¡Hola! Soy el asistente del Multi-Agent Planner. "
-            "Puedo ayudarte a crear planes, gestionar tareas o consultar herramientas MCP. "
-            "¿En qué puedo ayudarte?"
-        )
-    if any(g in msg_lower for g in ["thanks", "thank you", "gracias"]):
-        return "You're welcome! Let me know if you need anything else."
-    if any(g in msg_lower for g in ["bye", "goodbye", "adios"]):
-        return "Goodbye! Feel free to come back anytime."
-
-    return (
-        "I'm here to help! You can describe a task to create a plan, "
-        "ask about MCP servers and tools, or just chat. "
-        "What would you like to do?"
     )
 
 

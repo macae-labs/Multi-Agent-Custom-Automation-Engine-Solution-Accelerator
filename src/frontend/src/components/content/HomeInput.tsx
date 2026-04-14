@@ -97,43 +97,47 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
       let id = showToast("Analyzing your request…", "progress");
 
       try {
-        // ── Route through IntentRouter ───────────────────────────
-        const response = await ChatService.sendMessage(input.trim());
-        console.log("IntentRouter:", response.intent, response.confidence);
+        // Send through streaming endpoint — same FoundryAgent from message 1.
+        // For task intent, the stream returns a redirect event.
+        // For conversational/mcp, it streams the real response.
+        const sessionId = `chat_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const userMessage = input.trim();
 
         setInput("");
         if (textareaRef.current) {
           textareaRef.current.style.height = "auto";
         }
 
-        if (response.intent === "task" && response.redirect_to_plan) {
-          // ── TASK intent → redirect to plan (existing flow) ────
+        let redirectPlan: string | null = null;
+        let intent = "";
+        let fullResponse = "";
+
+        await ChatService.sendMessageStream(userMessage, sessionId, {
+          onToken: (token) => { fullResponse += token; },
+          onIntent: (data) => {
+            intent = data.intent;
+            if (data.session_id) {
+              // Update session ID if server assigned a different one
+            }
+          },
+          onDone: (data) => { intent = data.intent; },
+          onRedirect: (planId) => { redirectPlan = planId; },
+          onError: (errorMsg) => { fullResponse = `Error: ${errorMsg}`; },
+        });
+
+        dismissToast(id);
+
+        if (redirectPlan) {
+          // TASK intent → redirect to plan
           showToast("Plan created!", "success");
-          dismissToast(id);
-          navigate(`/plan/${response.redirect_to_plan}`);
-        } else if (
-          response.intent === "conversational" ||
-          response.intent === "mcp_query"
-        ) {
-          // ── CONVERSATIONAL / MCP → open chat page ─────────────
-          dismissToast(id);
-          const sessionId = response.session_id;
-          const initialMessages = ChatService.getMessages(sessionId);
-          navigate(`/chat/${sessionId}`, {
-            state: { initialMessages },
-          });
+          navigate(`/plan/${redirectPlan}`);
         } else {
-          // Fallback: treat as task
-          dismissToast(id);
-          showToast("Processing request…", "progress");
-          const planResponse = await TaskService.createPlan(
-            input.trim(),
-            selectedTeam?.team_id
-          );
-          if (planResponse.plan_id) {
-            showToast("Plan created!", "success");
-            navigate(`/plan/${planResponse.plan_id}`);
-          }
+          // CONVERSATIONAL / MCP → open chat page with the response already generated
+          const initialMessages = [
+            { id: `msg_${Date.now()}_user`, content: userMessage, role: "user", timestamp: new Date() },
+            { id: `msg_${Date.now()}_assistant`, content: fullResponse, role: "assistant", timestamp: new Date(), intent },
+          ];
+          navigate(`/chat/${sessionId}`, { state: { initialMessages } });
         }
       } catch (error: any) {
         console.log("Error processing message:", error);

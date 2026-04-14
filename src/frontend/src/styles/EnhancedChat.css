@@ -97,6 +97,18 @@
     line-height: 1.5;
 }
 
+/* ── Tool activity indicators ────────────────────────────────── */
+.echat-tool-activity {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    background: var(--colorNeutralBackground3);
+    border-radius: 6px;
+    border-left: 3px solid var(--colorBrandBackground);
+}
+
 /* ── Typing dots ─────────────────────────────────────────────── */
 .echat-typing-dots {
     display: flex;

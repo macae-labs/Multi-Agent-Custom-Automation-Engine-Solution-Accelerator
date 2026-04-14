@@ -43,7 +43,9 @@ class SearchConfig:
     connection_name: str | None = None
     endpoint: str | None = None
     index_name: str | None = None
-    search_query_type: str = "simple"  # Options: "simple", "vector_simple", "vector", "semantic", "hybrid"
+    search_query_type: str = (
+        "semantic"  # Options: "simple", "vector_simple", "vector", "semantic", "hybrid"
+    )
     top_k: int = 5  # Number of results to return
 
     @classmethod
@@ -61,6 +63,6 @@ class SearchConfig:
             connection_name=connection_name,
             endpoint=endpoint,
             index_name=index_name,
-            search_query_type="simple",  # Use simple query type (keyword search)
-            top_k=5
+            search_query_type="semantic",  # Use semantic query type (vector + reranking)
+            top_k=5,
         )

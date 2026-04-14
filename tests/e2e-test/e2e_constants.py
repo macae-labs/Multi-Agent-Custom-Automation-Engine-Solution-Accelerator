@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 URL = os.getenv("MACAE_WEB_URL")
 if URL and URL.endswith("/"):

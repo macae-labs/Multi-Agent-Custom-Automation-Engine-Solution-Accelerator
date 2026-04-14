@@ -1,4 +1,3 @@
-
 """Module for storing application-wide constants."""
 
 import os
@@ -6,7 +5,7 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 URL = os.getenv("MACAE_WEB_URL")
 if URL and URL.endswith("/"):
     URL = URL[:-1]

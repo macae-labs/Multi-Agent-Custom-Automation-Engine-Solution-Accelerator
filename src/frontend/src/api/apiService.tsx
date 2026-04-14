@@ -303,6 +303,7 @@ export class APIService {
             onDone: (data: { intent: string; agent: string; confidence: number; session_id: string }) => void;
             onRedirect: (planId: string) => void;
             onError: (error: string) => void;
+            onToolActivity?: (data: { activity: string; tool: string; server?: string; success?: boolean }) => void;
         },
     ): Promise<void> {
         const t0 = performance.now();
@@ -351,6 +352,9 @@ export class APIService {
                                 break;
                             case 'error':
                                 callbacks.onError(data.message);
+                                break;
+                            case 'tool_activity':
+                                callbacks.onToolActivity?.(data);
                                 break;
                         }
                     } catch {

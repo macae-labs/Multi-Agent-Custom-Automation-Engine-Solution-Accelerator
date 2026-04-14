@@ -133,6 +133,40 @@ const EnhancedChatMessageBubbleInner: React.FC<EnhancedChatMessageBubbleProps> =
         </Badge>
     ) : null;
 
+    // ── Tool activity indicators ────────────────────────────────
+    const toolActivities = isAssistant && message.toolActivity && message.toolActivity.length > 0 ? (
+        <div className="echat-tool-activity">
+            {message.toolActivity.map((ta, idx) => {
+                if (ta.activity === 'calling') {
+                    const icon = ta.server ? '🔌' : ta.tool === 'reasoning' ? '🧠' : '🔍';
+                    const label = ta.server
+                        ? `${ta.server} → ${ta.tool}`
+                        : ta.tool;
+                    return (
+                        <Badge key={idx} appearance="outline" color="brand" size="small">
+                            {icon} {label}
+                        </Badge>
+                    );
+                }
+                if (ta.activity === 'result') {
+                    return (
+                        <Badge key={idx} appearance="outline" color={ta.success ? 'success' : 'danger'} size="small">
+                            {ta.success ? '✓' : '✗'} {ta.tool}
+                        </Badge>
+                    );
+                }
+                if (ta.activity === 'thinking') {
+                    return (
+                        <Badge key={idx} appearance="outline" color="informative" size="small">
+                            🧠 reasoning
+                        </Badge>
+                    );
+                }
+                return null;
+            })}
+        </div>
+    ) : null;
+
     return (
         <div className={`echat-bubble echat-bubble--${isUser ? 'user' : 'assistant'}`}>
             <Avatar
@@ -154,6 +188,7 @@ const EnhancedChatMessageBubbleInner: React.FC<EnhancedChatMessageBubbleProps> =
                     </div>
                 </div>
                 <div className="echat-bubble-content">
+                    {toolActivities}
                     {renderContent()}
                 </div>
             </div>

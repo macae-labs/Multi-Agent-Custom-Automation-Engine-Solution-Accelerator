@@ -95,6 +95,26 @@ const ChatPage: React.FC = () => {
                         ),
                     );
                 },
+                onToolActivity: (data) => {
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === assistantMsgId
+                                ? {
+                                    ...m,
+                                    toolActivity: [
+                                        ...(m.toolActivity || []),
+                                        {
+                                            activity: data.activity as 'calling' | 'result' | 'thinking',
+                                            tool: data.tool,
+                                            server: data.server,
+                                            success: data.success,
+                                        },
+                                    ],
+                                }
+                                : m,
+                        ),
+                    );
+                },
                 onIntent: (data) => {
                     if (data.session_id && data.session_id !== sessionId) {
                         navigate(`/chat/${data.session_id}`, { replace: true });
@@ -144,8 +164,8 @@ const ChatPage: React.FC = () => {
     }, [navigate]);
 
     const handleNewTaskButton = useCallback(() => {
-        NewTaskService.handleNewTaskFromHome();
-    }, []);
+        navigate('/', { state: { focusInput: true } });
+    }, [navigate]);
 
     return (
         <>

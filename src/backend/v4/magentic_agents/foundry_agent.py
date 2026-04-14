@@ -45,6 +45,8 @@ class FoundryAgentTemplate(AzureAgentBase):
         team_config: TeamConfiguration | None = None,
         memory_store: DatabaseBase | None = None,
         ephemeral: bool = False,
+        user_id: str = "",
+        session_id: str = "",
     ) -> None:
         # Get project_client before calling super().__init__
         project_client = config.get_ai_project_client()
@@ -73,6 +75,8 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Ephemeral agents (e.g. ChatMCPAgent) skip Foundry registration
         # to avoid 404 errors from create_version on every request.
         self._ephemeral = ephemeral
+        self._user_id = user_id
+        self._session_id = session_id
 
         # Placeholder for server-created Azure AI agent id (if Azure Search path)
         self._azure_server_agent_id: Optional[str] = None
@@ -97,10 +101,10 @@ class FoundryAgentTemplate(AzureAgentBase):
 
     async def _collect_tools(self) -> List:
         """Collect tool definitions for Agent (MCP path only)."""
+        from agent_framework import FunctionTool
+
         tools: List = []
 
-        # Code Interpreter is now handled server-side via AzureAIClient agent definition.
-        # HostedCodeInterpreterTool was removed in rc4.
         if self.enable_code_interpreter:
             self.logger.info(
                 "Code Interpreter requested — handled server-side by AzureAIClient."
@@ -110,6 +114,70 @@ class FoundryAgentTemplate(AzureAgentBase):
         if self.mcp_tool:
             tools.append(self.mcp_tool)
             self.logger.info("Added MCP tool: %s", self.mcp_tool.name)
+
+        # Knowledge base search tool — lets the agent decide when to search
+        async def search_knowledge_base(query: str, source_type: str = "all") -> str:
+            """Search across all knowledge bases (chat history + documents).
+
+            Use this tool when you need context from previous conversations
+            or domain documents (contracts, RFPs, customer data, etc.).
+
+            Args:
+                query: Natural language search query describing what you need.
+                source_type: 'all' (default), 'chat' (history only), or 'documents' (docs only).
+
+            Returns:
+                Relevant context as formatted text.
+            """
+            try:
+                from common.services.search_index_service import (
+                    get_search_index_service,
+                )
+
+                svc = await get_search_index_service()
+                expanded = await svc.expand_query(query)
+                results = await svc.search_all_indices(
+                    query=expanded,
+                    top_k=10,
+                    user_id=self._user_id or "",
+                )
+
+                if source_type == "chat":
+                    results = [r for r in results if r["source_type"] == "chat"]
+                elif source_type == "documents":
+                    results = [r for r in results if r["source_type"] == "document"]
+
+                if not results:
+                    return "No relevant information found."
+
+                lines = []
+                for r in results[:10]:
+                    src = r.get("source_index", "unknown")
+                    content = r.get("content", "")[:500]
+                    if r["source_type"] == "chat":
+                        role = r.get("role", "")
+                        lines.append(f"[Chat/{role}] {content}")
+                    else:
+                        title = r.get("title", src)
+                        lines.append(f"[Doc: {title}] {content}")
+
+                return "\n---\n".join(lines)
+            except Exception as e:
+                return f"Search failed: {e}"
+
+        tools.append(
+            FunctionTool(
+                func=search_knowledge_base,
+                name="search_knowledge_base",
+                description=(
+                    "Search across ALL knowledge bases: chat history, contracts, "
+                    "RFPs, customer data, order data, and compliance documents. "
+                    "Use when you need context from previous conversations or "
+                    "domain-specific information to answer the user's question."
+                ),
+            )
+        )
+        self.logger.info("Added search_knowledge_base tool")
 
         self.logger.info("Total tools collected (MCP path): %d", len(tools))
         return tools
@@ -148,7 +216,7 @@ class FoundryAgentTemplate(AzureAgentBase):
             )
 
         index_name = getattr(self.search, "index_name", "")
-        query_type = getattr(self.search, "search_query_type", "simple")
+        query_type = getattr(self.search, "search_query_type", "semantic")
         top_k = getattr(self.search, "top_k", 5)
 
         if not index_name:
