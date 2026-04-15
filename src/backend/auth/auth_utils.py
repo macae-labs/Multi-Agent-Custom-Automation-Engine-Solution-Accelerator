@@ -46,6 +46,11 @@ def get_authenticated_user_details(request_headers):
     )
     user_object["aad_id_token"] = normalized_headers.get("x-ms-token-aad-id-token")
 
+    # Extract tenant_id from the base64-encoded client principal
+    user_object["tenant_id"] = get_tenantid(
+        user_object.get("client_principal_b64")
+    ) or ""
+
     return user_object
 
 

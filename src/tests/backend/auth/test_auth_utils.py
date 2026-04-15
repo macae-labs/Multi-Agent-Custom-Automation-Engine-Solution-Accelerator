@@ -75,6 +75,7 @@ class TestGetAuthenticatedUserDetails:
                     "auth_token",
                     "client_principal_b64",
                     "aad_id_token",
+                    "tenant_id",
                 }
                 assert set(result.keys()) == expected_keys
             except ImportError:

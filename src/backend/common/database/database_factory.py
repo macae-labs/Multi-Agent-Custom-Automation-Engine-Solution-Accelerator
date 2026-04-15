@@ -18,18 +18,15 @@ class DatabaseFactory:
     @staticmethod
     async def get_database(
         user_id: str = "",
+        tenant_id: str = "",
         force_new: bool = False,
     ) -> DatabaseBase:
         """
         Get a database instance.
 
         Args:
-            endpoint: CosmosDB endpoint URL
-            credential: Azure credential for authentication
-            database_name: Name of the CosmosDB database
-            container_name: Name of the CosmosDB container
-            session_id: Session ID for partitioning
             user_id: User ID for data isolation
+            tenant_id: Tenant ID for multi-tenant isolation
             force_new: Force creation of new instance
 
         Returns:
@@ -45,6 +42,7 @@ class DatabaseFactory:
                 container_name=config.COSMOSDB_CONTAINER,
                 session_id="",
                 user_id=user_id,
+                tenant_id=tenant_id,
             )
 
             await cosmos_db_client.initialize()

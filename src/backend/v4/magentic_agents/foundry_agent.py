@@ -140,12 +140,30 @@ class FoundryAgentTemplate(AzureAgentBase):
                     query=expanded,
                     top_k=10,
                     user_id=self._user_id or "",
+                    chat_query=query,
                 )
 
                 if source_type == "chat":
                     results = [r for r in results if r["source_type"] == "chat"]
                 elif source_type == "documents":
                     results = [r for r in results if r["source_type"] == "document"]
+
+                if not results:
+                    return "No relevant information found."
+
+                # Filter out self-referential noise (previous failed responses)
+                _noise = (
+                    "no tengo memoria",
+                    "no hemos tenido interacciones",
+                    "no tengo registro",
+                    "cada sesión comienza sin contexto",
+                    "sesión es efímera",
+                    "no hay una situación claramente",
+                )
+                results = [
+                    r for r in results
+                    if not any(p in r.get("content", "").lower() for p in _noise)
+                ]
 
                 if not results:
                     return "No relevant information found."
@@ -397,12 +415,31 @@ class FoundryAgentTemplate(AzureAgentBase):
     # -------------------------
     # Invocation (streaming)
     # -------------------------
-    async def invoke(self, prompt: str):
-        """Stream model output for a prompt."""
+    async def invoke(self, prompt: str, session_id: str = "", user_id: str = ""):
+        """Stream model output for a prompt, with session context."""
         if not self._agent:
             raise RuntimeError("Agent not initialized; call open() first.")
 
-        messages = [Message(role="user", text=prompt)]
+        messages: list[Message] = []
+
+        # Load recent session messages from Cosmos for conversational continuity
+        sid = session_id or self._session_id
+        uid = user_id or self._user_id
+        if sid and uid:
+            try:
+                from common.services.chat_cosmos_service import get_chat_cosmos_service
+                chat_svc = await get_chat_cosmos_service()
+                session = await chat_svc.get_session(sid, uid)
+                if session and session.get("messages"):
+                    for m in session["messages"][-20:]:
+                        role = "user" if m.get("role") == "user" else "assistant"
+                        content = m.get("content", "")
+                        if content:
+                            messages.append(Message(role=role, text=content))
+            except Exception:
+                pass  # No history available, proceed with just the prompt
+
+        messages.append(Message(role="user", text=prompt))
 
         async for update in self._agent.run(messages, stream=True):
             yield update

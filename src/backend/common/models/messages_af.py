@@ -89,6 +89,7 @@ class BaseDataModel(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: str = Field(default="")
     timestamp: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

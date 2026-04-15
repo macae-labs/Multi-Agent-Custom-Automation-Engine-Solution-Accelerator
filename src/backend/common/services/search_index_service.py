@@ -296,7 +296,6 @@ class SearchIndexService:
             logger.error("Chat history search error: %s", e)
             return []
 
-
     # ── Multi-index search (memory + knowledge) ─────────────────
 
     async def search_all_indices(
@@ -305,6 +304,7 @@ class SearchIndexService:
         user_id: str = "",
         top_k: int = 15,
         recency_boost: float = 1.3,
+        chat_query: str = "",
     ) -> List[Dict[str, Any]]:
         """Search across ALL indices (chat history + documents) in parallel.
 
@@ -333,8 +333,9 @@ class SearchIndexService:
             index_name: str, semantic_config: str, is_chat: bool
         ) -> List[Dict[str, Any]]:
             """Search a single index and tag results with source."""
+            text_query = (chat_query or query) if is_chat else query
             search_body: Dict[str, Any] = {
-                "search": query,
+                "search": text_query,
                 "queryType": "semantic",
                 "semanticConfiguration": semantic_config,
                 "top": top_k,
@@ -399,9 +400,7 @@ class SearchIndexService:
         # Search all indices in parallel
         tasks = [
             _search_one_index(CHAT_HISTORY_INDEX, "chat-semantic-config", True)
-        ] + [
-            _search_one_index(idx, "default", False) for idx in DOCUMENT_INDICES
-        ]
+        ] + [_search_one_index(idx, "default", False) for idx in DOCUMENT_INDICES]
 
         all_results_nested = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -411,9 +410,9 @@ class SearchIndexService:
             if isinstance(result, list):
                 fused.extend(result)
 
-        # Sort by score descending, take top 2*top_k
+        # Sort by score descending, take the best results
         fused.sort(key=lambda x: x.get("score", 0), reverse=True)
-        final = fused[: top_k * 2]
+        final = fused[:10]
 
         logger.info(
             "search_all_indices: %d results from %d indices (query='%s')",
@@ -466,9 +465,7 @@ class SearchIndexService:
                 async with session.post(url, headers=headers, json=body) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        expanded = (
-                            data["choices"][0]["message"]["content"].strip()
-                        )
+                        expanded = data["choices"][0]["message"]["content"].strip()
                         logger.info(
                             "Query expanded: '%s' → '%s'",
                             user_message[:40],

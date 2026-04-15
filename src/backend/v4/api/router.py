@@ -49,6 +49,20 @@ from v4.orchestration.orchestration_manager import OrchestrationManager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+def _extract_auth(request: Request) -> tuple:
+    """Extract (user_id, tenant_id) from request headers.
+
+    Single point of auth extraction for all endpoints.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    tenant_id = authenticated_user.get("tenant_id", "")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="no user found")
+    return user_id, tenant_id
+
+
 app_v4 = APIRouter(
     prefix="/api/v4",
     responses={404: {"description": "Not found"}},
@@ -76,7 +90,9 @@ async def start_comms(
         # Resolve session_id from plan for telemetry
         session_id = None
         try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
+            memory_store = await DatabaseFactory.get_database(
+                user_id=user_id, tenant_id=""
+            )
             plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
             if plan:
                 session_id = getattr(plan, "session_id", None)
@@ -164,18 +180,12 @@ async def init_team(
     # Falls back to HR if no teams are available.
     print(f"Init team called, team_switched={team_switched}")
     try:
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
-        if not user_id:
-            track_event_if_configured(
-                "Error_User_Not_Found", {"status_code": 400, "detail": "no user"}
-            )
-            raise HTTPException(status_code=400, detail="no user")
+        user_id, tenant_id = _extract_auth(request)
 
         # Initialize memory store and service
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         team_service = TeamService(memory_store)
 
         init_team_id = await find_first_available_team(team_service, user_id)
@@ -312,16 +322,11 @@ async def process_request(
               type: string
               description: Error message
     """
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        event_props = {"status_code": 400, "detail": "no user"}
-        if input_task and hasattr(input_task, "session_id") and input_task.session_id:
-            event_props["session_id"] = input_task.session_id
-        track_event_if_configured("Error_User_Not_Found", event_props)
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
     try:
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         user_current_team = await memory_store.get_current_team(user_id=user_id)
         team_id: str | None = None
         if user_current_team:
@@ -488,10 +493,7 @@ async def chat_message(
     """
     from v4.orchestration.intent_router import Intent, IntentRouter
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     # Assign session_id if not provided
     if not chat_request.session_id:
@@ -554,7 +556,11 @@ async def chat_message(
     elif intent_result.intent == Intent.MCP_QUERY:
         # MCP query — use LLM with MCP-aware system prompt
         response_text = await _get_mcp_query_response(
-            chat_request.message, chat_request.session_id, user_id, chat_svc
+            chat_request.message,
+            chat_request.session_id,
+            user_id,
+            chat_svc,
+            tenant_id=tenant_id,
         )
 
         # Persist assistant response
@@ -592,7 +598,11 @@ async def chat_message(
         # answer questions, recall history, AND take action if the
         # conversation naturally evolves into an actionable request.
         response_text = await _get_mcp_query_response(
-            chat_request.message, chat_request.session_id, user_id, chat_svc
+            chat_request.message,
+            chat_request.session_id,
+            user_id,
+            chat_svc,
+            tenant_id=tenant_id,
         )
 
         # Persist assistant response
@@ -655,10 +665,7 @@ async def chat_message_stream(
 
     from v4.orchestration.intent_router import Intent, IntentRouter
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     if not chat_request.session_id:
         chat_request.session_id = str(uuid.uuid4())
@@ -782,74 +789,76 @@ async def chat_message_stream(
                 await a.open()
                 return a
 
-            agent = await get_or_create(user_id, chat_request.session_id, _factory)
+            agent = await get_or_create(
+                tenant_id, user_id, chat_request.session_id, _factory
+            )
 
             async for update in agent.invoke(chat_request.message):
-                    # Process ALL content types from the agent framework
-                    for content in update.contents or []:
-                        ct = content.type
+                # Process ALL content types from the agent framework
+                for content in update.contents or []:
+                    ct = content.type
 
-                        if ct == "text":
-                            token = content.text or ""
-                            if token:
-                                full_text += token
-                                yield _sse_event({"type": "token", "content": token})
+                    if ct == "text":
+                        token = content.text or ""
+                        if token:
+                            full_text += token
+                            yield _sse_event({"type": "token", "content": token})
 
-                        elif ct == "function_call":
-                            yield _sse_event(
-                                {
-                                    "type": "tool_activity",
-                                    "activity": "calling",
-                                    "tool": content.name or "unknown",
-                                    "args": str(content.arguments or "")[:200],
-                                }
-                            )
+                    elif ct == "function_call":
+                        yield _sse_event(
+                            {
+                                "type": "tool_activity",
+                                "activity": "calling",
+                                "tool": content.name or "unknown",
+                                "args": str(content.arguments or "")[:200],
+                            }
+                        )
 
-                        elif ct == "function_result":
-                            yield _sse_event(
-                                {
-                                    "type": "tool_activity",
-                                    "activity": "result",
-                                    "tool": content.name or "unknown",
-                                    "success": content.exception is None,
-                                }
-                            )
+                    elif ct == "function_result":
+                        yield _sse_event(
+                            {
+                                "type": "tool_activity",
+                                "activity": "result",
+                                "tool": content.name or "unknown",
+                                "success": content.exception is None,
+                            }
+                        )
 
-                        elif ct == "mcp_server_tool_call":
-                            yield _sse_event(
-                                {
-                                    "type": "tool_activity",
-                                    "activity": "calling",
-                                    "tool": content.tool_name or "unknown",
-                                    "server": content.server_name or "unknown",
-                                    "args": str(content.arguments or "")[:200],
-                                }
-                            )
+                    elif ct == "mcp_server_tool_call":
+                        yield _sse_event(
+                            {
+                                "type": "tool_activity",
+                                "activity": "calling",
+                                "tool": content.tool_name or "unknown",
+                                "server": content.server_name or "unknown",
+                                "args": str(content.arguments or "")[:200],
+                            }
+                        )
 
-                        elif ct == "mcp_server_tool_result":
-                            yield _sse_event(
-                                {
-                                    "type": "tool_activity",
-                                    "activity": "result",
-                                    "tool": content.tool_name or "unknown",
-                                    "server": content.server_name or "unknown",
-                                    "success": content.status != "error"
-                                    if content.status
-                                    else True,
-                                }
-                            )
+                    elif ct == "mcp_server_tool_result":
+                        yield _sse_event(
+                            {
+                                "type": "tool_activity",
+                                "activity": "result",
+                                "tool": content.tool_name or "unknown",
+                                "server": content.server_name or "unknown",
+                                "success": content.status != "error"
+                                if content.status
+                                else True,
+                            }
+                        )
 
-                        elif ct == "text_reasoning":
-                            # Agent's internal reasoning — send as thinking indicator
-                            yield _sse_event(
-                                {
-                                    "type": "tool_activity",
-                                    "activity": "thinking",
-                                    "tool": "reasoning",
-                                }
-                            )
+                    elif ct == "text_reasoning":
+                        # Agent's internal reasoning — send as thinking indicator
+                        yield _sse_event(
+                            {
+                                "type": "tool_activity",
+                                "activity": "thinking",
+                                "tool": "reasoning",
+                            }
+                        )
 
-                        # usage, hosted_file, etc. — skip silently
+                    # usage, hosted_file, etc. — skip silently
 
         except Exception as e:
             logger.warning("FoundryAgent streaming failed (%s), using fallback", e)
@@ -911,7 +920,7 @@ _MCP_AGENT_INSTRUCTIONS = (
     "CRITICAL — MEMORY RULE:\n"
     "You MUST call search_knowledge_base BEFORE saying you don't have memory or context.\n"
     "When the user asks about:\n"
-    "  - Previous conversations, interactions, or history\n"
+    "  - Previous sessions, conversations, interactions, or history\n"
     "  - Past errors, problems, or issues they had\n"
     "  - What they discussed before, what happened earlier\n"
     "  - Any domain knowledge (contracts, NDAs, policies, products, customers)\n"
@@ -923,12 +932,9 @@ _MCP_AGENT_INSTRUCTIONS = (
     "  - source_type: 'all' (default), 'chat' (history only), 'documents' (docs only)\n\n"
     "═══ 2. MCP TOOLS (external servers) ═══\n"
     "You can connect to external MCP servers to perform real actions.\n\n"
-    "EPHEMERAL MCP SESSIONS:\n"
-    "Each request starts with a clean MCP session. If the user refers to a server they "
-    "connected before, you must reconnect it.\n\n"
     "CRITICAL RULES:\n"
-    "1. NEVER invent or guess tool names. Call discover_mcp_capabilities to list available tools.\n"
-    "2. Do NOT describe what a tool does from memory — EXECUTE it and return the real output.\n"
+    "1. Call discover_mcp_capabilities to list available tools.\n"
+    "2. Deescribe what a tool does from memory — EXECUTE it and return the real output.\n"
     "3. For filesystem actions: check list_connected_servers(), reconnect if needed, then call_external_tool.\n\n"
     "WORKFLOW — Connecting to external MCP servers:\n"
     "  a) list_connected_servers() — see active sessions and available servers\n"
@@ -939,7 +945,7 @@ _MCP_AGENT_INSTRUCTIONS = (
     "  f) call_external_tool(server_name='x', target_tool='tool', arguments='{}') — execute\n"
     "  g) read_external_resource(server_name='x', resource_uri='res://...') — read resource\n"
     "  h) disconnect_mcp_server(server_name='x') — cleanup\n\n"
-    "EXACT TOOL NAMES (use these exactly):\n"
+    "EXACT TOOL NAMES (use any tool name you need):\n"
     "  - connect_mcp_server(server_url, server_name)\n"
     "  - connect_stdio_server(server_name)\n"
     "  - connect_from_registry(server_name, user_id)\n"
@@ -960,6 +966,7 @@ async def _get_mcp_query_response(
     session_id: str,
     user_id: str,
     chat_svc: Any,
+    tenant_id: str = "",
 ) -> str:
     """Get an MCP-aware response using a session-persistent FoundryAgentTemplate."""
     from common.config.app_config import config as app_config
@@ -968,6 +975,7 @@ async def _get_mcp_query_response(
     from v4.magentic_agents.models.agent_models import MCPConfig as AgentMCPConfig
 
     try:
+
         async def _factory():
             mcp_config = AgentMCPConfig.from_env()
             a = FoundryAgentTemplate(
@@ -985,7 +993,7 @@ async def _get_mcp_query_response(
             await a.open()
             return a
 
-        agent = await get_or_create(user_id, session_id, _factory)
+        agent = await get_or_create(tenant_id, user_id, session_id, _factory)
 
         full_text = ""
         async for update in agent.invoke(message):
@@ -1017,10 +1025,7 @@ def _mcp_fallback(message: str) -> str:
 @app_v4.get("/chat/sessions")
 async def list_chat_sessions(request: Request):
     """List all chat sessions for the authenticated user."""
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     chat_svc = await get_chat_cosmos_service()
     sessions = await chat_svc.get_sessions_by_user(user_id)
@@ -1030,10 +1035,7 @@ async def list_chat_sessions(request: Request):
 @app_v4.get("/chat/sessions/{session_id}")
 async def get_chat_session(session_id: str, request: Request):
     """Get a chat session with all messages."""
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     chat_svc = await get_chat_cosmos_service()
     session = await chat_svc.get_session(session_id, user_id)
@@ -1045,10 +1047,7 @@ async def get_chat_session(session_id: str, request: Request):
 @app_v4.post("/chat/sessions/new")
 async def create_chat_session(request: Request):
     """Create a new chat session."""
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     chat_svc = await get_chat_cosmos_service()
     session = await chat_svc.create_session(user_id)
@@ -1065,10 +1064,7 @@ async def create_chat_session(request: Request):
 @app_v4.delete("/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str, request: Request):
     """Delete a chat session."""
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
 
     chat_svc = await get_chat_cosmos_service()
     deleted = await chat_svc.delete_session(session_id, user_id)
@@ -1129,18 +1125,15 @@ async def plan_approval(
       500:
         description: Internal server error
     """
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     # Attach session_id to span if plan_id is available and capture for events
     session_id = None
     if human_feedback.plan_id:
         try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
+            memory_store = await DatabaseFactory.get_database(
+                user_id=user_id, tenant_id=tenant_id
+            )
             plan = await memory_store.get_plan_by_plan_id(
                 plan_id=human_feedback.plan_id
             )
@@ -1295,18 +1288,15 @@ async def user_clarification(
         description: Internal server error
     """
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     # Attach session_id to span if plan_id is available and capture for events
     session_id = None
 
     try:
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         if human_feedback.plan_id:
             try:
                 plan = await memory_store.get_plan_by_plan_id(
@@ -1463,18 +1453,15 @@ async def agent_message_user(
         description: Missing or invalid user information
     """
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     # Attach session_id to span if plan_id is available and capture for events
     session_id = None
     if agent_message.plan_id:
         try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
+            memory_store = await DatabaseFactory.get_database(
+                user_id=user_id, tenant_id=tenant_id
+            )
             plan = await memory_store.get_plan_by_plan_id(plan_id=agent_message.plan_id)
             if plan and plan.session_id:
                 session_id = plan.session_id
@@ -1543,15 +1530,11 @@ async def upload_team_config(
         description: Internal server error
     """
     # Validate user authentication
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        track_event_if_configured(
-            "Error_User_Not_Found", {"status_code": 400, "detail": "no user"}
-        )
-        raise HTTPException(status_code=400, detail="no user found")
+    user_id, tenant_id = _extract_auth(request)
     try:
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
 
     except Exception as e:
         raise HTTPException(
@@ -1747,16 +1730,13 @@ async def get_team_configs(request: Request):
         description: Missing or invalid user information
     """
     # Validate user authentication
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     try:
         # Initialize memory store and service
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         team_service = TeamService(memory_store)
 
         # Retrieve all team configurations
@@ -1825,16 +1805,13 @@ async def get_team_config_by_id(team_id: str, request: Request):
         description: Team configuration not found
     """
     # Validate user authentication
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     try:
         # Initialize memory store and service
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         team_service = TeamService(memory_store)
 
         # Retrieve the specific team configuration
@@ -1891,19 +1868,16 @@ async def delete_team_config(team_id: str, request: Request):
         description: Team configuration not found
     """
     # Validate user authentication
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     try:
         # To do: Check if the team is the users current team, or if it is
         # used in any active sessions/plans.  Refuse request if so.
 
         # Initialize memory store and service
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         team_service = TeamService(memory_store)
 
         # Delete the team configuration
@@ -1938,19 +1912,16 @@ async def select_team(selection: TeamSelectionRequest, request: Request):
     Select the current team for the user session.
     """
     # Validate user authentication
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid user information"
-        )
+    user_id, tenant_id = _extract_auth(request)
 
     if not selection.team_id:
         raise HTTPException(status_code=400, detail="Team ID is required")
 
     try:
         # Initialize memory store and service
-        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        memory_store = await DatabaseFactory.get_database(
+            user_id=user_id, tenant_id=tenant_id
+        )
         team_service = TeamService(memory_store)
 
         # Verify the team exists and user has access to it
@@ -2083,18 +2054,14 @@ async def get_plans(request: Request):
         description: Plan not found
     """
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        track_event_if_configured(
-            "Error_User_Not_Found", {"status_code": 400, "detail": "no user"}
-        )
-        raise HTTPException(status_code=400, detail="no user")
+    user_id, tenant_id = _extract_auth(request)
 
     # <To do: Francia> Replace the following with code to get plan run history from the database
 
     # Initialize memory context
-    memory_store = await DatabaseFactory.get_database(user_id=user_id)
+    memory_store = await DatabaseFactory.get_database(
+        user_id=user_id, tenant_id=tenant_id
+    )
 
     current_team = await memory_store.get_current_team(user_id=user_id)
     if not current_team:
@@ -2171,18 +2138,14 @@ async def get_plan_by_id(
         description: Plan not found
     """
 
-    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
-    user_id = authenticated_user["user_principal_id"]
-    if not user_id:
-        track_event_if_configured(
-            "Error_User_Not_Found", {"status_code": 400, "detail": "no user"}
-        )
-        raise HTTPException(status_code=400, detail="no user")
+    user_id, tenant_id = _extract_auth(request)
 
     # <To do: Francia> Replace the following with code to get plan run history from the database
 
     # Initialize memory context
-    memory_store = await DatabaseFactory.get_database(user_id=user_id)
+    memory_store = await DatabaseFactory.get_database(
+        user_id=user_id, tenant_id=tenant_id
+    )
     try:
         if plan_id:
             plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
@@ -2437,10 +2400,10 @@ async def register_mcp_server(request: Request):
         body = await request.json()
         entry = MCPServerEntry(**body)
 
-        authenticated_user = get_authenticated_user_details(
+        user_id, tenant_id = _extract_auth(request)
+        entry.added_by = get_authenticated_user_details(
             request_headers=request.headers
-        )
-        entry.added_by = authenticated_user.get("user_name", "unknown")
+        ).get("user_name", "unknown")
 
         svc = await MCPConnectionsService.get_instance()
 
@@ -2499,10 +2462,7 @@ async def get_user_mcp_connections(request: Request):
     try:
         from v4.common.services.mcp_connections_service import MCPConnectionsService
 
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
+        user_id, tenant_id = _extract_auth(request)
 
         svc = await MCPConnectionsService.get_instance()
         result = await svc.get_available_servers_for_user(user_id)
@@ -2524,10 +2484,7 @@ async def get_user_mcp_connection_by_server(server_name: str, request: Request):
     try:
         from v4.common.services.mcp_connections_service import MCPConnectionsService
 
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
+        user_id, tenant_id = _extract_auth(request)
 
         svc = await MCPConnectionsService.get_instance()
         conn = await svc.get_user_connection(user_id, server_name)
@@ -2562,10 +2519,7 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
         )
         from v4.common.services.mcp_connections_service import MCPConnectionsService
 
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
+        user_id, tenant_id = _extract_auth(request)
 
         svc = await MCPConnectionsService.get_instance()
 
@@ -2627,10 +2581,7 @@ async def activate_user_mcp_connection(server_name: str, request: Request):
     try:
         from v4.common.services.mcp_connections_service import MCPConnectionsService
 
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
+        user_id, tenant_id = _extract_auth(request)
 
         body = {}
         try:
@@ -2665,10 +2616,7 @@ async def disconnect_user_from_mcp_server(server_name: str, request: Request):
     try:
         from v4.common.services.mcp_connections_service import MCPConnectionsService
 
-        authenticated_user = get_authenticated_user_details(
-            request_headers=request.headers
-        )
-        user_id = authenticated_user["user_principal_id"]
+        user_id, tenant_id = _extract_auth(request)
 
         svc = await MCPConnectionsService.get_instance()
         deleted = await svc.disconnect_user(user_id, server_name)

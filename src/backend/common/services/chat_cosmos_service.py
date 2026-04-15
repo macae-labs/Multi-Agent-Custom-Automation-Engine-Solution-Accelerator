@@ -260,6 +260,27 @@ class ChatCosmosService:
             await self._container.upsert_item(session)
 
             # Push to AI Search index (fire-and-forget for real-time RAG)
+            # Skip indexing low-value assistant responses that pollute search
+            _SKIP_PHRASES = (
+                "no tengo memoria",
+                "no hemos tenido interacciones",
+                "no tengo registro",
+                "cada sesión comienza sin contexto",
+                "no hay contenido previo",
+                "no guardo memoria",
+                "sesión es efímera",
+                "no hay una situación claramente",
+            )
+            _should_index = True
+            if role == "assistant":
+                low = content.lower()
+                if any(p in low for p in _SKIP_PHRASES):
+                    _should_index = False
+                    logger.debug("Skipping index for low-value assistant msg: %s", content[:60])
+
+            if not _should_index:
+                return message
+
             try:
                 import asyncio
                 from common.services.search_index_service import (
