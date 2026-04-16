@@ -25,8 +25,8 @@
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspaces"],
-      "note": "Filesystem MCP server — access to /workspaces directory"
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspaces", "/home", "/tmp", "/etc", "/var", "/usr"],
+      "note": "Filesystem MCP server — access to workspace and system directories"
     }
   }
 }

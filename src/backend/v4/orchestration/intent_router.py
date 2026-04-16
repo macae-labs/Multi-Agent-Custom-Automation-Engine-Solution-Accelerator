@@ -35,9 +35,11 @@ class IntentResult(BaseModel):
 _SYSTEM_PROMPT = """You are an intent classifier for a multi-agent automation system.
 
 The system has three lanes:
-1. task — Internal business workflows (onboard employee, generate press release, configure laptop, set up Office 365, etc.) handled by planning agents.
+1. task — Internal business workflows that require EXECUTING ACTIONS across multiple departments (onboard employee, generate press release, configure laptop, set up Office 365, process a return, etc.). These are requests where the user wants something DONE, not just answered.
 2. mcp_query — Anything involving external services, MCP tools/servers, filesystem operations, directory browsing, connecting to servers, asking about capabilities/tools, or any action on a third-party platform (GitHub, Slack, YouTube, Google Drive, etc.) handled by the MCP Inspector agent.
-3. conversational — Pure greetings, farewells, or questions about the assistant itself with NO actionable request.
+3. conversational — Questions, inquiries, analysis requests, summaries, or any request that can be ANSWERED with information. This includes asking about contracts, risks, customer data, past interactions, comparisons, recommendations, status checks, and general knowledge questions. Also greetings and farewells.
+
+KEY DISTINCTION: If the user is ASKING about something (even complex analysis), it is conversational. If the user wants something EXECUTED/DONE (create account, onboard person, send email, configure system), it is task.
 
 CRITICAL — Session continuity rule:
 When PREVIOUS_INTENT is provided it tells you which lane is currently active.
@@ -83,10 +85,10 @@ class IntentRouter:
             )
 
         try:
-            from azure.identity.aio import DefaultAzureCredential
-
             from agent_framework import ChatOptions, Message
             from agent_framework.azure import AzureOpenAIChatClient
+            from azure.identity.aio import DefaultAzureCredential
+
             from common.config.app_config import config
 
             client = AzureOpenAIChatClient(
