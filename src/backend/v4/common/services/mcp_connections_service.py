@@ -27,6 +27,29 @@ from v4.common.models.mcp_connection_models import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Partition-key helpers
+# ---------------------------------------------------------------------------
+
+
+def _catalog_pk(tenant_id: str = "") -> str:
+    """Compute the catalog partition key for a given tenant.
+
+    - Shared / no tenant: ``"catalog"``
+    - Tenant-scoped:      ``"catalog#<tenant_id>"``
+    """
+    return f"catalog#{tenant_id}" if tenant_id else "catalog"
+
+
+def _user_pk(user_id: str, tenant_id: str = "") -> str:
+    """Compute the user-connection partition key.
+
+    - Legacy / single-tenant:  ``"<user_id>"``
+    - Multi-tenant:             ``"<tenant_id>#<user_id>"``
+    """
+    return f"{tenant_id}#{user_id}" if tenant_id else user_id
+
+
 def _get_container_name() -> str:
     """Get the MCP connections container name from config or default."""
     return (
@@ -99,8 +122,10 @@ class MCPConnectionsService:
     # Server Catalog (MCPServerEntry) — pk = "catalog"
     # =========================================================================
 
-    async def list_servers(self, enabled_only: bool = True) -> List[MCPServerEntry]:
-        """List all servers in the catalog."""
+    async def list_servers(
+        self, enabled_only: bool = True, tenant_id: str = ""
+    ) -> List[MCPServerEntry]:
+        """List all servers in the catalog for a tenant (or global shared catalog)."""
         await self._ensure_initialized()
 
         where = "AND c.enabled = true" if enabled_only else ""
@@ -109,7 +134,7 @@ class MCPConnectionsService:
         items = []
         async for item in self._container.query_items(
             query=query,
-            partition_key="catalog",
+            partition_key=_catalog_pk(tenant_id),
         ):
             try:
                 items.append(MCPServerEntry.model_validate(item))
@@ -117,19 +142,21 @@ class MCPConnectionsService:
                 logger.warning("Invalid server entry %s: %s", item.get("id"), e)
         return items
 
-    async def get_server(self, server_id: str) -> Optional[MCPServerEntry]:
+    async def get_server(self, server_id: str, tenant_id: str = "") -> Optional[MCPServerEntry]:
         """Get a server entry by ID."""
         await self._ensure_initialized()
         try:
             item = await self._container.read_item(
-                item=server_id, partition_key="catalog"
+                item=server_id, partition_key=_catalog_pk(tenant_id)
             )
             return MCPServerEntry.model_validate(item)
         except Exception:
             return None
 
-    async def get_server_by_name(self, server_name: str) -> Optional[MCPServerEntry]:
-        """Find a server by its unique server_name."""
+    async def get_server_by_name(
+        self, server_name: str, tenant_id: str = ""
+    ) -> Optional[MCPServerEntry]:
+        """Find a server by its unique server_name within a tenant catalog."""
         await self._ensure_initialized()
 
         query = (
@@ -140,16 +167,19 @@ class MCPConnectionsService:
         async for item in self._container.query_items(
             query=query,
             parameters=params,
-            partition_key="catalog",
+            partition_key=_catalog_pk(tenant_id),
         ):
             return MCPServerEntry.model_validate(item)
         return None
 
     async def upsert_server(self, entry: MCPServerEntry) -> MCPServerEntry:
-        """Create or update a server catalog entry."""
+        """Create or update a server catalog entry.
+
+        The partition key is derived from entry.tenant_id automatically.
+        """
         await self._ensure_initialized()
 
-        entry.pk = "catalog"
+        entry.pk = _catalog_pk(entry.tenant_id or "")
         entry.doc_type = "mcp_server"
         entry.updated_at = datetime.now(timezone.utc)
 
@@ -163,18 +193,22 @@ class MCPConnectionsService:
         logger.info("Upserted MCP server: %s (%s)", entry.server_name, entry.id)
         return entry
 
-    async def delete_server(self, server_id: str) -> bool:
+    async def delete_server(self, server_id: str, tenant_id: str = "") -> bool:
         """Remove a server from the catalog."""
         await self._ensure_initialized()
         try:
-            await self._container.delete_item(item=server_id, partition_key="catalog")
+            await self._container.delete_item(
+                item=server_id, partition_key=_catalog_pk(tenant_id)
+            )
             logger.info("Deleted MCP server: %s", server_id)
             return True
         except Exception as e:
             logger.warning("Failed to delete server %s: %s", server_id, e)
             return False
 
-    async def find_servers_for_agent(self, agent_type: str) -> List[MCPServerEntry]:
+    async def find_servers_for_agent(
+        self, agent_type: str, tenant_id: str = ""
+    ) -> List[MCPServerEntry]:
         """Find enabled servers that a specific agent type is allowed to use."""
         await self._ensure_initialized()
 
@@ -190,7 +224,7 @@ class MCPConnectionsService:
         async for item in self._container.query_items(
             query=query,
             parameters=params,
-            partition_key="catalog",
+            partition_key=_catalog_pk(tenant_id),
         ):
             try:
                 items.append(MCPServerEntry.model_validate(item))
@@ -203,9 +237,9 @@ class MCPConnectionsService:
     # =========================================================================
 
     async def get_user_connections(
-        self, user_id: str, active_only: bool = True
+        self, user_id: str, active_only: bool = True, tenant_id: str = ""
     ) -> List[MCPUserConnection]:
-        """Get all MCP server connections for a user."""
+        """Get all MCP server connections for a user (optionally tenant-scoped)."""
         await self._ensure_initialized()
 
         where = "AND c.status = 'active'" if active_only else ""
@@ -214,7 +248,7 @@ class MCPConnectionsService:
         items = []
         async for item in self._container.query_items(
             query=query,
-            partition_key=user_id,
+            partition_key=_user_pk(user_id, tenant_id),
         ):
             try:
                 items.append(MCPUserConnection.model_validate(item))
@@ -223,7 +257,7 @@ class MCPConnectionsService:
         return items
 
     async def get_user_connection(
-        self, user_id: str, server_name: str
+        self, user_id: str, server_name: str, tenant_id: str = ""
     ) -> Optional[MCPUserConnection]:
         """Get a specific user connection by server name."""
         await self._ensure_initialized()
@@ -237,7 +271,7 @@ class MCPConnectionsService:
         async for item in self._container.query_items(
             query=query,
             parameters=params,
-            partition_key=user_id,
+            partition_key=_user_pk(user_id, tenant_id),
         ):
             return MCPUserConnection.model_validate(item)
         return None
@@ -245,10 +279,14 @@ class MCPConnectionsService:
     async def upsert_user_connection(
         self, connection: MCPUserConnection
     ) -> MCPUserConnection:
-        """Create or update a user connection."""
+        """Create or update a user connection.
+
+        The partition key is derived from connection.tenant_id and
+        connection.user_id automatically.
+        """
         await self._ensure_initialized()
 
-        connection.pk = connection.user_id
+        connection.pk = _user_pk(connection.user_id, connection.tenant_id)
         connection.doc_type = "mcp_user_connection"
 
         doc = connection.model_dump(mode="json")
@@ -259,7 +297,8 @@ class MCPConnectionsService:
 
         await self._container.upsert_item(body=doc)
         logger.info(
-            "Upserted user connection: user=%s server=%s status=%s",
+            "Upserted user connection: tenant=%s user=%s server=%s status=%s",
+            connection.tenant_id[:8] if connection.tenant_id else "",
             connection.user_id,
             connection.server_name,
             connection.status,
@@ -267,10 +306,14 @@ class MCPConnectionsService:
         return connection
 
     async def mark_connection_active(
-        self, user_id: str, server_name: str, secret_ref: Optional[str] = None
+        self,
+        user_id: str,
+        server_name: str,
+        secret_ref: Optional[str] = None,
+        tenant_id: str = "",
     ) -> MCPUserConnection:
         """Mark a user connection as active (after successful auth)."""
-        conn = await self.get_user_connection(user_id, server_name)
+        conn = await self.get_user_connection(user_id, server_name, tenant_id=tenant_id)
         if not conn:
             raise ValueError(
                 f"No connection found for user={user_id} server={server_name}"
@@ -282,23 +325,29 @@ class MCPConnectionsService:
             conn.secret_ref = secret_ref
         return await self.upsert_user_connection(conn)
 
-    async def touch_connection(self, user_id: str, server_name: str) -> None:
+    async def touch_connection(
+        self, user_id: str, server_name: str, tenant_id: str = ""
+    ) -> None:
         """Update last_used_at to keep TTL alive."""
-        conn = await self.get_user_connection(user_id, server_name)
+        conn = await self.get_user_connection(user_id, server_name, tenant_id=tenant_id)
         if conn:
             conn.last_used_at = datetime.now(timezone.utc)
             await self.upsert_user_connection(conn)
 
-    async def disconnect_user(self, user_id: str, server_name: str) -> bool:
+    async def disconnect_user(
+        self, user_id: str, server_name: str, tenant_id: str = ""
+    ) -> bool:
         """Remove a user's connection to a server."""
         await self._ensure_initialized()
 
-        conn = await self.get_user_connection(user_id, server_name)
+        conn = await self.get_user_connection(user_id, server_name, tenant_id=tenant_id)
         if not conn:
             return False
 
         try:
-            await self._container.delete_item(item=conn.id, partition_key=user_id)
+            await self._container.delete_item(
+                item=conn.id, partition_key=_user_pk(user_id, tenant_id)
+            )
             logger.info("Disconnected user=%s from server=%s", user_id, server_name)
             return True
         except Exception as e:
@@ -310,7 +359,7 @@ class MCPConnectionsService:
     # =========================================================================
 
     async def get_available_servers_for_user(
-        self, user_id: str, agent_type: str = ""
+        self, user_id: str, agent_type: str = "", tenant_id: str = ""
     ) -> List[Dict[str, Any]]:
         """
         Get all available servers with user's connection status.
@@ -318,14 +367,14 @@ class MCPConnectionsService:
         Returns merged view: server catalog + user connection status.
         Used by agents to decide which servers to auto-connect.
         """
-        # Get catalog
+        # Get catalog (tenant-scoped when tenant_id is set)
         if agent_type:
-            servers = await self.find_servers_for_agent(agent_type)
+            servers = await self.find_servers_for_agent(agent_type, tenant_id=tenant_id)
         else:
-            servers = await self.list_servers(enabled_only=True)
+            servers = await self.list_servers(enabled_only=True, tenant_id=tenant_id)
 
-        # Get user's existing connections
-        user_conns = await self.get_user_connections(user_id, active_only=False)
+        # Get user's existing connections (tenant-scoped)
+        user_conns = await self.get_user_connections(user_id, active_only=False, tenant_id=tenant_id)
         conn_by_name = {c.server_name: c for c in user_conns}
 
         result = []

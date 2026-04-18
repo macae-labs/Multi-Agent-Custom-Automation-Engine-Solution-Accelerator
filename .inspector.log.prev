@@ -1,21 +1,9 @@
---- Inspector started: 2026-04-16T01:26:05+00:00 ---
+--- Inspector started: 2026-04-16T11:52:34+00:00 ---
 Starting MCP inspector...
 ⚙️ Proxy server listening on localhost:16277
-🔑 Session token: d4ac79275b1ca17e614aecf4250d60cc2c0470e52928b6e86b2c0591125ccb00
+🔑 Session token: 9b80747f44f745631c4df69d8c0c5925214ff95929770bb0e1eb33d3520a50c3
    Use this token to authenticate requests or set DANGEROUSLY_OMIT_AUTH=true to disable auth
 
 🚀 MCP Inspector is up and running at:
-   http://localhost:16274/?MCP_PROXY_PORT=16277&MCP_PROXY_AUTH_TOKEN=d4ac79275b1ca17e614aecf4250d60cc2c0470e52928b6e86b2c0591125ccb00
+   http://localhost:16274/?MCP_PROXY_PORT=16277&MCP_PROXY_AUTH_TOKEN=9b80747f44f745631c4df69d8c0c5925214ff95929770bb0e1eb33d3520a50c3
 
-New STDIO connection request
-Query parameters: {"transportType":"stdio","command":"npx","args":"-y @modelcontextprotocol/server-filesystem /workspaces /home /tmp /etc /var /usr"}
-STDIO transport: command=/usr/local/share/nvm/versions/node/v24.14.1/bin/npx, args=-y,@modelcontextprotocol/server-filesystem,/workspaces,/home,/tmp,/etc,/var,/usr
-Created client transport
-Created server transport
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c
-Received POST message for sessionId 8dc4fa2d-667a-4389-a6f1-3585a854a79c

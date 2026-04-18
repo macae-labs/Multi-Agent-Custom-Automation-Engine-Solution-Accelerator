@@ -20,6 +20,11 @@ from v4.config.agent_registry import agent_registry
 from v4.magentic_agents.common.lifecycle import AzureAgentBase
 from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
 
+# Number of recent messages injected into the agent context on each invoke().
+# Increase this value if long conversations lose relevant context.
+# Keep in mind that larger windows consume more tokens per request.
+CHAT_HISTORY_WINDOW: int = 20
+
 
 class FoundryAgentTemplate(AzureAgentBase):
     """Agent that uses Azure AI Search (raw tool) OR MCP tool + optional Code Interpreter.
@@ -115,87 +120,99 @@ class FoundryAgentTemplate(AzureAgentBase):
             tools.append(self.mcp_tool)
             self.logger.info("Added MCP tool: %s", self.mcp_tool.name)
 
-        # Knowledge base search tool — lets the agent decide when to search
-        async def search_knowledge_base(query: str, source_type: str = "all") -> str:
-            """Search across all knowledge bases (chat history + documents).
+        # Foundry IQ Knowledge Base — replaces custom search_knowledge_base.
+        # Exposed as a native MCP tool via the KB MCP endpoint in AI Search.
+        # Foundry IQ handles query decomposition, parallel search, reranking,
+        # and iterative retrieval internally.
+        try:
+            from agent_framework import MCPStreamableHTTPTool
+            import httpx
+            import os
 
-            Use this tool when you need context from previous conversations
-            or domain documents (contracts, RFPs, customer data, etc.).
+            kb_url = os.environ.get(
+                "FOUNDRY_IQ_KB_ENDPOINT",
+                "https://srch-pslc25991vme66zmins.search.windows.net"
+                "/knowledgebases/knowledgebase550/mcp"
+                "?api-version=2025-11-01-Preview",
+            )
 
-            Args:
-                query: Natural language search query describing what you need.
-                source_type: 'all' (default), 'chat' (history only), or 'documents' (docs only).
+            # Auth: KB MCP endpoint requires Bearer token with
+            # audience https://search.azure.com, auto-renewed.
+            class _SearchAuth(httpx.Auth):
+                """Auto-renewing Bearer auth for Azure AI Search."""
 
-            Returns:
-                Relevant context as formatted text.
-            """
-            try:
-                from common.services.search_index_service import (
-                    get_search_index_service,
-                )
+                def __init__(self):
+                    self._token = None
+                    self._expires_on = 0
 
-                svc = await get_search_index_service()
-                expanded = await svc.expand_query(query)
-                results = await svc.search_all_indices(
-                    query=expanded,
-                    top_k=10,
-                    user_id=self._user_id or "",
-                    chat_query=query,
-                )
+                def auth_flow(self, request):
+                    import time
 
-                if source_type == "chat":
-                    results = [r for r in results if r["source_type"] == "chat"]
-                elif source_type == "documents":
-                    results = [r for r in results if r["source_type"] == "document"]
+                    if not self._token or time.time() > self._expires_on - 60:
+                        self._refresh()
+                    request.headers["Authorization"] = f"Bearer {self._token}"
+                    yield request
 
-                if not results:
-                    return "No relevant information found."
+                def _refresh(self):
+                    import time
 
-                # Filter out self-referential noise (previous failed responses)
-                _noise = (
-                    "no tengo memoria",
-                    "no hemos tenido interacciones",
-                    "no tengo registro",
-                    "cada sesión comienza sin contexto",
-                    "sesión es efímera",
-                    "no hay una situación claramente",
-                )
-                results = [
-                    r for r in results
-                    if not any(p in r.get("content", "").lower() for p in _noise)
-                ]
+                    try:
+                        from azure.identity import DefaultAzureCredential
 
-                if not results:
-                    return "No relevant information found."
+                        cred = DefaultAzureCredential()
+                        token = cred.get_token("https://search.azure.com/.default")
+                        self._token = token.token
+                        self._expires_on = token.expires_on
+                    except Exception:
+                        import subprocess
 
-                lines = []
-                for r in results[:10]:
-                    src = r.get("source_index", "unknown")
-                    content = r.get("content", "")[:500]
-                    if r["source_type"] == "chat":
-                        role = r.get("role", "")
-                        lines.append(f"[Chat/{role}] {content}")
-                    else:
-                        title = r.get("title", src)
-                        lines.append(f"[Doc: {title}] {content}")
+                        result = subprocess.run(
+                            [
+                                "az",
+                                "account",
+                                "get-access-token",
+                                "--resource",
+                                "https://search.azure.com",
+                                "--query",
+                                "accessToken",
+                                "-o",
+                                "tsv",
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        self._token = result.stdout.strip()
+                        self._expires_on = time.time() + 3000
 
-                return "\n---\n".join(lines)
-            except Exception as e:
-                return f"Search failed: {e}"
+            kb_http_client = httpx.AsyncClient(
+                auth=_SearchAuth(),
+                timeout=60.0,
+            )
 
-        tools.append(
-            FunctionTool(
-                func=search_knowledge_base,
-                name="search_knowledge_base",
+            kb_tool = MCPStreamableHTTPTool(
+                name="knowledge_base",
+                url=kb_url,
                 description=(
                     "Search across ALL knowledge bases: chat history, contracts, "
                     "RFPs, customer data, order data, and compliance documents. "
                     "Use when you need context from previous conversations or "
                     "domain-specific information to answer the user's question."
                 ),
+                load_tools=True,
+                load_prompts=False,
+                http_client=kb_http_client,
             )
-        )
-        self.logger.info("Added search_knowledge_base tool")
+            if self._stack:
+                await self._stack.enter_async_context(kb_tool)
+            tools.append(kb_tool)
+            self.logger.info(
+                "Added Foundry IQ knowledge_base tool (KB MCP: %s)",
+                kb_url.split("/knowledgebases/")[1].split("/")[0]
+                if "/knowledgebases/" in kb_url
+                else kb_url[:50],
+            )
+        except Exception as kb_err:
+            self.logger.warning("Foundry IQ KB tool failed to load: %s", kb_err)
 
         self.logger.info("Total tools collected (MCP path): %d", len(tools))
         return tools
@@ -428,10 +445,11 @@ class FoundryAgentTemplate(AzureAgentBase):
         if sid and uid:
             try:
                 from common.services.chat_cosmos_service import get_chat_cosmos_service
+
                 chat_svc = await get_chat_cosmos_service()
                 session = await chat_svc.get_session(sid, uid)
                 if session and session.get("messages"):
-                    for m in session["messages"][-20:]:
+                    for m in session["messages"][-CHAT_HISTORY_WINDOW:]:
                         role = "user" if m.get("role") == "user" else "assistant"
                         content = m.get("content", "")
                         if content:

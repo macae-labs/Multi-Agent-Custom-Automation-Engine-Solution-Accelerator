@@ -553,50 +553,19 @@ async def chat_message(
                 status_code=500, detail=f"Error creating plan: {e}"
             ) from e
 
-    elif intent_result.intent == Intent.MCP_QUERY:
-        # MCP query — use LLM with MCP-aware system prompt
-        response_text = await _get_mcp_query_response(
-            chat_request.message,
-            chat_request.session_id,
-            user_id,
-            chat_svc,
-            tenant_id=tenant_id,
-        )
-
-        # Persist assistant response
-        try:
-            await chat_svc.add_message(
-                session_id=chat_request.session_id,
-                user_id=user_id,
-                content=response_text,
-                role="assistant",
-                metadata={"intent": "mcp_query"},
-            )
-        except Exception as e:
-            logger.warning("Could not persist MCP response: %s", e)
-
-        track_event_if_configured(
-            "Chat_MCP_Query",
-            {
-                "session_id": chat_request.session_id,
-                "user_id": user_id,
-                "message": chat_request.message[:200],
-            },
-        )
-
-        return ChatMessageResponse(
-            session_id=chat_request.session_id,
-            intent="mcp_query",
-            confidence=intent_result.confidence,
-            response=response_text,
-            agent="tech_support",
-        )
-
     else:
-        # Conversational — same FoundryAgent engine as MCP (unified brain).
-        # The agent has search_knowledge_base + MCP tools, so it can
-        # answer questions, recall history, AND take action if the
-        # conversation naturally evolves into an actionable request.
+        # MCP_QUERY and CONVERSATIONAL share one FoundryAgentTemplate instance
+        # (ChatMCPAgent) via agent_pool — one brain, two intent labels.
+        #
+        # MCP_QUERY: user is explicitly asking about tools / server capabilities.
+        # CONVERSATIONAL: general Q&A, knowledge retrieval, continuity of context.
+        #
+        # Both use the same agent because the underlying capabilities are
+        # identical (knowledge_base_retrieve + MCP tools + session history).
+        # The intent label is preserved in Cosmos metadata so future intent
+        # classification can use it as the previous_intent signal.
+        actual_intent = intent_result.intent.value  # "mcp_query" or "conversational"
+
         response_text = await _get_mcp_query_response(
             chat_request.message,
             chat_request.session_id,
@@ -605,20 +574,20 @@ async def chat_message(
             tenant_id=tenant_id,
         )
 
-        # Persist assistant response
+        # Persist assistant response with the precise intent label
         try:
             await chat_svc.add_message(
                 session_id=chat_request.session_id,
                 user_id=user_id,
                 content=response_text,
                 role="assistant",
-                metadata={"intent": "conversational"},
+                metadata={"intent": actual_intent},
             )
         except Exception as e:
-            logger.warning("Could not persist conversational response: %s", e)
+            logger.warning("Could not persist %s response: %s", actual_intent, e)
 
         track_event_if_configured(
-            "Chat_Conversational",
+            f"Chat_{actual_intent}",
             {
                 "session_id": chat_request.session_id,
                 "user_id": user_id,
@@ -628,7 +597,7 @@ async def chat_message(
 
         return ChatMessageResponse(
             session_id=chat_request.session_id,
-            intent="conversational",
+            intent=actual_intent,
             confidence=intent_result.confidence,
             response=response_text,
             agent="assistant",
@@ -736,8 +705,8 @@ async def chat_message_stream(
                 )
                 yield _sse_event(
                     {
-                        "type": "redirect",
-                        "redirect_to_plan": plan_id,
+                        "type": "plan_created",
+                        "plan_id": plan_id,
                         "session_id": chat_request.session_id,
                     }
                 )
@@ -760,7 +729,7 @@ async def chat_message_stream(
             return
 
         # 3. Unified FoundryAgent for ALL non-task intents
-        #    One brain: search_knowledge_base + MCP tools + reasoning.
+        #    One brain: knowledge_base_retrieve + MCP tools + reasoning.
         #    Emits rich SSE events so the UI can show intermediate steps.
         full_text = ""
 
@@ -865,6 +834,15 @@ async def chat_message_stream(
             if not full_text:
                 full_text = _mcp_fallback(chat_request.message)
                 yield _sse_event({"type": "token", "content": full_text})
+            else:
+                # Partial text was already sent — notify frontend of the interruption
+                # so the user sees an error instead of silent truncation.
+                yield _sse_event(
+                    {
+                        "type": "error",
+                        "message": f"Stream interrupted: {e}",
+                    }
+                )
 
         # 4. Persist full assistant response to Cosmos
         try:
@@ -914,17 +892,17 @@ async def chat_message_stream(
 
 _MCP_AGENT_INSTRUCTIONS = (
     "You are the MACAE assistant. You have some categories of tools:\n\n"
-    "═══ 1. KNOWLEDGE BASE (search_knowledge_base) ═══\n"
-    "You have a tool called search_knowledge_base that searches across ALL knowledge bases:\n"
+    "═══ 1. KNOWLEDGE BASE (knowledge_base_retrieve) ═══\n"
+    "You have a tool called knowledge_base_retrieve that searches across ALL knowledge bases:\n"
     "chat history, contracts, RFPs, customer data, order data, and compliance documents.\n\n"
     "CRITICAL — MEMORY RULE:\n"
-    "You MUST call search_knowledge_base BEFORE saying you don't have memory or context.\n"
+    "You MUST call knowledge_base_retrieve BEFORE saying you don't have memory or context.\n"
     "When the user asks about:\n"
     "  - Previous sessions, conversations, interactions, or history\n"
     "  - Past errors, problems, or issues they had\n"
     "  - What they discussed before, what happened earlier\n"
     "  - Any domain knowledge (contracts, NDAs, policies, products, customers)\n"
-    "→ ALWAYS call search_knowledge_base(query='<relevant search terms>') FIRST.\n"
+    "→ ALWAYS call knowledge_base_retrieve(query='<relevant search terms>') FIRST.\n"
     "→ NEVER say 'I don't have memory' without searching first.\n"
     "→ If search returns results, use them to answer. If no results, then say so.\n\n"
     "Parameters:\n"

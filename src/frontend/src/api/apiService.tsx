@@ -301,7 +301,10 @@ export class APIService {
             onToken: (token: string) => void;
             onIntent: (data: { intent: string; confidence: number; session_id: string }) => void;
             onDone: (data: { intent: string; agent: string; confidence: number; session_id: string }) => void;
-            onRedirect: (planId: string) => void;
+            /** Called when intent router detects a task and creates a plan inline (new unified flow). */
+            onPlanCreated?: (planId: string) => void;
+            /** Legacy redirect callback — kept for backward compat with HomeInput. */
+            onRedirect?: (planId: string) => void;
             onError: (error: string) => void;
             onToolActivity?: (data: { activity: string; tool: string; server?: string; success?: boolean }) => void;
         },
@@ -347,8 +350,13 @@ export class APIService {
                             case 'done':
                                 callbacks.onDone(data);
                                 break;
+                            // New unified event: plan created inline (no redirect)
+                            case 'plan_created':
+                                callbacks.onPlanCreated?.(data.plan_id);
+                                break;
+                            // Legacy: kept for HomeInput backward compat
                             case 'redirect':
-                                callbacks.onRedirect(data.redirect_to_plan);
+                                callbacks.onRedirect?.(data.redirect_to_plan);
                                 break;
                             case 'error':
                                 callbacks.onError(data.message);

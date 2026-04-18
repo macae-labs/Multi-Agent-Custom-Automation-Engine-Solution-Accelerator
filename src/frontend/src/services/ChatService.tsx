@@ -25,7 +25,10 @@ export interface StreamCallbacks {
     onToken: (token: string) => void;
     onIntent: (data: { intent: string; confidence: number; session_id: string }) => void;
     onDone: (data: { intent: string; agent: string; confidence: number; session_id: string }) => void;
-    onRedirect: (planId: string) => void;
+    /** Called when intent router detects a task and creates a plan inline. */
+    onPlanCreated?: (planId: string) => void;
+    /** Legacy redirect — kept for backward compat. */
+    onRedirect?: (planId: string) => void;
     onError: (error: string) => void;
     onToolActivity?: (data: { activity: string; tool: string; server?: string; success?: boolean }) => void;
 }

@@ -129,7 +129,7 @@ const ChatPage: React.FC = () => {
                         ),
                     );
                 },
-                onRedirect: (planId) => {
+                onPlanCreated: (planId) => {
                     navigate(`/plan/${planId}`);
                 },
                 onError: (errorMsg) => {

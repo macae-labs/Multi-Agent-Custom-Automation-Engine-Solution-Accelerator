@@ -3,16 +3,19 @@ MCP Inspector Service - External MCP server interaction tools.
 
 Provides agents (e.g., TechnicalSupportAgent) with capabilities to:
 - Connect to external MCP servers via streamable-http/SSE
+- Connect to stdio-based MCP servers DIRECTLY (no proxy dependency)
 - Discover tools, resources, and prompts on connected servers
 - Execute tools on external servers
 - Read resources from external servers
 - List and manage connected server sessions
 
 Architecture:
-- Uses httpx for direct JSON-RPC 2.0 over streamable-http
-- Maintains in-memory registry of connected server sessions
-- Each connection performs full MCP handshake (initialize → initialized)
-- Session-based: each connected server gets a unique session
+- ExternalMCPSession: direct JSON-RPC 2.0 over streamable-http (httpx)
+- DirectStdioSession: spawns stdio MCP servers directly via the MCP SDK's
+  stdio_client — no Inspector proxy needed.  This is the primary mode.
+- ProxiedStdioSession: LEGACY — routes through Inspector proxy over SSE.
+  Kept for backward compat but no longer the default.
+- Session keys are (user_id, server_name) tuples for multi-tenant isolation.
 """
 
 import asyncio
@@ -21,10 +24,12 @@ import logging
 import os
 import uuid
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import httpx
+from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.session import ClientSession
 
 from core.factory import MCPToolBase, Domain
 from utils.formatters import format_success_response, format_error_response
@@ -222,8 +227,254 @@ class ExternalMCPSession:
         self._initialized = False
 
 
+class DirectStdioSession:
+    """Manages a DIRECT connection to a stdio MCP server — no proxy needed.
+
+    Uses the MCP SDK's ``stdio_client`` to spawn the command as a child
+    process and communicates via stdin/stdout.  This is the PRIMARY mode
+    for stdio servers (filesystem, github, etc.).
+
+    IMPORTANT — cancel-scope isolation:
+      ``stdio_client()`` creates an anyio TaskGroup internally.  If we
+      enter that context inside a FastMCP request handler, the cancel
+      scopes collide and crash the MCP server session.
+
+      To avoid this, we run the entire stdio lifecycle in a **dedicated
+      asyncio Task** (``_run_background``).  The background task owns
+      the anyio cancel scopes; the FastMCP handler only talks to
+      ``self._session`` which is safe to share across tasks.
+
+    Exposes the same interface as ExternalMCPSession so callers can use
+    either interchangeably.
+    """
+
+    def __init__(
+        self,
+        command: str,
+        args: List[str],
+        server_name: str,
+        env: Optional[Dict[str, str]] = None,
+    ):
+        self.command = command
+        self.args = args
+        self.server_name = server_name
+        self.env = env or {}
+        self.server_url = f"stdio://{command}/{'+'.join(args)}"
+
+        self.session_id: Optional[str] = str(uuid.uuid4())
+        self._initialized: bool = False
+        self.server_info: Dict[str, Any] = {}
+        self.extra_headers: Dict[str, str] = {}
+        self.connected_at: float = time.time()
+        self.capabilities: Dict[str, Any] = {}
+
+        # Lifecycle events — coordinate between background task and callers
+        self._ready = asyncio.Event()
+        self._shutdown = asyncio.Event()
+        self._bg_task: Optional[asyncio.Task] = None
+        self._session: Optional[ClientSession] = None
+        self._init_error: Optional[Exception] = None
+
+    @property
+    def is_alive(self) -> bool:
+        """True if the background task is running and session is usable."""
+        if not self._initialized or self._session is None:
+            return False
+        if self._bg_task and self._bg_task.done():
+            return False
+        return True
+
+    async def _run_background(self, params: StdioServerParameters) -> None:
+        """Background task that owns the stdio process and its cancel scopes.
+
+        Runs in its own asyncio Task so anyio cancel scopes from
+        stdio_client / ClientSession do NOT interfere with FastMCP's
+        request handler scopes.
+        """
+        try:
+            async with stdio_client(params) as transport:
+                async with ClientSession(
+                    read_stream=transport[0],
+                    write_stream=transport[1],
+                ) as session:
+                    init_result = await session.initialize()
+
+                    # Extract server info
+                    si = getattr(init_result, "serverInfo", None)
+                    if si:
+                        if isinstance(si, dict):
+                            self.server_info = si
+                        elif hasattr(si, "name"):
+                            self.server_info = {
+                                "name": si.name,
+                                "version": getattr(si, "version", "unknown"),
+                            }
+
+                    # Extract capabilities
+                    caps = getattr(init_result, "capabilities", None)
+                    if caps:
+                        if isinstance(caps, dict):
+                            self.capabilities = caps
+                        else:
+                            self.capabilities = {
+                                attr: True
+                                for attr in ["tools", "resources", "prompts"]
+                                if getattr(caps, attr, None) is not None
+                            }
+
+                    self._session = session
+                    self._initialized = True
+                    self._ready.set()
+
+                    logger.info(
+                        "[DirectStdio] Connected to '%s' (%s %s) — caps=%s",
+                        self.server_name,
+                        self.server_info.get("name", "?"),
+                        self.server_info.get("version", "?"),
+                        list(self.capabilities.keys()),
+                    )
+
+                    # Keep alive until shutdown is requested
+                    await self._shutdown.wait()
+
+        except Exception as e:
+            self._init_error = e
+            logger.error(
+                "[DirectStdio] Background task failed for '%s': %s",
+                self.server_name, e,
+            )
+        finally:
+            self._initialized = False
+            self._session = None
+            self._ready.set()  # unblock initialize() if waiting
+
+    async def initialize(self) -> Dict[str, Any]:
+        """Spawn the stdio process in a background task and wait for ready."""
+        # Build process environment
+        process_env = {**os.environ}
+        for k, v in self.env.items():
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                env_key = v[2:-1]
+                resolved = os.environ.get(env_key, "")
+                if resolved:
+                    process_env[k] = resolved
+            else:
+                process_env[k] = v
+
+        params = StdioServerParameters(
+            command=self.command,
+            args=self.args,
+            env=process_env,
+        )
+
+        # Launch in a dedicated task — isolates cancel scopes from FastMCP
+        self._bg_task = asyncio.create_task(
+            self._run_background(params),
+            name=f"stdio-{self.server_name}",
+        )
+
+        # Wait for the session to be ready (or for an error)
+        await self._ready.wait()
+
+        if self._init_error:
+            raise self._init_error
+        if not self._initialized:
+            raise RuntimeError(
+                f"DirectStdioSession '{self.server_name}' failed to initialize"
+            )
+
+        return self.server_info
+
+    async def list_tools(self) -> List[Dict[str, Any]]:
+        if not self._session:
+            raise RuntimeError("Not connected")
+        result = await self._session.list_tools()
+        tools = []
+        for t in result.tools:
+            tools.append({
+                "name": t.name,
+                "description": t.description or "",
+                "inputSchema": t.inputSchema if t.inputSchema else {},
+            })
+        return tools
+
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if not self._session:
+            raise RuntimeError("Not connected")
+        result = await self._session.call_tool(tool_name, arguments=arguments)
+        # Convert MCP SDK content items to dicts via model_dump()
+        content = []
+        for item in result.content:
+            d = item.model_dump() if hasattr(item, "model_dump") else {
+                "type": "unknown", "data": str(item)
+            }
+            content.append(d)
+        return {"content": content}
+
+    async def list_resources(self) -> List[Dict[str, Any]]:
+        if not self._session or "resources" not in self.capabilities:
+            return []
+        result = await self._session.list_resources()
+        return [
+            {
+                "uri": str(r.uri),
+                "name": r.name or "",
+                "description": r.description or "",
+                "mimeType": r.mimeType or "",
+            }
+            for r in result.resources
+        ]
+
+    async def read_resource(self, uri: str) -> Dict[str, Any]:
+        if not self._session:
+            raise RuntimeError("Not connected")
+        from pydantic import AnyUrl
+        result = await self._session.read_resource(AnyUrl(uri))
+        contents = []
+        for item in result.contents:
+            d = item.model_dump() if hasattr(item, "model_dump") else {}
+            d.setdefault("uri", uri)
+            d.setdefault("mimeType", "text/plain")
+            contents.append(d)
+        return {"contents": contents}
+
+    async def list_prompts(self) -> List[Dict[str, Any]]:
+        if not self._session or "prompts" not in self.capabilities:
+            return []
+        result = await self._session.list_prompts()
+        return [
+            {
+                "name": p.name or "",
+                "description": p.description or "",
+            }
+            for p in result.prompts
+        ]
+
+    async def close(self) -> None:
+        """Signal shutdown and wait for the background task to clean up."""
+        self._shutdown.set()
+        self._initialized = False
+        if self._bg_task and not self._bg_task.done():
+            try:
+                await asyncio.wait_for(self._bg_task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
+                logger.debug(
+                    "[DirectStdio] Background task cleanup for '%s': %s",
+                    self.server_name, e,
+                )
+                self._bg_task.cancel()
+        self._session = None
+        logger.info("[DirectStdio] Closed session '%s'", self.server_name)
+
+
 class ProxiedStdioSession:
-    """Manages a connection to a stdio MCP server via the Inspector proxy.
+    """LEGACY: Manages a connection to a stdio MCP server via the Inspector proxy.
+
+    NOTE: This class is kept for backward compatibility but is no longer the
+    default.  Use DirectStdioSession instead — it spawns stdio processes
+    directly without depending on the Inspector proxy.
 
     The MCP Inspector proxy can spawn stdio-based MCP servers (e.g.,
     @modelcontextprotocol/server-github) and bridge them over SSE.
@@ -731,8 +982,10 @@ class InspectorService(MCPToolBase):
 
     def __init__(self):
         super().__init__(Domain.INSPECTOR)
-        self._sessions: Dict[str, ExternalMCPSession] = {}
-        self._proxied_sessions: Dict[str, ProxiedStdioSession] = {}
+        # Keyed by (user_id, server_name) for per-user session isolation.
+        # user_id="" is the anonymous/shared namespace (dev / backward-compat).
+        self._sessions: Dict[Tuple[str, str], ExternalMCPSession] = {}
+        self._proxied_sessions: Dict[Tuple[str, str], ProxiedStdioSession] = {}
         self._registry = RegistryBridge()
         self._inspector_config = _load_inspector_config()
         self._proxy_url = os.environ.get(
@@ -769,16 +1022,25 @@ class InspectorService(MCPToolBase):
         proxy_url = self._proxy_url
         get_proxy_token = self._get_proxy_token
 
-        def _all_sessions() -> Dict[str, Any]:
-            """Merge direct and proxied sessions for uniform lookup."""
+        def _all_sessions(user_id: str = "") -> Dict[str, Any]:
+            """Return sessions for *user_id*, keyed by server_name.
+
+            When user_id is empty every session is included (anonymous /
+            dev fallback).  The returned dict is keyed by plain server_name
+            so all existing ``server_name in all_sess`` checks keep working.
+            """
             merged: Dict[str, Any] = {}
-            merged.update(sessions)
-            merged.update(proxied_sessions)
+            for (uid, sname), sess in sessions.items():
+                if not user_id or uid == user_id:
+                    merged[sname] = sess
+            for (uid, sname), sess in proxied_sessions.items():
+                if not user_id or uid == user_id:
+                    merged[sname] = sess
             return merged
 
         @mcp.tool(tags={self.domain.value})
         async def connect_mcp_server(
-            server_url: str = "", server_name: str = ""
+            server_url: str = "", server_name: str = "", user_id: str = ""
         ) -> str:
             """
             Connect to an external MCP server.
@@ -847,8 +1109,9 @@ class InspectorService(MCPToolBase):
                     server_name = f"{parsed.hostname}:{parsed.port or 80}"
 
                 # Check if already connected
-                if server_name in sessions:
-                    existing = sessions[server_name]
+                _key = (user_id, server_name)
+                if _key in sessions:
+                    existing = sessions[_key]
                     if existing._initialized:
                         return format_success_response(
                             action="Server Already Connected",
@@ -870,7 +1133,7 @@ class InspectorService(MCPToolBase):
                 session = ExternalMCPSession(server_url, server_name)
                 server_info = await session.initialize()
 
-                sessions[server_name] = session
+                sessions[_key] = session
 
                 return format_success_response(
                     action="MCP Server Connected",
@@ -896,7 +1159,7 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def discover_mcp_capabilities(server_name: str) -> str:
+        async def discover_mcp_capabilities(server_name: str, user_id: str = "") -> str:
             """
             Discover all capabilities (tools, resources, prompts) on a
             connected external MCP server.
@@ -909,7 +1172,7 @@ class InspectorService(MCPToolBase):
                 descriptions, resources, and prompts.
             """
             try:
-                all_sess = _all_sessions()
+                all_sess = _all_sessions(user_id)
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
@@ -1002,6 +1265,7 @@ class InspectorService(MCPToolBase):
             server_name: str,
             target_tool: str,
             arguments: dict[str, Any] | None = None,
+            user_id: str = "",
         ) -> str:
             """
             Execute a tool on a connected external MCP server.
@@ -1016,7 +1280,7 @@ class InspectorService(MCPToolBase):
                 Tool execution result from the external server.
             """
             try:
-                all_sess = _all_sessions()
+                all_sess = _all_sessions(user_id)
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
@@ -1076,7 +1340,7 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def read_external_resource(server_name: str, resource_uri: str) -> str:
+        async def read_external_resource(server_name: str, resource_uri: str, user_id: str = "") -> str:
             """
             Read a resource from a connected external MCP server.
 
@@ -1089,7 +1353,7 @@ class InspectorService(MCPToolBase):
                 Resource content with MIME type.
             """
             try:
-                all_sess = _all_sessions()
+                all_sess = _all_sessions(user_id)
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
@@ -1140,7 +1404,7 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def list_connected_servers() -> str:
+        async def list_connected_servers(user_id: str = "") -> str:
             """
             List active sessions and registry catalog servers.
 
@@ -1154,10 +1418,13 @@ class InspectorService(MCPToolBase):
             try:
                 # --- Active RAM sessions (direct HTTP) ---
                 active = []
-                for name, session in sessions.items():
+                for (uid, name), session in sessions.items():
+                    if user_id and uid != user_id:
+                        continue
                     active.append(
                         {
                             "server_name": name,
+                            "user_id": uid,
                             "server_url": session.server_url,
                             "server_info": session.server_info,
                             "initialized": session._initialized,
@@ -1169,10 +1436,13 @@ class InspectorService(MCPToolBase):
                     )
 
                 # --- Active proxied stdio sessions ---
-                for name, psession in proxied_sessions.items():
+                for (uid, name), psession in proxied_sessions.items():
+                    if user_id and uid != user_id:
+                        continue
                     active.append(
                         {
                             "server_name": name,
+                            "user_id": uid,
                             "server_url": psession.server_url,
                             "server_info": psession.server_info,
                             "initialized": psession._initialized,
@@ -1186,7 +1456,14 @@ class InspectorService(MCPToolBase):
                 # --- Inspector config servers (best-effort) ---
                 inspector_servers = []
                 cfg_servers = inspector_config.get("mcpServers", {})
-                all_connected = set(sessions.keys()) | set(proxied_sessions.keys())
+                # Build set of connected server names for the current user scope
+                all_connected = {
+                    sname for (uid, sname) in sessions.keys()
+                    if not user_id or uid == user_id
+                } | {
+                    sname for (uid, sname) in proxied_sessions.keys()
+                    if not user_id or uid == user_id
+                }
                 for sname, sdef in cfg_servers.items():
                     transport = "streamable-http" if sdef.get("url") else "stdio"
                     inspector_servers.append(
@@ -1244,7 +1521,13 @@ class InspectorService(MCPToolBase):
 
                 parts = []
                 if total_active:
-                    all_names = list(sessions.keys()) + list(proxied_sessions.keys())
+                    all_names = [
+                        sname for (uid, sname) in sessions.keys()
+                        if not user_id or uid == user_id
+                    ] + [
+                        sname for (uid, sname) in proxied_sessions.keys()
+                        if not user_id or uid == user_id
+                    ]
                     parts.append(
                         f"{total_active} active session(s): {', '.join(all_names)}"
                     )
@@ -1386,8 +1669,9 @@ class InspectorService(MCPToolBase):
                         extra_headers["X-MCP-Auth-Ref"] = secret_ref
 
                 # Already connected?
-                if server_name in sessions:
-                    existing = sessions[server_name]
+                _reg_key = (user_id, server_name)
+                if _reg_key in sessions:
+                    existing = sessions[_reg_key]
                     if existing._initialized:
                         return format_success_response(
                             action="Already Connected (Registry)",
@@ -1413,7 +1697,7 @@ class InspectorService(MCPToolBase):
                     session.extra_headers = extra_headers
 
                 server_info = await session.initialize()
-                sessions[server_name] = session
+                sessions[_reg_key] = session
 
                 return format_success_response(
                     action="Connected from Registry",
@@ -1442,7 +1726,7 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def disconnect_mcp_server(server_name: str) -> str:
+        async def disconnect_mcp_server(server_name: str, user_id: str = "") -> str:
             """
             Disconnect from an external MCP server.
 
@@ -1453,7 +1737,7 @@ class InspectorService(MCPToolBase):
                 Disconnection confirmation.
             """
             try:
-                all_sess = _all_sessions()
+                all_sess = _all_sessions(user_id)
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
@@ -1465,10 +1749,11 @@ class InspectorService(MCPToolBase):
                     )
 
                 # Remove from whichever dict it's in
-                if server_name in sessions:
-                    session = sessions.pop(server_name)
+                _dis_key = (user_id, server_name)
+                if _dis_key in sessions:
+                    session = sessions.pop(_dis_key)
                 else:
-                    session = proxied_sessions.pop(server_name)
+                    session = proxied_sessions.pop(_dis_key)
                 await session.close()
 
                 return format_success_response(
@@ -1487,13 +1772,15 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def connect_stdio_server(server_name: str) -> str:
+        async def connect_stdio_server(server_name: str, user_id: str = "") -> str:
             """
-            Connect to a stdio-based MCP server via the Inspector proxy.
+            Connect to a stdio-based MCP server DIRECTLY (no proxy needed).
 
-            Looks up the server in mcp-inspector-config.json, spawns it
-            through the Inspector proxy's stdio bridge, and performs the
-            full MCP handshake.
+            Spawns the server command as a child process and communicates
+            via stdin/stdout using the MCP SDK's stdio_client.
+
+            Looks up the server definition in mcp-inspector-config.json
+            for the command, args, and env vars.
 
             Use this for servers that run as local CLI processes
             (e.g., GitHub, filesystem, server-everything).
@@ -1505,25 +1792,27 @@ class InspectorService(MCPToolBase):
                 server_name: Name of the server as defined in
                              mcp-inspector-config.json (e.g., "github",
                              "filesystem").
+                user_id: User ID for session isolation (default: shared).
 
             Returns:
                 Connection status with server info and tool count.
             """
             try:
                 # Already connected?
-                if server_name in proxied_sessions:
-                    existing = proxied_sessions[server_name]
+                _stdio_key = (user_id, server_name)
+                if _stdio_key in proxied_sessions:
+                    existing = proxied_sessions[_stdio_key]
                     if existing.is_alive:
                         return format_success_response(
                             action="Already Connected (stdio)",
                             details={
                                 "server_name": server_name,
                                 "server_info": existing.server_info,
-                                "transport": "stdio-via-proxy",
+                                "transport": "stdio-direct",
                             },
                             summary=(
                                 f"Already connected to "
-                                f"'{server_name}' via stdio proxy. "
+                                f"'{server_name}' via direct stdio. "
                                 f"Use discover_mcp_capabilities to "
                                 f"explore."
                             ),
@@ -1537,7 +1826,7 @@ class InspectorService(MCPToolBase):
                         await existing.close()
                     except Exception:
                         pass
-                    del proxied_sessions[server_name]
+                    del proxied_sessions[_stdio_key]
 
                 # Look up in inspector config
                 cfg_servers = inspector_config.get("mcpServers", {})
@@ -1632,22 +1921,20 @@ class InspectorService(MCPToolBase):
                     else:
                         resolved_env[k] = v
 
-                # Create proxied session
-                psession = ProxiedStdioSession(
-                    proxy_url=proxy_url,
+                # Create DIRECT stdio session — no proxy dependency
+                dsession = DirectStdioSession(
                     command=command,
                     args=args,
                     server_name=server_name,
                     env=resolved_env,
-                    proxy_auth_token=get_proxy_token() or None,
                 )
 
-                server_info = await psession.initialize()
-                proxied_sessions[server_name] = psession
+                server_info = await dsession.initialize()
+                proxied_sessions[_stdio_key] = dsession
 
                 # Get tool count for summary
                 try:
-                    tools = await psession.list_tools()
+                    tools = await dsession.list_tools()
                     tool_count = len(tools)
                 except Exception:
                     tool_count = -1
@@ -1659,14 +1946,13 @@ class InspectorService(MCPToolBase):
                         "server_info": server_info,
                         "command": command,
                         "args": args,
-                        "transport": "stdio-via-proxy",
+                        "transport": "stdio-direct",
                         "tool_count": tool_count,
                     },
                     summary=(
                         f"Connected to stdio server "
                         f"'{server_info.get('name', server_name)}' "
-                        f"via Inspector proxy "
-                        f"({tool_count} tools). "
+                        f"directly ({tool_count} tools). "
                         f"Use discover_mcp_capabilities('"
                         f"{server_name}') to explore."
                     ),
@@ -1676,8 +1962,7 @@ class InspectorService(MCPToolBase):
                 return format_error_response(
                     error_message=str(e),
                     context=(
-                        f"connecting to stdio server '{server_name}' "
-                        f"via Inspector proxy"
+                        f"connecting to stdio server '{server_name}'"
                     ),
                 )
 

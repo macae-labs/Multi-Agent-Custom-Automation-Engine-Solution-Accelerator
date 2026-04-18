@@ -70,13 +70,20 @@ class MCPServerEntry(BaseModel):
     """
     Catalog entry for an available MCP server.
 
-    Stored in Cosmos `mcp_connections` container with pk="catalog".
-    Shared across all users — represents a server that CAN be connected to.
+    Stored in Cosmos `mcp_connections` container with pk="catalog" (shared)
+    or pk="catalog#{tenant_id}" (tenant-scoped).
+    Represents a server that CAN be connected to — no secrets stored here.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    pk: str = "catalog"  # partition key — all catalog entries share this
+    pk: str = "catalog"  # partition key — set by MCPConnectionsService before write
     doc_type: str = "mcp_server"
+
+    # Multi-tenancy — empty string means globally shared catalog entry
+    tenant_id: Optional[str] = Field(
+        default=None,
+        description="AAD tenant ID. None / empty = shared catalog visible to all tenants.",
+    )
 
     # Identity
     server_name: str  # unique key, e.g. "github-corp", "slack-workspace"
@@ -130,16 +137,27 @@ class MCPUserConnection(BaseModel):
     """
     Per-user connection status to an MCP server.
 
-    Stored in Cosmos `mcp_connections` container with pk=user_id.
+    Stored in Cosmos `mcp_connections` container.
+    Partition key (pk):
+      - Legacy / single-tenant:  pk = user_id
+      - Multi-tenant:             pk = "{tenant_id}#{user_id}"
+    The pk value is computed by MCPConnectionsService before write.
+
     Tracks WHICH servers a user has active — NOT the tokens themselves.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    pk: str  # partition key = user_id (AAD object ID)
+    pk: str = ""  # computed and set by MCPConnectionsService before upsert
     doc_type: str = "mcp_user_connection"
 
+    # Multi-tenancy — empty string = single-tenant / legacy mode
+    tenant_id: str = Field(
+        default="",
+        description="AAD tenant ID. Empty = legacy single-tenant mode (pk = user_id).",
+    )
+
     # Links
-    user_id: str  # same as pk — AAD object ID
+    user_id: str  # AAD object ID
     server_id: str  # references MCPServerEntry.id
     server_name: str  # denormalized for fast reads
 

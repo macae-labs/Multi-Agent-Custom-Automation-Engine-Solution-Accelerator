@@ -12,9 +12,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from azure.cosmos.aio import CosmosClient, DatabaseProxy
 from azure.cosmos import exceptions
-from azure.cosmos.aio import ContainerProxy
+from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
 
 from common.config.app_config import config
 
@@ -276,7 +275,9 @@ class ChatCosmosService:
                 low = content.lower()
                 if any(p in low for p in _SKIP_PHRASES):
                     _should_index = False
-                    logger.debug("Skipping index for low-value assistant msg: %s", content[:60])
+                    logger.debug(
+                        "Skipping index for low-value assistant msg: %s", content[:60]
+                    )
 
             if not _should_index:
                 return message
@@ -288,18 +289,45 @@ class ChatCosmosService:
                 )
 
                 search_svc = await get_search_index_service()
-                asyncio.create_task(
-                    search_svc.index_chat_message(
-                        message_id=message["id"],
-                        session_id=session_id,
-                        user_id=user_id,
-                        role=role,
-                        content=content,
-                        intent=(metadata or {}).get("intent", ""),
-                        timestamp=message["timestamp"],
-                        session_name=session.get("session_name", ""),
-                    )
-                )
+
+                # Capture values for the closure to avoid late-binding issues.
+                _msg_id = message["id"]
+                _session_name = session.get("session_name", "")
+                _intent = (metadata or {}).get("intent", "")
+                _timestamp = message["timestamp"]
+
+                async def _index_with_retry() -> None:
+                    """Index with up to 3 attempts and exponential back-off.
+
+                    Fire-and-forget: errors are logged but never raised to the
+                    caller so chat persistence is never blocked by search failures.
+                    """
+                    for attempt in range(3):
+                        try:
+                            await search_svc.index_chat_message(
+                                message_id=_msg_id,
+                                session_id=session_id,
+                                user_id=user_id,
+                                role=role,
+                                content=content,
+                                intent=_intent,
+                                timestamp=_timestamp,
+                                session_name=_session_name,
+                            )
+                            return  # success
+                        except Exception as idx_err:
+                            if attempt < 2:
+                                await asyncio.sleep(2**attempt)  # 1s, 2s
+                            else:
+                                logger.warning(
+                                    "AI Search indexing failed after 3 attempts "
+                                    "(session=%s msg=%s): %s",
+                                    session_id,
+                                    _msg_id,
+                                    idx_err,
+                                )
+
+                asyncio.create_task(_index_with_retry())
             except Exception as search_err:
                 logger.debug("AI Search indexing skipped: %s", search_err)
 
