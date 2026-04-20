@@ -3,15 +3,15 @@
 import logging
 from typing import List, Optional
 
-from agent_framework import (Agent, Message, ChatOptions)
-from agent_framework_azure_ai import \
-    AzureAIClient  # Provided by agent_framework
+from agent_framework import Agent, ChatOptions, Message
+from agent_framework_azure_ai import AzureAIClient  # Azure Search path only
 from azure.ai.projects.models import (
-    PromptAgentDefinition,
+    AISearchIndexResource,
     AzureAISearchTool,
     AzureAISearchToolResource,
-    AISearchIndexResource,
+    PromptAgentDefinition,
 )
+
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
@@ -19,6 +19,11 @@ from v4.common.services.team_service import TeamService
 from v4.config.agent_registry import agent_registry
 from v4.magentic_agents.common.lifecycle import AzureAgentBase
 from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
+
+# Number of recent messages injected into the agent context on each invoke().
+# Increase this value if long conversations lose relevant context.
+# Keep in mind that larger windows consume more tokens per request.
+CHAT_HISTORY_WINDOW: int = 20
 
 
 class FoundryAgentTemplate(AzureAgentBase):
@@ -44,6 +49,10 @@ class FoundryAgentTemplate(AzureAgentBase):
         team_service: TeamService | None = None,
         team_config: TeamConfiguration | None = None,
         memory_store: DatabaseBase | None = None,
+        ephemeral: bool = False,
+        user_id: str = "",
+        session_id: str = "",
+        runtime_tools_enabled: bool = True,
     ) -> None:
         # Get project_client before calling super().__init__
         project_client = config.get_ai_project_client()
@@ -68,6 +77,13 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Decide early whether Azure Search mode should be activated
         self._use_azure_search = self._is_azure_search_requested()
         self.use_reasoning = use_reasoning
+
+        # Ephemeral agents (e.g. ChatMCPAgent) skip Foundry registration
+        # to avoid 404 errors from create_version on every request.
+        self._ephemeral = ephemeral
+        self._user_id = user_id
+        self._session_id = session_id
+        self.runtime_tools_enabled = runtime_tools_enabled
 
         # Placeholder for server-created Azure AI agent id (if Azure Search path)
         self._azure_server_agent_id: Optional[str] = None
@@ -94,15 +110,21 @@ class FoundryAgentTemplate(AzureAgentBase):
         """Collect tool definitions for Agent (MCP path only)."""
         tools: List = []
 
-        # Code Interpreter is now handled server-side via AzureAIClient agent definition.
-        # HostedCodeInterpreterTool was removed in rc4.
         if self.enable_code_interpreter:
-            self.logger.info("Code Interpreter requested — handled server-side by AzureAIClient.")
+            self.logger.info(
+                "Code Interpreter requested — handled server-side by AzureAIClient."
+            )
 
         # MCP Tool (from base class)
         if self.mcp_tool:
             tools.append(self.mcp_tool)
             self.logger.info("Added MCP tool: %s", self.mcp_tool.name)
+
+        # NOTE: Foundry IQ Knowledge Base is NOT attached as a runtime tool.
+        # It is associated server-side to the published agent in Foundry
+        # (Portal → Agent → Knowledge → attach kb-knowledgebase550-lrm9b).
+        # When using AzureAIClient with use_latest_version=True, the published
+        # agent already has the KB available — no client-side bridge needed.
 
         self.logger.info("Total tools collected (MCP path): %d", len(tools))
         return tools
@@ -136,10 +158,12 @@ class FoundryAgentTemplate(AzureAgentBase):
         if not connection_name:
             # Fallback to environment variable
             connection_name = config.AZURE_AI_SEARCH_CONNECTION_NAME
-            self.logger.info("Using connection_name from environment: %s", connection_name)
+            self.logger.info(
+                "Using connection_name from environment: %s", connection_name
+            )
 
         index_name = getattr(self.search, "index_name", "")
-        query_type = getattr(self.search, "search_query_type", "simple")
+        query_type = getattr(self.search, "search_query_type", "semantic")
         top_k = getattr(self.search, "top_k", 5)
 
         if not index_name:
@@ -239,7 +263,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                 self.logger.info(
                     "Initializing agent '%s' in Azure AI Search mode (exclusive) with index=%s.",
                     self.agent_name,
-                    getattr(self.search, "index_name", "N/A") if self.search else "N/A"
+                    getattr(self.search, "index_name", "N/A") if self.search else "N/A",
                 )
                 chat_client = await self._create_azure_search_enabled_client()
                 if not chat_client:
@@ -263,10 +287,36 @@ class FoundryAgentTemplate(AzureAgentBase):
             else:
                 # MCP path (also used by RAI agent which has no tools)
                 self.logger.info("Initializing agent in MCP mode.")
-                tools = await self._collect_tools()
+
+                # Prefer the published agent in Foundry:
+                # - MacaeMcpServer is registered server-side as a tool.
+                # - Knowledge Base (Foundry IQ) is attached via the portal.
+                # - Foundry orchestrates everything — no runtime tool bridge
+                #   needed from the client.
+                # When runtime_tools_enabled is False, use AzureAIClient with
+                # the published agent directly.  When True (legacy), fall back
+                # to runtime tool injection via AzureOpenAIResponsesClient.
+                if self.runtime_tools_enabled:
+                    tools = await self._collect_tools()
+                else:
+                    tools = []
+
+                if tools:
+                    client = self.get_responses_client()
+                    self.logger.info(
+                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools).",
+                        self.agent_name,
+                    )
+                else:
+                    client = self.get_chat_client()
+                    self.logger.info(
+                        "Using AzureAIClient for '%s' (published agent, server-side tools).",
+                        self.agent_name,
+                    )
+
                 self._agent = Agent(
                     id=self.get_agent_id(),
-                    client=self.get_chat_client(),
+                    client=client,
                     instructions=self.agent_instructions,
                     name=self.agent_name,
                     description=self.agent_description,
@@ -277,6 +327,14 @@ class FoundryAgentTemplate(AzureAgentBase):
                         temperature=temp,
                     ),
                 )
+
+                # For agents using AzureOpenAIResponsesClient, register in
+                # Foundry so they appear in the portal / VS Code extension.
+                # Skip for ephemeral agents (e.g. ChatMCPAgent) to avoid
+                # 404 errors from create_version on every request.
+                if tools and not self._ephemeral:
+                    await self._register_in_foundry()
+
             self.logger.info("Initialized Agent '%s'", self.agent_name)
 
         except Exception as ex:
@@ -297,12 +355,32 @@ class FoundryAgentTemplate(AzureAgentBase):
     # -------------------------
     # Invocation (streaming)
     # -------------------------
-    async def invoke(self, prompt: str):
-        """Stream model output for a prompt."""
+    async def invoke(self, prompt: str, session_id: str = "", user_id: str = ""):
+        """Stream model output for a prompt, with session context."""
         if not self._agent:
             raise RuntimeError("Agent not initialized; call open() first.")
 
-        messages = [Message(role="user", text=prompt)]
+        messages: list[Message] = []
+
+        # Load recent session messages from Cosmos for conversational continuity
+        sid = session_id or self._session_id
+        uid = user_id or self._user_id
+        if sid and uid:
+            try:
+                from common.services.chat_cosmos_service import get_chat_cosmos_service
+
+                chat_svc = await get_chat_cosmos_service()
+                session = await chat_svc.get_session(sid, uid)
+                if session and session.get("messages"):
+                    for m in session["messages"][-CHAT_HISTORY_WINDOW:]:
+                        role = "user" if m.get("role") == "user" else "assistant"
+                        content = m.get("content", "")
+                        if content:
+                            messages.append(Message(role=role, text=content))
+            except Exception:
+                pass  # No history available, proceed with just the prompt
+
+        messages.append(Message(role="user", text=prompt))
 
         async for update in self._agent.run(messages, stream=True):
             yield update

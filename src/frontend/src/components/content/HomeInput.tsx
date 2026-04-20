@@ -15,6 +15,7 @@ import "./../../styles/HomeInput.css";
 import { HomeInputProps, iconMap, QuickTask } from "../../models/homeInput";
 import { TaskService } from "../../services/TaskService";
 import { NewTaskService } from "../../services/NewTaskService";
+import { ChatService } from "../../services/ChatService";
 
 import ChatInput from "@/coral/modules/ChatInput";
 import InlineToaster, { useInlineToaster } from "../toast/InlineToaster";
@@ -93,41 +94,61 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
   const handleSubmit = async () => {
     if (input.trim()) {
       setSubmitting(true);
-      let id = showToast("Creating a plan", "progress");
+      let id = showToast("Analyzing your request…", "progress");
 
       try {
-        const response = await TaskService.createPlan(
-          input.trim(),
-          selectedTeam?.team_id
-        );
-        console.log("Plan created:", response);
-        setInput("");
+        // Send through streaming endpoint — same FoundryAgent from message 1.
+        // For task intent, the stream returns a redirect event.
+        // For conversational/mcp, it streams the real response.
+        const randomValues = crypto.getRandomValues(new Uint32Array(1));
+        const sessionId = `chat_${Date.now()}_${randomValues[0]}`;
+        const userMessage = input.trim();
 
+        setInput("");
         if (textareaRef.current) {
           textareaRef.current.style.height = "auto";
         }
 
-        if (response.plan_id && response.plan_id !== null) {
-          showToast("Plan created!", "success");
-          dismissToast(id);
+        let redirectPlan: string | null = null;
+        let intent = "";
+        let fullResponse = "";
 
-          navigate(`/plan/${response.plan_id}`);
+        await ChatService.sendMessageStream(userMessage, sessionId, {
+          onToken: (token) => { fullResponse += token; },
+          onIntent: (data) => {
+            intent = data.intent;
+            if (data.session_id) {
+              // Update session ID if server assigned a different one
+            }
+          },
+          onDone: (data) => { intent = data.intent; },
+          onRedirect: (planId) => { redirectPlan = planId; },
+          onError: (errorMsg) => { fullResponse = `Error: ${errorMsg}`; },
+        });
+
+        dismissToast(id);
+
+        if (redirectPlan) {
+          // TASK intent → redirect to plan
+          showToast("Plan created!", "success");
+          navigate(`/plan/${redirectPlan}`);
         } else {
-          showToast("Failed to create plan", "error");
-          dismissToast(id);
+          // CONVERSATIONAL / MCP → open chat page with the response already generated
+          const initialMessages = [
+            { id: `msg_${Date.now()}_user`, content: userMessage, role: "user", timestamp: new Date() },
+            { id: `msg_${Date.now()}_assistant`, content: fullResponse, role: "assistant", timestamp: new Date(), intent },
+          ];
+          navigate(`/chat/${sessionId}`, { state: { initialMessages } });
         }
       } catch (error: any) {
-        console.log("Error creating plan:", error);
-        let errorMessage = "Unable to create plan. Please try again.";
+        console.log("Error processing message:", error);
+        let errorMessage = "Unable to process message. Please try again.";
         dismissToast(id);
-        // Check if this is an RAI validation error
         try {
-          // errorDetail = JSON.parse(error);
           errorMessage = error?.message || errorMessage;
         } catch (parseError) {
           console.error("Error parsing error detail:", parseError);
         }
-
         showToast(errorMessage, "error");
       } finally {
         setInput("");

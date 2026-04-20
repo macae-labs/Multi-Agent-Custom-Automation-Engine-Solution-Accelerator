@@ -11,25 +11,41 @@ import {
 import { Copy, Send } from "../imports/bundleicons";
 import { ChatDismiss20Regular, HeartRegular } from "@fluentui/react-icons";
 import ChatInput from "./ChatInput";
+import WidgetFrame from "../components/WidgetFrame";
+import { apiClient } from "../../api/apiClient";
 import "./Chat.css";
 import "./prism-material-oceanic.css";
 // import { chatService } from "../services/chatService"; // TODO: Re-enable when chatService integration is complete
 import HeaderTools from "../components/Header/HeaderTools";
+
+interface Message {
+  role: string;
+  content: string;
+  _meta?: {
+    ui?: {
+      resourceUri?: string;
+      fallback?: 'markdown' | 'text';
+    };
+  };
+}
+
+// Response can be either string (legacy) or Message object with _meta
+type MessageResponse = string | Message;
 
 interface ChatProps {
   userId: string;
   children?: React.ReactNode;
   onSendMessage?: (
     input: string,
-    history: { role: string; content: string }[]
-  ) => AsyncIterable<string> | Promise<string>;
+    history: Message[]
+  ) => AsyncIterable<MessageResponse> | Promise<MessageResponse>;
   onSaveMessage?: (
     userId: string,
-    messages: { role: string; content: string }[]
+    messages: Message[]
   ) => void;
   onLoadHistory?: (
     userId: string
-  ) => Promise<{ role: string; content: string }[]>;
+  ) => Promise<Message[]>;
   onClearHistory?: (userId: string) => void;
 }
 
@@ -41,14 +57,30 @@ const Chat: React.FC<ChatProps> = ({
   onLoadHistory,
   onClearHistory,
 }) => {
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [inputHeight, setInputHeight] = useState(0);
+  const [availableWidgets, setAvailableWidgets] = useState<any[]>([]);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
+
+  // MCP Discovery: Load available widgets proactively
+  useEffect(() => {
+    const discoverWidgets = async () => {
+      try {
+        const result = await apiClient.get('/v4/mcp/discovery');
+        setAvailableWidgets(result?.widgets || []);
+        console.log(`✅ Discovered ${result?.widgets?.length || 0} widgets`);
+      } catch (err) {
+        console.warn('Widget discovery failed:', err);
+      }
+    };
+
+    discoverWidgets();
+  }, [userId]);
 
   useEffect(() => {
     const loadHistory = async () => {
@@ -129,22 +161,39 @@ const Chat: React.FC<ChatProps> = ({
             setMessages((prev) => {
               const updated = [...prev];
               const lastMsg = updated[updated.length - 1];
-              updated[updated.length - 1] = {
-                role: "assistant",
-                content: (lastMsg?.content || "") + chunk,
-              };
+
+              // Handle both string chunks and Message objects
+              if (typeof chunk === 'string') {
+                updated[updated.length - 1] = {
+                  role: "assistant",
+                  content: (lastMsg?.content || "") + chunk,
+                };
+              } else {
+                // Message object with potential _meta
+                updated[updated.length - 1] = {
+                  role: "assistant",
+                  content: (lastMsg?.content || "") + chunk.content,
+                  _meta: chunk._meta || lastMsg._meta,
+                };
+              }
               return updated;
             });
           }
-          // Get final content from state for saving
+          // Get final message from state for saving
           setMessages((prev) => {
-            const finalContent = prev[prev.length - 1]?.content || "";
-            onSaveMessage?.(userId, [...updatedMessages, { role: "assistant", content: finalContent }]);
+            const finalMsg = prev[prev.length - 1];
+            onSaveMessage?.(userId, [...updatedMessages, finalMsg]);
             return prev;
           });
         } else {
           const assistantResponse = await response;
-          const newHistory = [...updatedMessages, { role: "assistant", content: assistantResponse }];
+
+          // Handle both string response and Message object
+          const assistantMessage: Message = typeof assistantResponse === 'string'
+            ? { role: "assistant", content: assistantResponse }
+            : { role: "assistant", content: assistantResponse.content, _meta: assistantResponse._meta };
+
+          const newHistory = [...updatedMessages, assistantMessage];
           setMessages(newHistory);
           onSaveMessage?.(userId, newHistory);
         }
@@ -183,13 +232,79 @@ const Chat: React.FC<ChatProps> = ({
   return (
     <div className="chat-container">
       <div className="messages" ref={messagesContainerRef}>
-        <div className="message-wrapper">        {messages.map((msg, index) => (
+        <div className="message-wrapper">
+        {/* Proactive Discovery: Quick Widgets panel */}
+        {messages.length === 0 && availableWidgets.length > 0 && (
+          <div style={{
+            padding: '16px',
+            marginBottom: '16px',
+            borderRadius: '12px',
+            background: 'linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%)',
+            border: '1px solid #d0daf0',
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#1a1a1a', marginBottom: '12px' }}>
+              🧩 Available Widgets
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {availableWidgets
+                .filter((w: any) => w.proactive !== false)
+                .map((w: any, i: number) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      // For proactive widgets, render directly via WidgetFrame
+                      const widgetMsg: Message = {
+                        role: 'assistant',
+                        content: w.description || w.title,
+                        _meta: { ui: { resourceUri: w.resource_uri, fallback: 'markdown' } },
+                      };
+                      setMessages((prev) => [...prev, widgetMsg]);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #c7d2e0',
+                      background: '#ffffff',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      color: '#374151',
+                      transition: 'box-shadow 0.15s ease',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.06)')}
+                  >
+                    <span>{w.icon || '🔧'}</span>
+                    <span>{w.title}</span>
+                  </button>
+                ))}
+            </div>
+            {availableWidgets.some((w: any) => w.proactive === false) && (
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
+                💡 More widgets available via AI — try asking about products!
+              </div>
+            )}
+          </div>
+        )}
+        {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
             <Body1>
               <div style={{ display: "flex", flexDirection: "column", whiteSpace: "pre-wrap", width: "100%" }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypePrism]}>
-                  {msg.content}
-                </ReactMarkdown>
+                {/* MCP Protocol 2025-11-25: Render widget if _meta.ui.resourceUri present */}
+                {msg._meta?.ui?.resourceUri ? (
+                  <WidgetFrame
+                    resourceUri={msg._meta.ui.resourceUri}
+                    fallbackContent={msg.content}
+                    fallbackFormat={msg._meta.ui.fallback || 'markdown'}
+                  />
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypePrism]}>
+                    {msg.content}
+                  </ReactMarkdown>
+                )}
                 {msg.role === "assistant" && (
                   <div className="assistant-footer">
                     <div className="assistant-actions">

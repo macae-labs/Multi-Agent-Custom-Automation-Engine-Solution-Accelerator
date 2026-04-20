@@ -22,5 +22,7 @@ export type { Agent as TaskAgent } from './taskDetails';
 // Export Team models (Agent interface takes precedence)
 export * from './Team';
 
+// Export Chat models (P0 — conversational mode)
+export * from './chatMessage';
 
 // Add other model exports as needed

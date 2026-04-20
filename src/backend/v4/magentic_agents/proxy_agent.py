@@ -19,8 +19,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     BaseAgent,
-    Message,
     Content,
+    Message,
     UsageDetails,
     AgentSession,
 )
@@ -28,9 +28,9 @@ from agent_framework._types import ResponseStream
 
 from v4.config.settings import connection_config, orchestration_config
 from v4.models.messages import (
+    TimeoutNotification,
     UserClarificationRequest,
     UserClarificationResponse,
-    TimeoutNotification,
     WebsocketMessageType,
 )
 
@@ -56,11 +56,7 @@ class ProxyAgent(BaseAgent):
         timeout_seconds: int | None = None,
         **kwargs: Any,
     ):
-        super().__init__(
-            name=name,
-            description=description,
-            **kwargs
-        )
+        super().__init__(name=name, description=description, **kwargs)
         self.user_id = user_id or ""
         self._timeout = timeout_seconds or orchestration_config.default_timeout
 
@@ -68,7 +64,9 @@ class ProxyAgent(BaseAgent):
     # AgentProtocol implementation
     # ---------------------------
 
-    def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
+    def create_session(
+        self, *, session_id: str | None = None, **kwargs: Any
+    ) -> AgentSession:
         """
         Create a new session for ProxyAgent conversations.
         Required by AgentProtocol for workflow integration.
@@ -107,7 +105,9 @@ class ProxyAgent(BaseAgent):
             response_messages: list[Message] = []
             response_id = str(uuid.uuid4())
 
-            async for update in self._invoke_stream_internal(messages, session, **kwargs):
+            async for update in self._invoke_stream_internal(
+                messages, session, **kwargs
+            ):
                 if update.contents:
                     response_messages.append(
                         Message(
@@ -142,7 +142,7 @@ class ProxyAgent(BaseAgent):
         logger.info(
             "ProxyAgent: Requesting clarification (session=%s, user=%s)",
             "present" if session else "None",
-            self.user_id
+            self.user_id,
         )
         logger.debug("ProxyAgent: Message text: %s", message_text[:100])
 
@@ -202,7 +202,9 @@ class ProxyAgent(BaseAgent):
             message_id=message_id,
         )
 
-        logger.debug("ProxyAgent: Yielding text update (text length=%d)", len(synthetic_reply))
+        logger.debug(
+            "ProxyAgent: Yielding text update (text length=%d)", len(synthetic_reply)
+        )
         yield text_update
 
         # Yield synthetic usage update for consistency
@@ -214,7 +216,8 @@ class ProxyAgent(BaseAgent):
                     UsageDetails(
                         input_token_count=len(message_text.split()),
                         output_token_count=len(synthetic_reply.split()),
-                        total_token_count=len(message_text.split()) + len(synthetic_reply.split()),
+                        total_token_count=len(message_text.split())
+                        + len(synthetic_reply.split()),
                     )
                 )
             ],
@@ -316,6 +319,7 @@ class ProxyAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 async def create_proxy_agent(user_id: str | None = None) -> ProxyAgent:
     """

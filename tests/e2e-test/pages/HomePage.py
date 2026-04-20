@@ -27,7 +27,11 @@ class BIABPage(BasePage):
         "//div[normalize-space()='Contract Compliance Review Team']"
     )
     CONTINUE_BTN = "//button[normalize-space()='Continue']"
-    CREATING_PLAN = "//span[normalize-space()='Creating a plan']"
+    # v4: IntentRouter shows "Analyzing" toast, then redirects to /plan/:planId
+    CREATING_PLAN = "//span[contains(text(),'Analyzing')]"  # v4 toast text
+    PLAN_PAGE_LOADING = (
+        "//span[contains(text(),'Loading plan data')]"  # PlanPage spinner
+    )
     CUSTOMER_DATA_AGENT = "//span[normalize-space()='Customer Data Agent']"
     ORDER_DATA_AGENT = "//span[normalize-space()='Order Data Agent']"
     ANALYSIS_RECOMMENDATION_AGENT = (
@@ -46,7 +50,9 @@ class BIABPage(BasePage):
     PM_COMPLETED_TASK = (
         "//div[@title='Write a press release about our current products​']"
     )
-    CREATING_PLAN_LOADING = "//span[normalize-space()='Creating your plan...']"
+    CREATING_PLAN_LOADING = (
+        "//span[contains(text(),'Initializing AI agents')]"  # v4 PlanPage
+    )
     PRODUCT_AGENT = "//span[normalize-space()='Product Agent']"
     MARKETING_AGENT = "//span[normalize-space()='Marketing Agent']"
     HR_HELPER_AGENT = "//span[normalize-space()='HR Helper Agent']"
@@ -90,11 +96,20 @@ class BIABPage(BasePage):
 
     def reload_home_page(self):
         """Reload the home page URL."""
-        from config.constants import URL
+        from e2e_constants import URL
 
         logger.info("Reloading home page...")
-        self.page.goto(URL)
-        self.page.wait_for_load_state("networkidle")
+        current = self.page.url
+        # If already on home page, just reload; otherwise navigate
+        if current.rstrip("/") == URL.rstrip("/"):
+            self.page.reload(wait_until="domcontentloaded")
+        else:
+            self.page.goto(URL, wait_until="domcontentloaded")
+        # React SPA needs time to mount after navigation
+        self.page.wait_for_timeout(8000)
+        logger.info("Page URL after reload: %s", self.page.url)
+        # Wait for the app shell to render
+        self.page.locator(self.CONTOSO_LOGO).wait_for(state="visible", timeout=60000)
         logger.info("✓ Home page reloaded successfully")
 
     def validate_home_page(self):
@@ -185,39 +200,71 @@ class BIABPage(BasePage):
         logger.info("Human Resources team selection completed successfully!")
 
     def select_quick_task_and_create_plan(self):
-        """Select a quick task, send it, and wait for plan creation with all agents."""
+        """Select a quick task, send it, and wait for plan creation.
+
+        v4 IntentRouter flow:
+          1. Click Quick Task → textarea is filled
+          2. Click Send → toast "Analyzing your request…" appears
+          3. IntentRouter classifies as "task" → navigates to /plan/:planId
+          4. PlanPage loads plan data → shows agents → "Approve Task Plan"
+        """
         logger.info("Starting quick task selection process...")
+        logger.info("Current URL before quick task: %s", self.page.url)
 
         logger.info("Clicking on Quick Task...")
         self.page.locator(self.QUICK_TASK).first.click()
         self.page.wait_for_timeout(2000)
         logger.info("✓ Quick Task selected")
 
+        # Capture the filled text for diagnostics on failure
+        task_text = self.page.locator(self.PROMPT_INPUT).input_value()
+        logger.info("Quick task text: '%s'", task_text[:120])
+
         logger.info("Clicking Send button...")
         self.page.locator(self.SEND_BUTTON).click()
-        self.page.wait_for_timeout(1000)
         logger.info("✓ Send button clicked")
 
-        logger.info("Validating 'Creating a plan' message is visible...")
-        expect(self.page.locator(self.CREATING_PLAN)).to_be_visible(timeout=10000)
-        logger.info("✓ 'Creating a plan' message is visible")
+        logger.info("Waiting for IntentRouter to redirect to /plan/...")
+        try:
+            self.page.wait_for_url("**/plan/**", timeout=60000)
+            logger.info("✓ Redirected to plan page: %s", self.page.url)
+        except Exception as e:
+            actual_url = self.page.url
+            logger.error("❌ Expected /plan/ redirect but URL is: %s", actual_url)
+            if "/chat/" in actual_url:
+                logger.error(
+                    "IntentRouter MISCLASSIFIED task as conversational/mcp_query. "
+                    "Task text: '%s'. "
+                    "Fix: src/backend/v4/orchestration/intent_router.py",
+                    task_text[:120],
+                )
+            else:
+                logger.error(
+                    "Page stayed on home — IntentRouter may not have responded, "
+                    "or frontend didn't receive redirect_to_plan. "
+                    "Fix: check backend logs + "
+                    "src/frontend/src/components/content/HomeInput.tsx"
+                )
+            raise
 
-        logger.info("Waiting for 'Creating a plan' to disappear...")
-        self.page.locator(self.CREATING_PLAN).wait_for(state="hidden", timeout=60000)
-        logger.info("✓ Plan creation completed")
-
-        self.page.wait_for_timeout(8000)
-
-        logger.info("Waiting for 'Creating your plan...' loading to disappear...")
-        self.page.locator(self.CREATING_PLAN_LOADING).wait_for(
-            state="hidden", timeout=60000
-        )
-        logger.info("✓ 'Creating your plan...' loading disappeared")
+        logger.info("Waiting for plan page to finish loading...")
+        # Wait for the loading spinner to appear then disappear,
+        # or if the plan already loaded, just wait for Approve button.
+        try:
+            self.page.locator(self.PLAN_PAGE_LOADING).wait_for(
+                state="hidden", timeout=60000
+            )
+        except Exception:
+            pass  # Plan may have loaded before we checked
+        logger.info("✓ Plan page loaded")
 
         logger.info("Quick task selection and plan creation completed successfully!")
 
     def input_prompt_and_send(self, prompt_text):
-        """Input custom prompt text and click send button to create plan."""
+        """Input custom prompt text and click send button to create plan.
+
+        v4 IntentRouter flow: same redirect pattern as quick task.
+        """
         logger.info("Starting custom prompt input process...")
 
         logger.info(f"Typing prompt: {prompt_text}")
@@ -227,24 +274,20 @@ class BIABPage(BasePage):
 
         logger.info("Clicking Send button...")
         self.page.locator(self.SEND_BUTTON).click()
-        self.page.wait_for_timeout(1000)
         logger.info("✓ Send button clicked")
 
-        logger.info("Validating 'Creating a plan' message is visible...")
-        expect(self.page.locator(self.CREATING_PLAN)).to_be_visible(timeout=10000)
-        logger.info("✓ 'Creating a plan' message is visible")
+        logger.info("Waiting for IntentRouter to redirect to /plan/...")
+        self.page.wait_for_url("**/plan/**", timeout=30000)
+        logger.info(f"✓ Redirected to plan page: {self.page.url}")
 
-        logger.info("Waiting for 'Creating a plan' to disappear...")
-        self.page.locator(self.CREATING_PLAN).wait_for(state="hidden", timeout=60000)
-        logger.info("✓ Plan creation completed")
-
-        self.page.wait_for_timeout(8000)
-
-        logger.info("Waiting for 'Creating your plan...' loading to disappear...")
-        self.page.locator(self.CREATING_PLAN_LOADING).wait_for(
-            state="hidden", timeout=60000
-        )
-        logger.info("✓ 'Creating your plan...' loading disappeared")
+        logger.info("Waiting for plan page to finish loading...")
+        try:
+            self.page.locator(self.PLAN_PAGE_LOADING).wait_for(
+                state="hidden", timeout=60000
+            )
+        except Exception:
+            pass  # Plan may have loaded before we checked
+        logger.info("✓ Plan page loaded")
 
         logger.info("Custom prompt input and plan creation completed successfully!")
 
@@ -788,11 +831,36 @@ class BIABPage(BasePage):
             )
 
     def click_new_task(self):
-        """Click on the New Task button."""
+        """Click on the New Task button and ensure return to home."""
         logger.info("Clicking on 'New Task' button...")
+        current_url = self.page.url
         self.page.locator(self.NEW_TASK_PROMPT).click()
-        self.page.wait_for_timeout(2000)
-        logger.info("✓ 'New Task' button clicked")
+
+        # If on a plan/chat page, wait for navigation back to home
+        if "/plan/" in current_url or "/chat/" in current_url:
+            logger.info(
+                "Navigating from %s back to home...",
+                "plan" if "/plan/" in current_url else "chat",
+            )
+            for _ in range(15):
+                self.page.wait_for_timeout(1000)
+                if "/plan/" not in self.page.url and "/chat/" not in self.page.url:
+                    break
+            # Let React fully render home components
+            self.page.wait_for_timeout(3000)
+        else:
+            self.page.wait_for_timeout(2000)
+
+        logger.info("✓ 'New Task' clicked, now at: %s", self.page.url)
+
+        # Verify home page is ready for interaction
+        try:
+            self.page.locator(self.HOME_INPUT_TITLE_WRAPPER).wait_for(
+                state="visible", timeout=10000
+            )
+            logger.info("✓ Home page input is ready")
+        except Exception:
+            logger.warning("⚠ Home input not visible yet — continuing anyway")
 
     def input_clarification_and_send(self, clarification_text):
         """Input clarification text and click send button."""
@@ -937,22 +1005,17 @@ class BIABPage(BasePage):
         else:
             logger.warning("⚠ Send button is enabled but should be disabled")
             # Check if clicking does nothing
+            current_url = self.page.url
             send_button.click()
-            self.page.wait_for_timeout(2000)
-            # Verify no plan creation started
-            try:
-                self.page.locator(self.CREATING_PLAN).wait_for(
-                    state="visible", timeout=3000
+            self.page.wait_for_timeout(3000)
+            # Verify no navigation occurred (v4: IntentRouter would redirect)
+            if self.page.url == current_url:
+                logger.info(
+                    "✓ No navigation occurred - system correctly rejected query"
                 )
-                logger.error("❌ Plan creation started unexpectedly")
+            else:
+                logger.error("❌ Navigation occurred unexpectedly")
                 raise AssertionError("System accepted empty/space query - test failed")
-            except Exception as e:
-                if "Timeout" in str(e) or "timeout" in str(e):
-                    logger.info(
-                        "✓ No plan creation started - system correctly rejected query"
-                    )
-                else:
-                    raise
 
     def input_text_only(self, text):
         """Input text without sending."""

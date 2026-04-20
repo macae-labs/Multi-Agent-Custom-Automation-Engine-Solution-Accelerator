@@ -31,20 +31,7 @@ def format_mcp_response(
         response_parts.append(f"**{formatted_key}:** {value}")
 
     response_parts.append("")  # Empty line
-
-    # Add agent summary
     response_parts.append(f"AGENT SUMMARY: {agent_summary}")
-
-    # Add standard instructions
-    standard_instructions = (
-        "Instructions: returning the output of this function call verbatim "
-        "to the user in markdown. Then write AGENT SUMMARY: and then include "
-        "a summary of what you did."
-    )
-    response_parts.append(standard_instructions)
-
-    if additional_instructions:
-        response_parts.append(additional_instructions)
 
     return "\n".join(response_parts)
 
@@ -86,10 +73,7 @@ def format_success_response(
         summary: Optional custom summary
 
     Returns:
-        Formatted success response
+        Formatted success response - returns the actual result directly
     """
-    auto_summary = summary or f"Successfully completed {action.lower()}"
-
-    return format_mcp_response(
-        title=f"{action} Completed", content=details, agent_summary=auto_summary
-    )
+    # Return the actual result directly, not fancy markdown
+    return details.get("result", f"Action completed successfully: {action}")

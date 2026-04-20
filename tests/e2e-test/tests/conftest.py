@@ -6,13 +6,80 @@ import os
 import io
 import logging
 import atexit
+import subprocess
+import shutil
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-from config.constants import URL
+
+# ── Virtual display helper ───────────────────────────────────────────
+_xvfb_proc = None  # module-level so atexit can clean up
+
+
+def _has_real_display() -> bool:
+    """Return True if DISPLAY points to a real X server (not 'dummy')."""
+    display = os.environ.get("DISPLAY", "")
+    return bool(display) and display != "dummy" and display.startswith(":")
+
+
+def _ensure_virtual_display() -> bool:
+    """Start Xvfb on :99 if no real display is available.
+
+    Returns True if a usable DISPLAY is now set (real or virtual).
+    """
+    global _xvfb_proc
+    if _has_real_display():
+        return True
+
+    if _xvfb_proc is not None:  # already started by us
+        return True
+
+    if not shutil.which("Xvfb"):
+        logging.warning("Xvfb not found — falling back to headless mode")
+        return False
+
+    try:
+        import time
+
+        _xvfb_proc = subprocess.Popen(
+            ["Xvfb", ":99", "-screen", "0", "1280x720x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        os.environ["DISPLAY"] = ":99"
+        # Xvfb needs a moment to bind the display socket before clients connect
+        time.sleep(1)
+        # Verify it's still running (didn't crash on startup, e.g. :99 in use)
+        if _xvfb_proc.poll() is not None:
+            logging.warning("Xvfb exited immediately (rc=%s)", _xvfb_proc.returncode)
+            _xvfb_proc = None
+            return False
+        logging.info("Started Xvfb on :99 (pid %s)", _xvfb_proc.pid)
+        return True
+    except OSError as exc:
+        logging.warning("Failed to start Xvfb: %s — falling back to headless", exc)
+        return False
+
+
+def _stop_virtual_display():
+    global _xvfb_proc
+    if _xvfb_proc is not None:
+        _xvfb_proc.terminate()
+        _xvfb_proc.wait(timeout=5)
+        _xvfb_proc = None
+
+
+atexit.register(_stop_virtual_display)
+
+# Make the e2e-test package importable when pytest is launched from repo root.
+E2E_ROOT = Path(__file__).resolve().parents[1]
+if str(E2E_ROOT) not in sys.path:
+    sys.path.insert(0, str(E2E_ROOT))
 
 # Create screenshots directory if it doesn't exist
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -80,18 +147,40 @@ def subtests(request):
 
 @pytest.fixture(scope="session")
 def login_logout():
-    """Perform login and browser close once in a session"""
+    """Perform login and browser close once in a session.
+
+    Display strategy (no code changes needed between local / CI / container):
+      HEADED=0 (default) → headless, works everywhere.
+      HEADED=1           → tries real DISPLAY, falls back to Xvfb, then headless.
+    """
+    # ── Resolve display BEFORE sync_playwright() spawns its Node server,
+    #    because the child process inherits DISPLAY at fork time.
+    headed = os.environ.get("HEADED", "0") == "1"
+    if headed:
+        if not _ensure_virtual_display():
+            logging.warning(
+                "HEADED=1 requested but no display available — running headless"
+            )
+            headed = False
+
     with sync_playwright() as playwright_instance:
         browser = playwright_instance.chromium.launch(
-            headless=False, args=["--start-maximized"]
+            headless=not headed,
+            args=["--start-maximized", "--no-sandbox"] if headed else ["--no-sandbox"],
         )
-        context = browser.new_context(no_viewport=True)
+        context = browser.new_context(
+            no_viewport=True if headed else False,
+            viewport={"width": 1280, "height": 720} if not headed else None,
+        )
         context.set_default_timeout(150000)
         page = context.new_page()
-        # Navigate to the login URL
+        # Navigate to the app URL (import here to avoid stale .pyc cache)
+        from e2e_constants import URL
+
+        logging.info("Fixture navigating to: %s", URL)
         page.goto(URL, wait_until="domcontentloaded")
-        # Wait for the login form to appear
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(8000)
+        logging.info("Fixture page URL after load: %s", page.url)
 
         yield page
         # Perform close the browser
@@ -115,7 +204,7 @@ def pytest_runtest_setup(item):
     log_streams[item.nodeid] = (handler, stream)
 
 
-@pytest.hookimpl(tryfirst=True)
+@pytest.hookimpl(tryfirst=True, optionalhook=True)
 def pytest_html_report_title(report):
     """Set custom HTML report title"""
     report.title = "MACAE-v3_test_Automation_Report"

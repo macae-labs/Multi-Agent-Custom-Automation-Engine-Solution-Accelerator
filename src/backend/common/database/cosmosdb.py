@@ -41,6 +41,7 @@ class CosmosDBClient(DatabaseBase):
         container_name: str,
         session_id: str = "",
         user_id: str = "",
+        tenant_id: str = "",
     ):
         self.endpoint = endpoint
         self.credential = credential
@@ -48,6 +49,7 @@ class CosmosDBClient(DatabaseBase):
         self.container_name = container_name
         self.session_id = session_id
         self.user_id = user_id
+        self.tenant_id = tenant_id
 
         self.logger = logging.getLogger(__name__)
         self.client = None

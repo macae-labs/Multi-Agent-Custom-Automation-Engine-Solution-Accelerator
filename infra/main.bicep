@@ -72,7 +72,7 @@ param gptReasoningModelName string = 'o4-mini'
 param gptReasoningModelVersion string = '2025-04-16'
 
 @description('Optional. Version of the Azure OpenAI service to deploy. Defaults to 2024-12-01-preview.')
-param azureopenaiVersion string = '2024-12-01-preview'
+param azureopenaiVersion string = '2025-01-01-preview'
 
 @description('Optional. Version of the Azure AI Agent API version. Defaults to 2025-01-01-preview.')
 param azureAiAgentAPIVersion string = '2025-01-01-preview'
@@ -1041,6 +1041,7 @@ var aiFoundryAiProjectPrincipalId = useExistingAiFoundryAiProject
 var cosmosDbResourceName = 'cosmos-${solutionSuffix}'
 var cosmosDbDatabaseName = 'macae'
 var cosmosDbDatabaseMemoryContainerName = 'memory'
+var cosmosDbMcpConnectionsContainerName = 'mcp_connections'
 
 module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
   name: take('avm.res.document-db.database-account.${cosmosDbResourceName}', 64)
@@ -1061,6 +1062,15 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
             ]
             kind: 'Hash'
             version: 2
+          }
+          {
+            name: cosmosDbMcpConnectionsContainerName
+            paths: [
+              '/pk'
+            ]
+            kind: 'Hash'
+            version: 2
+            defaultTtl: -1
           }
         ]
       }
@@ -1253,6 +1263,10 @@ module containerApp 'br/public:avm/res/app/container-app:0.18.1' = {
           {
             name: 'COSMOSDB_CONTAINER'
             value: cosmosDbDatabaseMemoryContainerName
+          }
+          {
+            name: 'COSMOSDB_MCP_CONNECTIONS_CONTAINER'
+            value: cosmosDbMcpConnectionsContainerName
           }
           {
             name: 'AZURE_OPENAI_ENDPOINT'
@@ -1847,6 +1861,7 @@ output AZURE_AI_SEARCH_NAME string = searchService.name
 output COSMOSDB_ENDPOINT string = 'https://${cosmosDbResourceName}.documents.azure.com:443/'
 output COSMOSDB_DATABASE string = cosmosDbDatabaseName
 output COSMOSDB_CONTAINER string = cosmosDbDatabaseMemoryContainerName
+output COSMOSDB_MCP_CONNECTIONS_CONTAINER string = cosmosDbMcpConnectionsContainerName
 output AZURE_OPENAI_ENDPOINT string = 'https://${aiFoundryAiServicesResourceName}.openai.azure.com/'
 output AZURE_OPENAI_MODEL_NAME string = aiFoundryAiServicesModelDeployment.name
 output AZURE_OPENAI_DEPLOYMENT_NAME string = aiFoundryAiServicesModelDeployment.name

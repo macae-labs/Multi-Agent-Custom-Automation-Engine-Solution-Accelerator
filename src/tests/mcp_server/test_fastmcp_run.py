@@ -4,6 +4,10 @@ Test script to verify that mcp_server.py can be used with fastmcp run functional
 This simulates what `fastmcp run mcp_server.py -t streamable-http -l DEBUG` would do.
 """
 
+import pytest
+
+fastmcp = pytest.importorskip("fastmcp")
+
 import sys
 from pathlib import Path
 

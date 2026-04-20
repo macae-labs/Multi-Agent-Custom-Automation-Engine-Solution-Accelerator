@@ -10,6 +10,7 @@ import CoralShellColumn from "../coral/components/Layout/CoralShellColumn";
 import CoralShellRow from "../coral/components/Layout/CoralShellRow";
 import Content from "../coral/components/Content/Content";
 import ContentToolbar from "../coral/components/Content/ContentToolbar";
+import InspectorLink from "@/components/inspector/InspectorLink";
 import {
     useInlineToaster,
 } from "../components/toast/InlineToaster";
@@ -355,6 +356,9 @@ const PlanPage: React.FC = () => {
                 setShowProcessingPlanSpinner(false);
                 setAgentMessages(prev => [...prev, agentMessageData]);
                 setSelectedTeam(planData?.team || null);
+                // Re-enable input so the user can ask follow-up questions or start
+                // a new task directly from PlanPage without navigating away.
+                setSubmittingChatDisableInput(false);
                 scrollToBottom();
                 // Persist the agent message
                 const is_final = true;
@@ -521,7 +525,7 @@ const PlanPage: React.FC = () => {
                 webSocketService.disconnect();
             };
         }
-    }, [planId, loading, continueWithWebsocketFlow]);
+    }, [planId, continueWithWebsocketFlow]);
 
     // Create loadPlanData function with useCallback to memoize it
     const loadPlanData = useCallback(
@@ -544,6 +548,9 @@ const PlanPage: React.FC = () => {
                 }
                 if (planResult?.plan?.overall_status !== PlanStatus.COMPLETED) {
                     setContinueWithWebsocketFlow(true);
+                } else {
+                    // Plan already completed — enable input for follow-up messages.
+                    setSubmittingChatDisableInput(false);
                 }
                 if (planResult?.messages) {
                     setAgentMessages(planResult.messages);
@@ -625,63 +632,153 @@ const PlanPage: React.FC = () => {
             setProcessingApproval(false);
         }
     }, [planApprovalRequest, showToast, planData?.plan?.id, dismissToast, navigate]);
-    // Chat submission handler - updated for v4 backend compatibility
-
+    // ── Unified chat submission handler ──────────────────────────────────────
+    // Two modes share the same input:
+    //   1. Clarification mode  — when a USER_CLARIFICATION_REQUEST is pending.
+    //      Sends the answer directly to the plan via /user_clarification.
+    //   2. Unified message mode — when no clarification is pending.
+    //      Routes through /chat/message/stream (intent router):
+    //        • CONVERSATIONAL / MCP_QUERY → response rendered inline as agent msg.
+    //        • TASK (plan_created event)   → navigates to the new plan.
     const handleOnchatSubmit = useCallback(
         async (chatInput: string) => {
             if (!chatInput.trim()) {
-                showToast("Please enter a clarification", "error");
+                showToast("Please enter a message", "error");
                 return;
             }
             setInput("");
 
-            if (!planData?.plan) return;
+            // ── Mode 1: Clarification ────────────────────────────────────────
+            if (clarificationMessage) {
+                if (!planData?.plan) return;
+                setSubmittingChatDisableInput(true);
+                const toastId = showToast("Submitting clarification", "progress");
+
+                try {
+                    await PlanDataService.submitClarification({
+                        request_id: clarificationMessage.request_id || "",
+                        answer: chatInput,
+                        plan_id: planData.plan.id,
+                        m_plan_id: planApprovalRequest?.id || "",
+                    });
+
+                    dismissToast(toastId);
+                    showToast("Clarification submitted successfully", "success");
+
+                    const humanMsg: AgentMessageData = {
+                        agent: 'human',
+                        agent_type: AgentMessageType.HUMAN_AGENT,
+                        timestamp: Date.now(),
+                        steps: [],
+                        next_steps: [],
+                        content: chatInput,
+                        raw_data: chatInput,
+                    } as AgentMessageData;
+
+                    setAgentMessages(prev => [...prev, humanMsg]);
+                    setClarificationMessage(null);
+                    setSubmittingChatDisableInput(true);
+                    setShowProcessingPlanSpinner(true);
+                    scrollToBottom();
+                } catch (error: any) {
+                    setShowProcessingPlanSpinner(false);
+                    dismissToast(toastId);
+                    setSubmittingChatDisableInput(false);
+                    showToast("Failed to submit clarification", "error");
+                }
+                return;
+            }
+
+            // ── Mode 2: Unified SSE stream (conversational OR new task) ──────
+            // The session_id from the current plan keeps history continuous
+            // across chat turns and plan executions.
+            const sessionId = planData?.plan?.session_id || "";
+
+            // Show the user's message immediately in the agent messages list.
+            const userMsg: AgentMessageData = {
+                agent: 'human',
+                agent_type: AgentMessageType.HUMAN_AGENT,
+                timestamp: Date.now(),
+                steps: [],
+                next_steps: [],
+                content: chatInput,
+                raw_data: chatInput,
+            } as AgentMessageData;
+            setAgentMessages(prev => [...prev, userMsg]);
             setSubmittingChatDisableInput(true);
-            let id = showToast("Submitting clarification", "progress");
+            setShowProcessingPlanSpinner(true);
+
+            // Placeholder for the streaming assistant response.
+            const assistantPlaceholder: AgentMessageData = {
+                agent: AgentType.GROUP_CHAT_MANAGER,
+                agent_type: AgentMessageType.AI_AGENT,
+                timestamp: Date.now() + 1,
+                steps: [],
+                next_steps: [],
+                content: '',
+                raw_data: '',
+            } as AgentMessageData;
+            setAgentMessages(prev => [...prev, assistantPlaceholder]);
+            scrollToBottom();
+
+            let accumulated = '';
 
             try {
-                // Use legacy method for non-v4 backends
-                const response = await PlanDataService.submitClarification({
-                    request_id: clarificationMessage?.request_id || "",
-                    answer: chatInput,
-                    plan_id: planData?.plan.id,
-                    m_plan_id: planApprovalRequest?.id || ""
-                });
-
-                console.log("Clarification submitted successfully:", response);
-                setInput("");
-                dismissToast(id);
-                showToast("Clarification submitted successfully", "success");
-
-                const agentMessageData = {
-                    agent: 'human',
-                    agent_type: AgentMessageType.HUMAN_AGENT,
-                    timestamp: Date.now(),
-                    steps: [],   // intentionally always empty
-                    next_steps: [],  // intentionally always empty
-                    content: chatInput || '',
-                    raw_data: chatInput || '',
-                } as AgentMessageData;
-
-                setAgentMessages(prev => [...prev, agentMessageData]);
-                setSubmittingChatDisableInput(true);
-                setShowProcessingPlanSpinner(true);
-                scrollToBottom();
-
+                await apiService.sendChatMessageStream(
+                    { message: chatInput, session_id: sessionId },
+                    {
+                        onToken: (token) => {
+                            accumulated += token;
+                            // Update the last message (the assistant placeholder) in place.
+                            setAgentMessages(prev =>
+                                prev.map((m, idx) =>
+                                    idx === prev.length - 1
+                                        ? { ...m, content: accumulated }
+                                        : m
+                                )
+                            );
+                            scrollToBottom();
+                        },
+                        onIntent: () => { /* intent label — no UI action needed */ },
+                        onDone: () => {
+                            setShowProcessingPlanSpinner(false);
+                            setSubmittingChatDisableInput(false);
+                        },
+                        onPlanCreated: (newPlanId) => {
+                            // Intent router detected a task — navigate to the new plan.
+                            // The session_id is shared so history remains continuous.
+                            navigate(`/plan/${newPlanId}`);
+                        },
+                        onRedirect: (newPlanId) => {
+                            // Legacy fallback — same behaviour.
+                            navigate(`/plan/${newPlanId}`);
+                        },
+                        onToolActivity: () => { /* tool indicators already shown via streaming */ },
+                        onError: (err) => {
+                            setShowProcessingPlanSpinner(false);
+                            setSubmittingChatDisableInput(false);
+                            showToast(err || "Failed to get response", "error");
+                            // Remove the empty placeholder on error.
+                            setAgentMessages(prev => prev.filter((_, idx) => idx !== prev.length - 1));
+                        },
+                    }
+                );
             } catch (error: any) {
                 setShowProcessingPlanSpinner(false);
-                dismissToast(id);
                 setSubmittingChatDisableInput(false);
-                showToast(
-                    "Failed to submit clarification",
-                    "error"
-                );
-
-            } finally {
-
+                showToast("Failed to send message", "error");
+                setAgentMessages(prev => prev.filter((_, idx) => idx !== prev.length - 1));
             }
         },
-        [planData?.plan, showToast, clarificationMessage?.request_id, planApprovalRequest?.id, dismissToast, scrollToBottom]
+        [
+            clarificationMessage,
+            planData,
+            planApprovalRequest,
+            showToast,
+            dismissToast,
+            scrollToBottom,
+            navigate,
+        ]
     );
 
 
@@ -780,9 +877,7 @@ const PlanPage: React.FC = () => {
                             <ContentToolbar
                                 panelTitle="Multi-Agent Planner"
                             >
-                                {/* <PanelRightToggles>
-                                    <TaskListSquareLtr />
-                                </PanelRightToggles> */}
+                                <InspectorLink />
                             </ContentToolbar>
 
                             <PlanChat

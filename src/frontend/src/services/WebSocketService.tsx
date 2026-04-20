@@ -12,17 +12,24 @@ class WebSocketService {
     private planSubscriptions: Set<string> = new Set();
     private reconnectTimer: NodeJS.Timeout | null = null;
     private isConnecting = false;
+    private connectionPromise: Promise<void> | null = null;
 
 
     private buildSocketUrl(processId?: string, planId?: string): string {
         const baseWsUrl = getApiUrl() || 'ws://localhost:8000';
         // Trim and remove trailing slashes
         let base = (baseWsUrl || '').trim().replace(/\/+$/, '');
-        // Normalize protocol: http -> ws, https -> wss
-        base = base.replace(/^http:\/\//i, 'ws://')
-            .replace(/^https:\/\//i, 'wss://');
-
-        // Leave ws/wss as-is; anything else is assumed already correct
+        // Resolve relative API URL (e.g. "/api") against current origin.
+        if (base.startsWith('/')) {
+            const wsOrigin = window.location.origin
+                .replace(/^http:\/\//i, 'ws://')
+                .replace(/^https:\/\//i, 'wss://');
+            base = `${wsOrigin}${base}`;
+        } else {
+            // Normalize protocol: http -> ws, https -> wss
+            base = base.replace(/^http:\/\//i, 'ws://')
+                .replace(/^https:\/\//i, 'wss://');
+        }
 
         // Decide path addition
         let userId = getUserId();
@@ -33,9 +40,16 @@ class WebSocketService {
         return url;
     }
     connect(planId: string, processId?: string): Promise<void> {
-        return new Promise((resolve, reject) => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            return Promise.resolve();
+        }
+        if (this.connectionPromise) {
+            return this.connectionPromise;
+        }
+
+        this.connectionPromise = new Promise((resolve, reject) => {
             if (this.isConnecting) {
-                reject(new Error('Connection already in progress'));
+                resolve();
                 return;
             }
             if (this.ws?.readyState === WebSocket.OPEN) {
@@ -49,6 +63,7 @@ class WebSocketService {
 
                 this.ws.onopen = () => {
                     this.isConnecting = false;
+                    this.connectionPromise = null;
                     this.reconnectAttempts = 0;
                     if (this.reconnectTimer) {
                         clearTimeout(this.reconnectTimer);
@@ -69,6 +84,7 @@ class WebSocketService {
 
                 this.ws.onclose = (event) => {
                     this.isConnecting = false;
+                    this.connectionPromise = null;
                     this.ws = null;
                     this.emit('connection_status', { connected: false });
                     if (this.reconnectAttempts < this.maxReconnectAttempts && event.code !== 1000) {
@@ -78,6 +94,7 @@ class WebSocketService {
 
                 this.ws.onerror = () => {
                     this.isConnecting = false;
+                    this.connectionPromise = null;
                     if (this.reconnectAttempts === 0) {
                         reject(new Error('WebSocket connection failed'));
                     }
@@ -85,9 +102,11 @@ class WebSocketService {
                 };
             } catch (error) {
                 this.isConnecting = false;
+                this.connectionPromise = null;
                 reject(error);
             }
         });
+        return this.connectionPromise;
     }
 
     disconnect(): void {
@@ -103,6 +122,7 @@ class WebSocketService {
         }
         this.planSubscriptions.clear();
         this.isConnecting = false;
+        this.connectionPromise = null;
     }
 
 

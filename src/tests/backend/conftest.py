@@ -75,6 +75,7 @@ def _setup_agent_framework_mock():
         # Sub-module: agent_framework.azure
         mock_af_azure = ModuleType('agent_framework.azure')
         mock_af_azure.AzureOpenAIChatClient = type('AzureOpenAIChatClient', (), {})
+        mock_af_azure.AzureOpenAIResponsesClient = type('AzureOpenAIResponsesClient', (), {})
         mock_af.azure = mock_af_azure
 
         # Sub-module: agent_framework._workflows._magentic

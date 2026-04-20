@@ -9,6 +9,7 @@ class PlanStatus(str, Enum):
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
+    PENDING_APPROVAL = "pending_approval"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

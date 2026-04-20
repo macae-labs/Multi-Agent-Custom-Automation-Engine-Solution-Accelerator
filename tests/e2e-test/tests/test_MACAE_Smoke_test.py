@@ -2,11 +2,18 @@
 
 import logging
 import time
+import sys
+from pathlib import Path
 
 import pytest
 
+# Make the e2e-test package importable when pytest is launched from repo root.
+E2E_ROOT = Path(__file__).resolve().parents[1]
+if str(E2E_ROOT) not in sys.path:
+    sys.path.insert(0, str(E2E_ROOT))
+
 from pages.HomePage import BIABPage
-from config.constants import HR_CLARIFICATION_TEXT, PROMPT_QUESTION1, RAI_PROMPT
+from e2e_constants import HR_CLARIFICATION_TEXT, PROMPT_QUESTION1, RAI_PROMPT
 
 logger = logging.getLogger(__name__)
 

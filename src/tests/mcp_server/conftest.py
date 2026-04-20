@@ -6,9 +6,15 @@ import pytest
 import sys
 from pathlib import Path
 
-# Add the MCP server to path
-mcp_server_path = Path(__file__).parent.parent.parent / "backend" / "v4" / "mcp_server"
-sys.path.insert(0, str(mcp_server_path))
+# Repo root → needed for `from src.mcp_server.core.factory import …` in test files
+repo_root = Path(__file__).resolve().parents[3]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+# MCP server package dir → needed for `from core.factory import …` in fixtures
+mcp_server_path = repo_root / "src" / "mcp_server"
+if str(mcp_server_path) not in sys.path:
+    sys.path.insert(0, str(mcp_server_path))
 
 
 @pytest.fixture

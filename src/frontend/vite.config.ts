@@ -19,7 +19,26 @@ export default defineConfig({
     server: {
         port: 3001,
         open: true,
-        host: true
+        host: true,
+        proxy: {
+            '/api': {
+                target: 'http://localhost:8000',
+                changeOrigin: true,
+                secure: false,
+                ws: true,
+            },
+            '/config': {
+                target: 'http://localhost:8000',
+                changeOrigin: true,
+                secure: false,
+            },
+            '/inspector': {
+                target: 'http://localhost:6274',
+                changeOrigin: true,
+                secure: false,
+                rewrite: (path: string) => path.replace(/^\/inspector/, ''),
+            },
+        },
     },
 
     // Build configuration
@@ -47,11 +66,6 @@ export default defineConfig({
 
     // Environment variables configuration
     envPrefix: 'REACT_APP_',
-
-    // Define global constants
-    define: {
-        'process.env': process.env,
-    },
 
     // Optimization
     optimizeDeps: {

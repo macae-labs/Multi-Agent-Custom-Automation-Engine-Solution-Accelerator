@@ -101,4 +101,31 @@ export const apiClient = {
     delete: (url: string) => fetchWithAuth(url, 'DELETE'),
     upload: (url: string, formData: FormData) => fetchWithAuth(url, 'POST', formData),
     login: (url: string, body?: any) => fetchWithoutAuth(url, 'POST', body), // For login without auth
+
+    /**
+     * Raw streaming POST — returns the Response object for SSE consumption.
+     * Does NOT parse JSON; caller reads response.body as a ReadableStream.
+     */
+    stream: async (url: string, body?: any): Promise<Response> => {
+        const apiUrl = getApiUrl();
+        const authHeaders = headerBuilder();
+        const headers: Record<string, string> = {
+            ...authHeaders,
+            'Content-Type': 'application/json',
+        };
+        const token = localStorage.getItem('token');
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await fetch(`${apiUrl}${url}`, {
+            method: 'POST',
+            headers,
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || 'Stream request failed');
+        }
+        return response;
+    },
 };

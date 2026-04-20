@@ -3,7 +3,10 @@ Tests for the MCP tool factory.
 """
 
 import pytest
-from src.mcp_server.core.factory import MCPToolFactory, Domain, MCPToolBase
+
+fastmcp = pytest.importorskip("fastmcp")
+
+from src.mcp_server.core.factory import MCPToolFactory, Domain, MCPToolBase  # noqa: E402
 
 
 class TestMCPToolFactory:

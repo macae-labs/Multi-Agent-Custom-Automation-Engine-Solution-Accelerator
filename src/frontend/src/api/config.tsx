@@ -16,7 +16,7 @@ export let USER_ID: string | null = null;
 export let USER_INFO: UserInfo | null = null;
 
 export let config = {
-    API_URL: "http://localhost:8000/api",
+    API_URL: "/api",
     ENABLE_AUTH: false,
 };
 
@@ -113,18 +113,23 @@ export function getUserId(): string {
     return userId;
 }
 
+export function getUserName(): string {
+    const info = getUserInfoGlobal();
+    return info?.user_email || info?.user_first_last_name || "dev-user@local";
+}
+
 /**
  * Build headers with authentication information
  * @param headers Optional additional headers to merge
  * @returns Combined headers object with authentication
  */
 export function headerBuilder(headers?: Record<string, string>): Record<string, string> {
-    let userId = getUserId();
-    //console.log('headerBuilder: Using user ID:', userId);
-    let defaultHeaders = {
-        "x-ms-client-principal-id": String(userId) || "",  // Custom header
+    const userId = getUserId();
+    const userName = getUserName();
+    const defaultHeaders: Record<string, string> = {
+        "x-ms-client-principal-id": String(userId) || "",
+        "x-ms-client-principal-name": userName,
     };
-    //console.log('headerBuilder: Created headers:', defaultHeaders);
     return {
         ...defaultHeaders,
         ...(headers ? headers : {})
