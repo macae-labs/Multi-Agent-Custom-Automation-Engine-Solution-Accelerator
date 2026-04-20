@@ -341,7 +341,8 @@ class DirectStdioSession:
             self._init_error = e
             logger.error(
                 "[DirectStdio] Background task failed for '%s': %s",
-                self.server_name, e,
+                self.server_name,
+                e,
             )
         finally:
             self._initialized = False
@@ -391,11 +392,13 @@ class DirectStdioSession:
         result = await self._session.list_tools()
         tools = []
         for t in result.tools:
-            tools.append({
-                "name": t.name,
-                "description": t.description or "",
-                "inputSchema": t.inputSchema if t.inputSchema else {},
-            })
+            tools.append(
+                {
+                    "name": t.name,
+                    "description": t.description or "",
+                    "inputSchema": t.inputSchema if t.inputSchema else {},
+                }
+            )
         return tools
 
     async def call_tool(
@@ -407,9 +410,11 @@ class DirectStdioSession:
         # Convert MCP SDK content items to dicts via model_dump()
         content = []
         for item in result.content:
-            d = item.model_dump() if hasattr(item, "model_dump") else {
-                "type": "unknown", "data": str(item)
-            }
+            d = (
+                item.model_dump()
+                if hasattr(item, "model_dump")
+                else {"type": "unknown", "data": str(item)}
+            )
             content.append(d)
         return {"content": content}
 
@@ -431,6 +436,7 @@ class DirectStdioSession:
         if not self._session:
             raise RuntimeError("Not connected")
         from pydantic import AnyUrl
+
         result = await self._session.read_resource(AnyUrl(uri))
         contents = []
         for item in result.contents:
@@ -462,7 +468,8 @@ class DirectStdioSession:
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
                 logger.debug(
                     "[DirectStdio] Background task cleanup for '%s': %s",
-                    self.server_name, e,
+                    self.server_name,
+                    e,
                 )
                 self._bg_task.cancel()
         self._session = None
@@ -1019,8 +1026,6 @@ class InspectorService(MCPToolBase):
         proxied_sessions = self._proxied_sessions
         registry = self._registry
         inspector_config = self._inspector_config
-        proxy_url = self._proxy_url
-        get_proxy_token = self._get_proxy_token
 
         def _all_sessions(user_id: str = "") -> Dict[str, Any]:
             """Return sessions for *user_id*, keyed by server_name.
@@ -1340,7 +1345,9 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def read_external_resource(server_name: str, resource_uri: str, user_id: str = "") -> str:
+        async def read_external_resource(
+            server_name: str, resource_uri: str, user_id: str = ""
+        ) -> str:
             """
             Read a resource from a connected external MCP server.
 
@@ -1458,10 +1465,12 @@ class InspectorService(MCPToolBase):
                 cfg_servers = inspector_config.get("mcpServers", {})
                 # Build set of connected server names for the current user scope
                 all_connected = {
-                    sname for (uid, sname) in sessions.keys()
+                    sname
+                    for (uid, sname) in sessions.keys()
                     if not user_id or uid == user_id
                 } | {
-                    sname for (uid, sname) in proxied_sessions.keys()
+                    sname
+                    for (uid, sname) in proxied_sessions.keys()
                     if not user_id or uid == user_id
                 }
                 for sname, sdef in cfg_servers.items():
@@ -1522,10 +1531,12 @@ class InspectorService(MCPToolBase):
                 parts = []
                 if total_active:
                     all_names = [
-                        sname for (uid, sname) in sessions.keys()
+                        sname
+                        for (uid, sname) in sessions.keys()
                         if not user_id or uid == user_id
                     ] + [
-                        sname for (uid, sname) in proxied_sessions.keys()
+                        sname
+                        for (uid, sname) in proxied_sessions.keys()
                         if not user_id or uid == user_id
                     ]
                     parts.append(
@@ -1662,9 +1673,8 @@ class InspectorService(MCPToolBase):
                     if secret_ref:
                         # TODO: #897 resolve from Key Vault
                         logger.info(
-                            f"'{server_name}' secret_ref="
-                            f"'{secret_ref}' — KV resolution "
-                            f"not yet implemented"
+                            f"'{server_name}' has secret_ref configured — "
+                            f"KV resolution not yet implemented"
                         )
                         extra_headers["X-MCP-Auth-Ref"] = secret_ref
 
@@ -1961,9 +1971,7 @@ class InspectorService(MCPToolBase):
             except Exception as e:
                 return format_error_response(
                     error_message=str(e),
-                    context=(
-                        f"connecting to stdio server '{server_name}'"
-                    ),
+                    context=(f"connecting to stdio server '{server_name}'"),
                 )
 
     @property

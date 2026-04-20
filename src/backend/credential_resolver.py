@@ -38,9 +38,7 @@ class CredentialResolver:
 
         return self._kv_client
 
-    async def resolve_by_secret_ref(
-        self, secret_ref: str
-    ) -> Optional[Dict[str, str]]:
+    async def resolve_by_secret_ref(self, secret_ref: str) -> Optional[Dict[str, str]]:
         """Resolve credentials directly from a Key Vault secret URI.
 
         Args:

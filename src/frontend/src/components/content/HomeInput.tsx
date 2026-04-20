@@ -100,7 +100,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
         // Send through streaming endpoint — same FoundryAgent from message 1.
         // For task intent, the stream returns a redirect event.
         // For conversational/mcp, it streams the real response.
-        const sessionId = `chat_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const randomValues = crypto.getRandomValues(new Uint32Array(1));
+        const sessionId = `chat_${Date.now()}_${randomValues[0]}`;
         const userMessage = input.trim();
 
         setInput("");
