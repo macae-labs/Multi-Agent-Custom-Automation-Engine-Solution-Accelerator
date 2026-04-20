@@ -108,8 +108,6 @@ class FoundryAgentTemplate(AzureAgentBase):
 
     async def _collect_tools(self) -> List:
         """Collect tool definitions for Agent (MCP path only)."""
-        from agent_framework import FunctionTool
-
         tools: List = []
 
         if self.enable_code_interpreter:

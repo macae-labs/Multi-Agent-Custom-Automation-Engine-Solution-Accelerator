@@ -28,7 +28,7 @@ NOTE on MCP pre-warm — why we ping before returning a cached agent:
 
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ async def _ensure_mcp_warm(agent: Any) -> None:
         # _ensure_connected already tried reconnect; if it still fails the
         # invoke will handle it.  Log and move on so we don't block the request.
         logger.warning("MCP pre-warm failed (invoke will retry): %s", e)
+
 
 # Agents idle longer than this are evicted (reference dropped, GC handles rest).
 _TTL_SECONDS: int = 3600  # 1 hour
@@ -116,9 +117,7 @@ async def _safe_close(agent: Any, key: Tuple[str, str, str]) -> None:
         logger.warning("Error closing agent session=%s: %s", key[2][:12], e)
 
 
-async def get_or_create(
-    tenant_id: str, user_id: str, session_id: str, factory
-) -> Any:
+async def get_or_create(tenant_id: str, user_id: str, session_id: str, factory) -> Any:
     """Get cached agent or create via factory (async callable returning opened agent).
 
     On each call, stale entries are evicted first so the pool size stays bounded.
@@ -152,9 +151,7 @@ async def get_or_create(
     return agent
 
 
-async def evict_session(
-    tenant_id: str, user_id: str, session_id: str
-) -> None:
+async def evict_session(tenant_id: str, user_id: str, session_id: str) -> None:
     """Explicitly evict and close the agent for a specific session.
 
     Call this when a chat session ends so MCP connections are released
