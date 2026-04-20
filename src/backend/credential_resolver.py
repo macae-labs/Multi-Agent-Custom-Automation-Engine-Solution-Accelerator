@@ -70,7 +70,7 @@ class CredentialResolver:
 
             secret = await kv_client.get_secret(secret_name)
             if secret.value is None:
-                logging.warning(f"Secret '{secret_name}' has no value")
+                logging.warning("Secret has no value")
                 return None
 
             # Value may be JSON dict or a plain token string
@@ -81,11 +81,11 @@ class CredentialResolver:
                 credentials = {"token": secret.value}
 
             self._cache[secret_ref] = credentials
-            logging.info(f"Resolved credentials via secret_ref: {secret_name}")
+            logging.info("Resolved credentials via secret_ref")
             return credentials
 
         except Exception as e:
-            logging.warning(f"Failed to resolve secret_ref '{secret_ref}': {e}")
+            logging.warning("Failed to resolve secret_ref: %s", type(e).__name__)
             return None
 
     async def resolve_credentials(

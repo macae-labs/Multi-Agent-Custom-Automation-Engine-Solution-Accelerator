@@ -836,7 +836,7 @@ async def chat_message_stream(
                 yield _sse_event(
                     {
                         "type": "error",
-                        "message": f"Stream interrupted: {e}",
+                        "message": "Stream interrupted unexpectedly. Please try again.",
                     }
                 )
 
@@ -2659,5 +2659,5 @@ async def get_inspector_status():
                 "?transport=streamable-http"
                 "&serverUrl=http://localhost:9000/mcp"
             ),
-            "error": str(e),
+            "error": "Failed to check Inspector status",
         }

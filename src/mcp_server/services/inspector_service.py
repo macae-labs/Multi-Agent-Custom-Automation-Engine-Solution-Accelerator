@@ -1907,9 +1907,8 @@ class InspectorService(MCPToolBase):
                                     )
                                     if resolved:
                                         logger.info(
-                                            f"[connect_stdio_server] Resolved '{env_key}' "
-                                            f"for '{server_name}' from Key Vault "
-                                            f"(secret='{secret_name}')"
+                                            f"[connect_stdio_server] Resolved credential "
+                                            f"for '{server_name}' from Key Vault"
                                         )
                             except Exception as kv_err:
                                 logger.debug(
