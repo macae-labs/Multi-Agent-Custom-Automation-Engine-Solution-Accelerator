@@ -52,6 +52,7 @@ class FoundryAgentTemplate(AzureAgentBase):
         ephemeral: bool = False,
         user_id: str = "",
         session_id: str = "",
+        runtime_tools_enabled: bool = True,
     ) -> None:
         # Get project_client before calling super().__init__
         project_client = config.get_ai_project_client()
@@ -82,6 +83,7 @@ class FoundryAgentTemplate(AzureAgentBase):
         self._ephemeral = ephemeral
         self._user_id = user_id
         self._session_id = session_id
+        self.runtime_tools_enabled = runtime_tools_enabled
 
         # Placeholder for server-created Azure AI agent id (if Azure Search path)
         self._azure_server_agent_id: Optional[str] = None
@@ -120,99 +122,11 @@ class FoundryAgentTemplate(AzureAgentBase):
             tools.append(self.mcp_tool)
             self.logger.info("Added MCP tool: %s", self.mcp_tool.name)
 
-        # Foundry IQ Knowledge Base — replaces custom search_knowledge_base.
-        # Exposed as a native MCP tool via the KB MCP endpoint in AI Search.
-        # Foundry IQ handles query decomposition, parallel search, reranking,
-        # and iterative retrieval internally.
-        try:
-            from agent_framework import MCPStreamableHTTPTool
-            import httpx
-            import os
-
-            kb_url = os.environ.get(
-                "FOUNDRY_IQ_KB_ENDPOINT",
-                "https://srch-pslc25991vme66zmins.search.windows.net"
-                "/knowledgebases/knowledgebase550/mcp"
-                "?api-version=2025-11-01-Preview",
-            )
-
-            # Auth: KB MCP endpoint requires Bearer token with
-            # audience https://search.azure.com, auto-renewed.
-            class _SearchAuth(httpx.Auth):
-                """Auto-renewing Bearer auth for Azure AI Search."""
-
-                def __init__(self):
-                    self._token = None
-                    self._expires_on = 0
-
-                def auth_flow(self, request):
-                    import time
-
-                    if not self._token or time.time() > self._expires_on - 60:
-                        self._refresh()
-                    request.headers["Authorization"] = f"Bearer {self._token}"
-                    yield request
-
-                def _refresh(self):
-                    import time
-
-                    try:
-                        from azure.identity import DefaultAzureCredential
-
-                        cred = DefaultAzureCredential()
-                        token = cred.get_token("https://search.azure.com/.default")
-                        self._token = token.token
-                        self._expires_on = token.expires_on
-                    except Exception:
-                        import subprocess
-
-                        result = subprocess.run(
-                            [
-                                "az",
-                                "account",
-                                "get-access-token",
-                                "--resource",
-                                "https://search.azure.com",
-                                "--query",
-                                "accessToken",
-                                "-o",
-                                "tsv",
-                            ],
-                            capture_output=True,
-                            text=True,
-                        )
-                        self._token = result.stdout.strip()
-                        self._expires_on = time.time() + 3000
-
-            kb_http_client = httpx.AsyncClient(
-                auth=_SearchAuth(),
-                timeout=60.0,
-            )
-
-            kb_tool = MCPStreamableHTTPTool(
-                name="knowledge_base",
-                url=kb_url,
-                description=(
-                    "Search across ALL knowledge bases: chat history, contracts, "
-                    "RFPs, customer data, order data, and compliance documents. "
-                    "Use when you need context from previous conversations or "
-                    "domain-specific information to answer the user's question."
-                ),
-                load_tools=True,
-                load_prompts=False,
-                http_client=kb_http_client,
-            )
-            if self._stack:
-                await self._stack.enter_async_context(kb_tool)
-            tools.append(kb_tool)
-            self.logger.info(
-                "Added Foundry IQ knowledge_base tool (KB MCP: %s)",
-                kb_url.split("/knowledgebases/")[1].split("/")[0]
-                if "/knowledgebases/" in kb_url
-                else kb_url[:50],
-            )
-        except Exception as kb_err:
-            self.logger.warning("Foundry IQ KB tool failed to load: %s", kb_err)
+        # NOTE: Foundry IQ Knowledge Base is NOT attached as a runtime tool.
+        # It is associated server-side to the published agent in Foundry
+        # (Portal → Agent → Knowledge → attach kb-knowledgebase550-lrm9b).
+        # When using AzureAIClient with use_latest_version=True, the published
+        # agent already has the KB available — no client-side bridge needed.
 
         self.logger.info("Total tools collected (MCP path): %d", len(tools))
         return tools
@@ -375,21 +289,32 @@ class FoundryAgentTemplate(AzureAgentBase):
             else:
                 # MCP path (also used by RAI agent which has no tools)
                 self.logger.info("Initializing agent in MCP mode.")
-                tools = await self._collect_tools()
 
-                # Hybrid approach:
-                # - With runtime tools (MCP): use AzureOpenAIResponsesClient
-                #   (supports dynamic tools at execution time) + register in
-                #   Foundry separately via create_version for portal visibility.
-                # - Without tools: use AzureAIClient (simpler, auto-persists).
+                # Prefer the published agent in Foundry:
+                # - MacaeMcpServer is registered server-side as a tool.
+                # - Knowledge Base (Foundry IQ) is attached via the portal.
+                # - Foundry orchestrates everything — no runtime tool bridge
+                #   needed from the client.
+                # When runtime_tools_enabled is False, use AzureAIClient with
+                # the published agent directly.  When True (legacy), fall back
+                # to runtime tool injection via AzureOpenAIResponsesClient.
+                if self.runtime_tools_enabled:
+                    tools = await self._collect_tools()
+                else:
+                    tools = []
+
                 if tools:
                     client = self.get_responses_client()
                     self.logger.info(
-                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools enabled).",
+                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools).",
                         self.agent_name,
                     )
                 else:
                     client = self.get_chat_client()
+                    self.logger.info(
+                        "Using AzureAIClient for '%s' (published agent, server-side tools).",
+                        self.agent_name,
+                    )
 
                 self._agent = Agent(
                     id=self.get_agent_id(),

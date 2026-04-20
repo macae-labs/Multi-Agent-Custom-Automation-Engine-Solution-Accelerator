@@ -100,6 +100,21 @@ class SearchIndexService:
         if not await self._ensure():
             return None
 
+        # The embeddings API rejects empty / whitespace-only inputs with
+        # 400 "$.input is invalid" — skip indexing for those.
+        if not text or not text.strip():
+            return None
+
+        # Sanitize: remove control characters (except newline/tab) that can
+        # cause "$.input is invalid" errors from the OpenAI embeddings API.
+        import re
+
+        sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+        sanitized = sanitized.strip()
+        if not sanitized:
+            logger.debug("Skipping embedding: text empty after sanitization")
+            return None
+
         url = (
             f"{self._openai_endpoint}/openai/deployments/{self._embedding_deployment}"
             f"/embeddings?api-version={OPENAI_API_VERSION}"
@@ -109,7 +124,10 @@ class SearchIndexService:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        body = {"input": [text[:8000]]}  # Truncate to stay within token limit
+        # Azure OpenAI embeddings API expects "input" as a string, not array
+        truncated_text = sanitized[:8000]
+        body = {"input": truncated_text}
+        logger.debug("Embedding request: input length=%d chars", len(truncated_text))
 
         try:
             async with aiohttp.ClientSession() as session:

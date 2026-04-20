@@ -737,23 +737,19 @@ async def chat_message_stream(
             from common.config.app_config import config as app_config
             from v4.config.agent_pool import get_or_create
             from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
-            from v4.magentic_agents.models.agent_models import (
-                MCPConfig as AgentMCPConfig,
-            )
 
             async def _factory():
-                mcp_config = AgentMCPConfig.from_env()
                 a = FoundryAgentTemplate(
                     agent_name="ChatMCPAgent",
-                    agent_description="Unified chat agent with MCP tools and knowledge search",
+                    agent_description="Server-side chat agent with KB and tools",
                     agent_instructions=_MCP_AGENT_INSTRUCTIONS,
                     use_reasoning=False,
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
-                    mcp_config=mcp_config,
                     ephemeral=False,
                     user_id=user_id,
                     session_id=chat_request.session_id,
+                    runtime_tools_enabled=False,  # Use published Foundry agent (v13 with KB)
                 )
                 await a.open()
                 return a
@@ -960,27 +956,25 @@ async def _get_mcp_query_response(
     chat_svc: Any,
     tenant_id: str = "",
 ) -> str:
-    """Get an MCP-aware response using a session-persistent FoundryAgentTemplate."""
+    """Get response using server-side ChatMCPAgent (published in Foundry with KB)."""
     from common.config.app_config import config as app_config
     from v4.config.agent_pool import get_or_create
     from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
-    from v4.magentic_agents.models.agent_models import MCPConfig as AgentMCPConfig
 
     try:
 
         async def _factory():
-            mcp_config = AgentMCPConfig.from_env()
             a = FoundryAgentTemplate(
                 agent_name="ChatMCPAgent",
-                agent_description="MCP-aware chat agent with tool execution",
+                agent_description="Server-side chat agent with KB and tools",
                 agent_instructions=_MCP_AGENT_INSTRUCTIONS,
                 use_reasoning=False,
                 model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                 project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
-                mcp_config=mcp_config,
                 ephemeral=False,
                 user_id=user_id,
                 session_id=session_id,
+                runtime_tools_enabled=False,  # Use published Foundry agent (v13 with KB)
             )
             await a.open()
             return a
