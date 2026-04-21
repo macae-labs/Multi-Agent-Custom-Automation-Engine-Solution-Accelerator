@@ -4,21 +4,21 @@ from typing import List
 from core.factory import MCPToolBase, Domain
 
 ALLOWED_FILES = [
-    "competitor_Pricing_Analysis.csv",
-    "customer_Churn_Analysis.csv",
+    "competitor_pricing_analysis.csv",
+    "customer_churn_analysis.csv",
     "customer_feedback_surveys.csv",
     "customer_profile.csv",
     "delivery_performance_metrics.csv",
-    "email_Marketing_Engagement.csv",
-    "loyalty_Program_Overview.csv",
+    "email_marketing_engagement.csv",
+    "loyalty_program_overview.csv",
     "product_return_rates.csv",
     "product_table.csv",
     "purchase_history.csv",
     "social_media_sentiment_analysis.csv",
     "store_visit_history.csv",
     "subscription_benefits_utilization.csv",
-    "unauthorized_Access_Attempts.csv",
-    "warehouse_Incident_Reports.csv",
+    "unauthorized_access_attempts.csv",
+    "warehouse_incident_reports.csv",
     "website_activity_log.csv",
 ]
 

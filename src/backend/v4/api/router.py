@@ -737,8 +737,16 @@ async def chat_message_stream(
             from common.config.app_config import config as app_config
             from v4.config.agent_pool import get_or_create
             from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+            from v4.magentic_agents.models.agent_models import MCPConfig
 
             async def _factory():
+                # Load MCP config so tools are executable at runtime
+                try:
+                    mcp_cfg = MCPConfig.from_env()
+                except ValueError:
+                    mcp_cfg = None
+                    logger.warning("MCP env vars missing; ChatMCPAgent will have no MCP tools")
+
                 a = FoundryAgentTemplate(
                     agent_name="ChatMCPAgent",
                     agent_description="Server-side chat agent with KB and tools",
@@ -746,10 +754,11 @@ async def chat_message_stream(
                     use_reasoning=False,
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
+                    mcp_config=mcp_cfg,
                     ephemeral=False,
                     user_id=user_id,
                     session_id=chat_request.session_id,
-                    runtime_tools_enabled=False,  # Use published Foundry agent (v13 with KB)
+                    runtime_tools_enabled=True,
                 )
                 await a.open()
                 return a
@@ -962,8 +971,15 @@ async def _get_mcp_query_response(
     from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
 
     try:
+        from v4.magentic_agents.models.agent_models import MCPConfig
 
         async def _factory():
+            try:
+                mcp_cfg = MCPConfig.from_env()
+            except ValueError:
+                mcp_cfg = None
+                logger.warning("MCP env vars missing; ChatMCPAgent will have no MCP tools")
+
             a = FoundryAgentTemplate(
                 agent_name="ChatMCPAgent",
                 agent_description="Server-side chat agent with KB and tools",
@@ -971,10 +987,11 @@ async def _get_mcp_query_response(
                 use_reasoning=False,
                 model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                 project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
+                mcp_config=mcp_cfg,
                 ephemeral=False,
                 user_id=user_id,
                 session_id=session_id,
-                runtime_tools_enabled=False,  # Use published Foundry agent (v13 with KB)
+                runtime_tools_enabled=True,
             )
             await a.open()
             return a
@@ -994,14 +1011,10 @@ async def _get_mcp_query_response(
 
 
 def _mcp_fallback(message: str) -> str:
+    """Fallback response if MCP agent fails."""
     return (
-        "The MCP server has 28 tools across 7 services: HR (8), Inspector (8), "
-        "TechSupport (5), Marketing (2), Product (2), General (2), DataTool (2). "
-        "Inspector tools: connect_mcp_server (HTTP), connect_stdio_server (stdio via proxy), "
-        "discover_mcp_capabilities, call_external_tool, read_external_resource, "
-        "list_connected_servers, connect_from_registry, disconnect_mcp_server. "
-        "To connect to stdio servers like GitHub or filesystem, use connect_stdio_server(server_name). "
-        "Use the Inspector panel in the toolbar to browse and test tools interactively."
+        "Sorry, I'm having trouble connecting to my tools right now. "
+        "Please try again later."
     )
 
 

@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from agent_framework import Agent, ChatOptions, Message
 from agent_framework_azure_ai import AzureAIClient  # Azure Search path only
+from agent_framework_azure_ai._client import AzureAIProjectAgentOptions
 from azure.ai.projects.models import (
     AISearchIndexResource,
     AzureAISearchTool,
@@ -252,7 +253,8 @@ class FoundryAgentTemplate(AzureAgentBase):
         """Initialize ChatAgent after connections are established."""
         if self.use_reasoning:
             self.logger.info("Initializing agent in Reasoning mode.")
-            temp = None
+            # Use a deterministic low temperature for reasoning mode
+            temp = 0.0
         else:
             self.logger.info("Initializing agent in Foundry mode.")
             temp = 0.1
@@ -271,67 +273,68 @@ class FoundryAgentTemplate(AzureAgentBase):
                         "Azure AI Search mode requested but setup failed."
                     )
 
-                # In Azure Search raw tool path, tools/tool_choice are handled server-side.
                 self._agent = Agent(
                     id=self.get_agent_id(),
                     client=chat_client,
                     instructions=self.agent_instructions,
                     name=self.agent_name,
                     description=self.agent_description,
-                    default_options=ChatOptions(
+                    default_options=AzureAIProjectAgentOptions(
                         store=False,
                         tool_choice="required",
                         temperature=temp,
                     ),
                 )
             else:
-                # MCP path (also used by RAI agent which has no tools)
                 self.logger.info("Initializing agent in MCP mode.")
 
-                # Prefer the published agent in Foundry:
-                # - MacaeMcpServer is registered server-side as a tool.
-                # - Knowledge Base (Foundry IQ) is attached via the portal.
-                # - Foundry orchestrates everything — no runtime tool bridge
-                #   needed from the client.
-                # When runtime_tools_enabled is False, use AzureAIClient with
-                # the published agent directly.  When True (legacy), fall back
-                # to runtime tool injection via AzureOpenAIResponsesClient.
                 if self.runtime_tools_enabled:
                     tools = await self._collect_tools()
                 else:
                     tools = []
 
                 if tools:
+                    # Runtime tools present → AzureOpenAIResponsesClient
+                    # supports dynamic MCP tools passed at runtime.
                     client = self.get_responses_client()
                     self.logger.info(
                         "Using AzureOpenAIResponsesClient for '%s' (runtime tools).",
                         self.agent_name,
                     )
+                    self._agent = Agent(
+                        id=self.get_agent_id(),
+                        client=client,
+                        instructions=self.agent_instructions,
+                        name=self.agent_name,
+                        description=self.agent_description,
+                        tools=tools,
+                        default_options=ChatOptions(
+                            store=False,
+                            tool_choice="auto",
+                            temperature=temp,
+                        ),
+                    )
                 else:
+                    # No runtime tools → AzureAIClient with published
+                    # Foundry agent (server-side KB + tools).
                     client = self.get_chat_client()
                     self.logger.info(
                         "Using AzureAIClient for '%s' (published agent, server-side tools).",
                         self.agent_name,
                     )
+                    self._agent = Agent(
+                        id=self.get_agent_id(),
+                        client=client,
+                        instructions=self.agent_instructions,
+                        name=self.agent_name,
+                        description=self.agent_description,
+                        default_options=AzureAIProjectAgentOptions(
+                            store=False,
+                            tool_choice="auto",
+                            temperature=temp,
+                        ),
+                    )
 
-                self._agent = Agent(
-                    id=self.get_agent_id(),
-                    client=client,
-                    instructions=self.agent_instructions,
-                    name=self.agent_name,
-                    description=self.agent_description,
-                    tools=tools if tools else None,
-                    default_options=ChatOptions(
-                        store=False,
-                        tool_choice="auto" if tools else "none",
-                        temperature=temp,
-                    ),
-                )
-
-                # For agents using AzureOpenAIResponsesClient, register in
-                # Foundry so they appear in the portal / VS Code extension.
-                # Skip for ephemeral agents (e.g. ChatMCPAgent) to avoid
-                # 404 errors from create_version on every request.
                 if tools and not self._ephemeral:
                     await self._register_in_foundry()
 
