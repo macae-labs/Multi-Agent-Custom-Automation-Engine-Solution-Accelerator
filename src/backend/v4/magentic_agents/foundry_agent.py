@@ -4,7 +4,16 @@ import logging
 from typing import List, Optional
 
 from agent_framework import Agent, ChatOptions, Message
-from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
+from agent_framework_azure_ai import AzureAIClient
+
+try:
+    from agent_framework_azure_ai import AzureAIProjectAgentOptions
+except ImportError:
+    try:
+        from agent_framework_azure_ai._client import AzureAIProjectAgentOptions
+    except (ImportError, ModuleNotFoundError):
+        AzureAIProjectAgentOptions = ChatOptions  # type: ignore[misc,assignment]
+
 from azure.ai.projects.models import (
     AISearchIndexResource,
     AzureAISearchTool,
