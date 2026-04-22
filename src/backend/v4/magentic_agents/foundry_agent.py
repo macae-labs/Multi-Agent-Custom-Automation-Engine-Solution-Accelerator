@@ -4,8 +4,7 @@ import logging
 from typing import List, Optional
 
 from agent_framework import Agent, ChatOptions, Message
-from agent_framework_azure_ai import AzureAIClient  # Azure Search path only
-from agent_framework_azure_ai._client import AzureAIProjectAgentOptions
+from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
 from azure.ai.projects.models import (
     AISearchIndexResource,
     AzureAISearchTool,
