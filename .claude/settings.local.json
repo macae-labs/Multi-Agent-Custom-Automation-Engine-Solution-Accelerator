@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show *)",
+      "Bash(pkill -f \"uvicorn app:app\")"
+    ]
+  }
+}

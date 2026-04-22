@@ -25,8 +25,8 @@
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"],
-      "note": "Filesystem MCP server — access to workspace and system directories"
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspaces/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator"],
+      "note": "Filesystem MCP server — restricted to workspace directory only"
     }
   }
 }
