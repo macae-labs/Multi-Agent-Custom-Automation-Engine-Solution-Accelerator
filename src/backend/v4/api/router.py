@@ -63,6 +63,19 @@ def _extract_auth(request: Request) -> tuple:
     return user_id, tenant_id
 
 
+def _extract_auth_with_token(request: Request) -> tuple:
+    """Extract (user_id, tenant_id, access_token) from request headers.
+
+    Use this for endpoints that need the user's access token for OBO flow.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    tenant_id = authenticated_user.get("tenant_id", "")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="no user found")
+    return user_id, tenant_id, authenticated_user.get("access_token")
+
+
 app_v4 = APIRouter(
     prefix="/api/v4",
     responses={404: {"description": "Not found"}},
@@ -493,7 +506,7 @@ async def chat_message(
     """
     from v4.orchestration.intent_router import Intent, IntentRouter
 
-    user_id, tenant_id = _extract_auth(request)
+    user_id, tenant_id, user_access_token = _extract_auth_with_token(request)
 
     # Assign session_id if not provided
     if not chat_request.session_id:
@@ -572,6 +585,7 @@ async def chat_message(
             user_id,
             chat_svc,
             tenant_id=tenant_id,
+            user_access_token=user_access_token,
         )
 
         # Persist assistant response with the precise intent label
@@ -634,7 +648,10 @@ async def chat_message_stream(
 
     from v4.orchestration.intent_router import Intent, IntentRouter
 
-    user_id, tenant_id = _extract_auth(request)
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    tenant_id = authenticated_user.get("tenant_id", "")
+    user_access_token = authenticated_user.get("access_token")  # For OBO flow
 
     if not chat_request.session_id:
         chat_request.session_id = str(uuid.uuid4())
@@ -737,28 +754,20 @@ async def chat_message_stream(
             from common.config.app_config import config as app_config
             from v4.config.agent_pool import get_or_create
             from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
-            from v4.magentic_agents.models.agent_models import MCPConfig
 
             async def _factory():
-                # Load MCP config so tools are executable at runtime
-                try:
-                    mcp_cfg = MCPConfig.from_env()
-                except ValueError:
-                    mcp_cfg = None
-                    logger.warning("MCP env vars missing; ChatMCPAgent will have no MCP tools")
-
                 a = FoundryAgentTemplate(
                     agent_name="ChatMCPAgent",
-                    agent_description="Server-side chat agent with KB and tools",
+                    agent_description="Server-side chat agent with KB and MCP tools",
                     agent_instructions=_MCP_AGENT_INSTRUCTIONS,
                     use_reasoning=False,
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
-                    mcp_config=mcp_cfg,
                     ephemeral=False,
                     user_id=user_id,
                     session_id=chat_request.session_id,
-                    runtime_tools_enabled=True,
+                    runtime_tools_enabled=False,
+                    user_access_token=user_access_token,  # Pass user token for OBO
                 )
                 await a.open()
                 return a
@@ -964,34 +973,32 @@ async def _get_mcp_query_response(
     user_id: str,
     chat_svc: Any,
     tenant_id: str = "",
+    user_access_token: Optional[str] = None,
 ) -> str:
-    """Get response using server-side ChatMCPAgent (published in Foundry with KB)."""
+    """Get response using server-side ChatMCPAgent (published in Foundry with KB).
+
+    Args:
+        user_access_token: User's EasyAuth access token for OBO flow in Foundry.
+    """
     from common.config.app_config import config as app_config
     from v4.config.agent_pool import get_or_create
     from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
 
     try:
-        from v4.magentic_agents.models.agent_models import MCPConfig
 
         async def _factory():
-            try:
-                mcp_cfg = MCPConfig.from_env()
-            except ValueError:
-                mcp_cfg = None
-                logger.warning("MCP env vars missing; ChatMCPAgent will have no MCP tools")
-
             a = FoundryAgentTemplate(
                 agent_name="ChatMCPAgent",
-                agent_description="Server-side chat agent with KB and tools",
+                agent_description="Server-side chat agent with KB and MCP tools",
                 agent_instructions=_MCP_AGENT_INSTRUCTIONS,
                 use_reasoning=False,
                 model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                 project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
-                mcp_config=mcp_cfg,
                 ephemeral=False,
                 user_id=user_id,
                 session_id=session_id,
-                runtime_tools_enabled=True,
+                runtime_tools_enabled=False,
+                user_access_token=user_access_token,  # For OBO flow
             )
             await a.open()
             return a
