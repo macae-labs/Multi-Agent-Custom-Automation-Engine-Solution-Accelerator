@@ -75,6 +75,7 @@ class TestGetAuthenticatedUserDetails:
                     "auth_token",
                     "client_principal_b64",
                     "aad_id_token",
+                    "access_token",  # Added for OBO flow
                     "tenant_id",
                 }
                 assert set(result.keys()) == expected_keys
