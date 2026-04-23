@@ -8,10 +8,11 @@ from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from azure.identity.aio import (
     DefaultAzureCredential as DefaultAzureCredentialAsync,
+)
+from azure.identity.aio import (
     ManagedIdentityCredential as ManagedIdentityCredentialAsync,
 )
 from dotenv import load_dotenv
-
 
 # Load environment variables from .env file
 load_dotenv()
@@ -254,12 +255,47 @@ class AppConfig:
             )
             raise
 
-    def get_ai_project_client(self):
+    def get_ai_project_client(self, user_access_token: Optional[str] = None):
         """Create and return an AIProjectClient for Azure AI Foundry using from_connection_string.
+
+        Args:
+            user_access_token: Optional user access token for OBO flow (from EasyAuth x-ms-token-aad-access-token)
 
         Returns:
             An AIProjectClient instance
         """
+        # If user token provided, create new client with StaticTokenCredential for OBO
+        if user_access_token:
+            try:
+                from datetime import datetime, timedelta
+
+                from azure.core.credentials import AccessToken
+
+                class StaticTokenCredential:
+                    """Credential that returns a static access token for OBO scenarios."""
+
+                    def __init__(self, access_token: str):
+                        self._access_token = access_token
+
+                    def get_token(self, *scopes, **kwargs):
+                        # Token expires in 1 hour (typical EasyAuth token lifetime)
+                        expires_on = int(
+                            (datetime.now() + timedelta(hours=1)).timestamp()
+                        )
+                        return AccessToken(self._access_token, expires_on)
+
+                endpoint = self.AZURE_AI_AGENT_ENDPOINT
+                return AIProjectClient(
+                    endpoint=endpoint,
+                    credential=StaticTokenCredential(user_access_token),
+                )
+            except Exception as exc:
+                logging.warning(
+                    "Failed to create AIProjectClient with user token, falling back to MI: %s",
+                    exc,
+                )
+
+        # Default: use cached Managed Identity client
         if self._ai_project_client is not None:
             return self._ai_project_client
 

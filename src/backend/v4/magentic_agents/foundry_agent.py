@@ -62,9 +62,13 @@ class FoundryAgentTemplate(AzureAgentBase):
         user_id: str = "",
         session_id: str = "",
         runtime_tools_enabled: bool = True,
+        user_access_token: str | None = None,
     ) -> None:
         # Get project_client before calling super().__init__
-        project_client = config.get_ai_project_client()
+        # Pass user_access_token for OBO flow support
+        project_client = config.get_ai_project_client(
+            user_access_token=user_access_token
+        )
 
         super().__init__(
             mcp=mcp_config,
