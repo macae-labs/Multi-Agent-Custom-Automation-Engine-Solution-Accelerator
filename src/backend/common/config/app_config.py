@@ -256,7 +256,10 @@ class AppConfig:
             raise
 
     def get_ai_project_client(self, user_access_token: Optional[str] = None):
-        """Create and return an AIProjectClient for Azure AI Foundry using from_connection_string.
+        """Create and return an AIProjectClient for Azure AI Foundry.
+
+        Uses AZURE_AI_AGENT_ENDPOINT with either Managed Identity (default) or user's
+        access token for OBO flow.
 
         Args:
             user_access_token: Optional user access token for OBO flow (from EasyAuth x-ms-token-aad-access-token)
@@ -267,22 +270,45 @@ class AppConfig:
         # If user token provided, create new client with StaticTokenCredential for OBO
         if user_access_token:
             try:
-                from datetime import datetime, timedelta
-
-                from azure.core.credentials import AccessToken
 
                 class StaticTokenCredential:
-                    """Credential that returns a static access token for OBO scenarios."""
+                    """Credential that returns a static access token for OBO scenarios.
+
+                    Extracts actual expiry from JWT to avoid sending expired tokens.
+                    """
 
                     def __init__(self, access_token: str):
-                        self._access_token = access_token
+                        import base64
+                        import json
+                        from datetime import datetime as dt
 
-                    def get_token(self, *scopes, **kwargs):
-                        # Token expires in 1 hour (typical EasyAuth token lifetime)
-                        expires_on = int(
-                            (datetime.now() + timedelta(hours=1)).timestamp()
-                        )
-                        return AccessToken(self._access_token, expires_on)
+                        self._access_token = access_token
+                        try:
+                            # Decode JWT payload without external library
+                            payload = access_token.split(".")[1]
+                            payload += "=" * (-len(payload) % 4)  # Fix padding
+                            decoded = json.loads(base64.b64decode(payload))
+                            self._expires_on = decoded.get(
+                                "exp", int(dt.now().timestamp()) + 3600
+                            )
+                        except Exception:
+                            self._expires_on = int(dt.now().timestamp()) + 3600
+
+                    async def get_token(self, *scopes, **kwargs):
+                        from azure.core.credentials import AccessToken as AT
+
+                        return AT(self._access_token, self._expires_on)
+
+                    async def close(self):
+                        pass
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(
+                        self, exc_type=None, exc_value=None, traceback=None
+                    ):
+                        await self.close()
 
                 endpoint = self.AZURE_AI_AGENT_ENDPOINT
                 return AIProjectClient(
