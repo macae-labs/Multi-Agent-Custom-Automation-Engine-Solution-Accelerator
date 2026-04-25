@@ -522,8 +522,8 @@ class TestAppConfigClientMethods:
         with patch.dict(os.environ, self._get_minimal_env()):
             config = AppConfig()
             
-            # Mock get_azure_credential to return None
-            with patch.object(config, 'get_azure_credential', return_value=None):
+            # Mock get_azure_credential_async to return None
+            with patch.object(config, 'get_azure_credential_async', return_value=None):
                 with pytest.raises(RuntimeError, match="Unable to acquire Azure credentials"):
                     config.get_ai_project_client()
 

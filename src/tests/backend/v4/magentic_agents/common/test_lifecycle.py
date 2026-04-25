@@ -473,6 +473,7 @@ class TestMCPEnabledBase:
                 name=self.mock_mcp_config.name,
                 description=self.mock_mcp_config.description,
                 url=self.mock_mcp_config.url,
+                user_access_token=None,
             )
             mock_stack.enter_async_context.assert_called_once_with(mock_mcp_tool)
             assert base.mcp_tool is mock_mcp_tool
