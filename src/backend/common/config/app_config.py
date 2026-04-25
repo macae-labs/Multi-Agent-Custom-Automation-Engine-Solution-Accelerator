@@ -18,6 +18,42 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+class StaticTokenCredential:
+    """Async credential that returns a static access token for OBO scenarios.
+
+    Extracts actual expiry from JWT to avoid sending expired tokens.
+    Used when the user's EasyAuth/MSAL token is available for OBO flow.
+    """
+
+    def __init__(self, access_token: str):
+        import base64 as _b64
+        import json as _json
+        from datetime import datetime as _dt
+
+        self._access_token = access_token
+        try:
+            payload = access_token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded = _json.loads(_b64.b64decode(payload))
+            self._expires_on = decoded.get("exp", int(_dt.now().timestamp()) + 3600)
+        except Exception:
+            self._expires_on = int(_dt.now().timestamp()) + 3600
+
+    async def get_token(self, *scopes, **kwargs):
+        from azure.core.credentials import AccessToken as AT
+
+        return AT(self._access_token, self._expires_on)
+
+    async def close(self):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type=None, exc_value=None, traceback=None):
+        await self.close()
+
+
 class AppConfig:
     """Application configuration class that loads settings from environment variables."""
 
@@ -270,46 +306,6 @@ class AppConfig:
         # If user token provided, create new client with StaticTokenCredential for OBO
         if user_access_token:
             try:
-
-                class StaticTokenCredential:
-                    """Credential that returns a static access token for OBO scenarios.
-
-                    Extracts actual expiry from JWT to avoid sending expired tokens.
-                    """
-
-                    def __init__(self, access_token: str):
-                        import base64
-                        import json
-                        from datetime import datetime as dt
-
-                        self._access_token = access_token
-                        try:
-                            # Decode JWT payload without external library
-                            payload = access_token.split(".")[1]
-                            payload += "=" * (-len(payload) % 4)  # Fix padding
-                            decoded = json.loads(base64.b64decode(payload))
-                            self._expires_on = decoded.get(
-                                "exp", int(dt.now().timestamp()) + 3600
-                            )
-                        except Exception:
-                            self._expires_on = int(dt.now().timestamp()) + 3600
-
-                    async def get_token(self, *scopes, **kwargs):
-                        from azure.core.credentials import AccessToken as AT
-
-                        return AT(self._access_token, self._expires_on)
-
-                    async def close(self):
-                        pass
-
-                    async def __aenter__(self):
-                        return self
-
-                    async def __aexit__(
-                        self, exc_type=None, exc_value=None, traceback=None
-                    ):
-                        await self.close()
-
                 endpoint = self.AZURE_AI_AGENT_ENDPOINT
                 return AIProjectClient(
                     endpoint=endpoint,
@@ -326,7 +322,7 @@ class AppConfig:
             return self._ai_project_client
 
         try:
-            credential = self.get_azure_credential(self.AZURE_CLIENT_ID)
+            credential = self.get_azure_credential_async(self.AZURE_CLIENT_ID)
             if credential is None:
                 raise RuntimeError(
                     "Unable to acquire Azure credentials; ensure Managed Identity is configured"

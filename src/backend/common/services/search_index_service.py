@@ -13,9 +13,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-from azure.identity.aio import (
-    DefaultAzureCredential as DefaultAzureCredentialAsync,
-)
 
 from common.config.app_config import config
 
@@ -43,7 +40,10 @@ class SearchIndexService:
     """AI Search service for embedding, indexing, and hybrid search over chat history."""
 
     def __init__(self) -> None:
-        self._credential: Optional[DefaultAzureCredentialAsync] = None
+        # credential can be different async credential implementations
+        # (DefaultAzureCredential, ManagedIdentityCredential, etc.),
+        # so annotate as Any to avoid overly strict type checks.
+        self._credential: Optional[Any] = None
         self._search_endpoint: str = ""
         self._openai_endpoint: str = ""
         self._embedding_deployment: str = ""
@@ -68,6 +68,12 @@ class SearchIndexService:
             return
 
         self._credential = config.get_azure_credential_async()
+        if not self._credential:
+            logger.warning(
+                "SearchIndexService: Azure credential not available — search indexing DISABLED."
+            )
+            return
+
         self._initialized = True
         logger.info(
             "SearchIndexService initialized (search=%s, embedding=%s)",
@@ -84,10 +90,18 @@ class SearchIndexService:
     # ── Token helpers ────────────────────────────────────────────
 
     async def _get_search_token(self) -> str:
+        if self._credential is None:
+            raise RuntimeError(
+                "SearchIndexService: credential is not available. Ensure initialize() succeeded."
+            )
         token = await self._credential.get_token("https://search.azure.com/.default")
         return token.token
 
     async def _get_openai_token(self) -> str:
+        if self._credential is None:
+            raise RuntimeError(
+                "SearchIndexService: credential is not available. Ensure initialize() succeeded."
+            )
         token = await self._credential.get_token(
             "https://cognitiveservices.azure.com/.default"
         )

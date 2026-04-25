@@ -37,6 +37,30 @@ from utils.formatters import format_success_response, format_error_response
 logger = logging.getLogger(__name__)
 
 
+def _redact(headers: Dict[str, str]) -> Dict[str, str]:
+    """Redact sensitive headers for logging."""
+    _SENSITIVE = {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+        "proxy-authorization",
+    }
+
+    return {
+        k: ("***REDACTED***" if k.lower() in _SENSITIVE else v)
+        for k, v in headers.items()
+    }
+
+
+def _truncate(obj: Any, max_len: int) -> str:
+    """Truncate object representation for logging."""
+    s = str(obj)
+    return s if len(s) <= max_len else s[:max_len] + "..."
+
+
 class ExternalMCPSession:
     """Manages a single connection to an external MCP server."""
 
@@ -138,13 +162,29 @@ class ExternalMCPSession:
             async with self.client.stream(
                 "POST", self.server_url, json=payload, headers=headers
             ) as response:
-                response.raise_for_status()
+                # Read body BEFORE raise_for_status() to avoid stream closure
+                body = await response.aread()
+
+                if response.status_code >= 400:
+                    logger.warning(
+                        "[_call_jsonrpc] HTTP %s for %s method=%s\n"
+                        "  request_headers=%s\n  request_body=%s\n"
+                        "  response_headers=%s\n  response_body=%s",
+                        response.status_code,
+                        self.server_url,
+                        method,
+                        _redact(dict(response.request.headers)),
+                        _truncate(payload, 2000),
+                        dict(response.headers),
+                        body.decode("utf-8", errors="replace")[:4000],
+                    )
+                    response.raise_for_status()
+
                 if "mcp-session-id" in response.headers:
                     new_sid = response.headers["mcp-session-id"]
                     if new_sid != self.session_id:
                         self.session_id = new_sid
 
-                body = await response.aread()
                 result = self._parse_sse_response(body.decode("utf-8"))
 
                 if "error" in result:
@@ -154,11 +194,8 @@ class ExternalMCPSession:
                     )
                 return result.get("result", {})
 
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"HTTP {e.response.status_code} from {self.server_url}/{method}"
-            )
-            raise
+        except httpx.HTTPStatusError:
+            raise  # Already logged above
         except Exception as e:
             logger.error(f"Error calling {method} on {self.server_url}: {e}")
             raise
@@ -1045,7 +1082,10 @@ class InspectorService(MCPToolBase):
 
         @mcp.tool(tags={self.domain.value})
         async def connect_mcp_server(
-            server_url: str = "", server_name: str = "", user_id: str = ""
+            server_url: str = "",
+            server_name: str = "",
+            user_id: str = "",
+            access_token: str = "",
         ) -> str:
             """
             Connect to an external MCP server.
@@ -1065,11 +1105,22 @@ class InspectorService(MCPToolBase):
                            Leave empty to look up by server_name.
                 server_name: Friendly name for the server.
                              Auto-generated from URL if not provided.
+                access_token: Optional OAuth bearer token. When provided,
+                              sent as ``Authorization: Bearer <token>`` on
+                              every request to the server (required for
+                              OBO-protected servers such as Agent365).
 
             Returns:
                 Connection status with server info and capabilities.
             """
             try:
+                logger.info(
+                    "[connect_mcp_server] called: server_url=%s, server_name=%s, user_id=%s, has_token=%s",
+                    server_url,
+                    server_name,
+                    user_id,
+                    bool(access_token),
+                )
                 # --- Registry lookup when no URL provided ---
                 if not server_url and server_name:
                     catalog_entry = await registry.lookup_server(server_name)
@@ -1136,6 +1187,38 @@ class InspectorService(MCPToolBase):
 
                 # Create and initialize new session
                 session = ExternalMCPSession(server_url, server_name)
+
+                # Resolve bearer token: explicit arg wins, otherwise forward the
+                # Authorization header from the inbound MCP request (OBO flow).
+                bearer = access_token
+                if not bearer:
+                    try:
+                        from fastmcp.server.dependencies import get_http_headers
+
+                        inbound = get_http_headers(include={"authorization"})
+                        auth_hdr = inbound.get("authorization") or inbound.get(
+                            "Authorization"
+                        )
+                        if auth_hdr:
+                            # Strip scheme if caller passed only the token value.
+                            bearer = (
+                                auth_hdr.split(" ", 1)[1]
+                                if auth_hdr.lower().startswith("bearer ")
+                                else auth_hdr
+                            )
+                            logger.info(
+                                "[connect_mcp_server] Forwarding inbound "
+                                "Authorization header to upstream '%s'",
+                                server_name,
+                            )
+                    except Exception as e:
+                        logger.debug(
+                            "[connect_mcp_server] No inbound auth header: %s", e
+                        )
+
+                if bearer:
+                    session.extra_headers["Authorization"] = f"Bearer {bearer}"
+
                 server_info = await session.initialize()
 
                 sessions[_key] = session

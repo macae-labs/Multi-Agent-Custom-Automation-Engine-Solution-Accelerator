@@ -43,6 +43,7 @@
 					"copilot/auto"
 				]
 			}
-		}
+		},
+		"workbench.editor.enablePreview": false
 	}
 }
