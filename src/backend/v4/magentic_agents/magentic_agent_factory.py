@@ -9,7 +9,6 @@ from typing import List, Optional, Union
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
-
 from v4.common.services.team_service import TeamService
 from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
 from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig

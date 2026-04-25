@@ -13,7 +13,9 @@ def _extract_bearer_token(auth_header: str) -> str | None:
 
 
 _DEV_TOKEN_CACHE: dict = {"token": None, "expires_on": 0}
-_DEV_TOKEN_SCOPE = "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.CopilotMCP.All"
+_DEV_TOKEN_SCOPE = (
+    "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.CopilotMCP.All"
+)
 _DEV_CLIENT_ID = "ee7ae9f0-67c2-4370-9a9f-1d497a506140"  # macae-v4-auth
 _DEV_TENANT_ID = "978d9cc6-784c-4c98-8d90-a4a6344a65ff"
 
@@ -26,7 +28,7 @@ def _dev_acquire_user_token() -> str | None:
     Subsequent runs: uses cached refresh token automatically — no re-auth needed
     until the refresh token is revoked (~90 days).
     """
-    if os.environ.get("APP_ENV", "dev").lower() not in ("dev", "development", "local"):
+    if os.environ.get("APP_ENV", "prod").lower() not in ("dev", "development", "local"):
         return None
 
     env_token = os.environ.get("MACAE_DEV_OBO_TOKEN")
@@ -97,18 +99,21 @@ def get_authenticated_user_details(request_headers):
         user_object["user_name"] = "dev-user@local"
     user_object["auth_provider"] = normalized_headers.get("x-ms-client-principal-idp")
     user_object["auth_token"] = normalized_headers.get("x-ms-token-aad-id-token")
-    user_object["access_token"] = (
-        normalized_headers.get("x-ms-token-aad-access-token")
-        or _extract_bearer_token(normalized_headers.get("authorization", ""))
-    )
+    user_object["access_token"] = normalized_headers.get(
+        "x-ms-token-aad-access-token"
+    ) or _extract_bearer_token(normalized_headers.get("authorization", ""))
     _tok = user_object["access_token"]
     if not _tok:
         _tok = _dev_acquire_user_token()
         user_object["access_token"] = _tok
     if _tok:
-        logging.info("OBO token present: %s...%s (len=%d)", _tok[:20], _tok[-10:], len(_tok))
+        logging.info(
+            "OBO token present: %s...%s (len=%d)", _tok[:20], _tok[-10:], len(_tok)
+        )
     else:
-        logging.info("OBO token: None (no Bearer header, EasyAuth token, or dev CLI token)")
+        logging.info(
+            "OBO token: None (no Bearer header, EasyAuth token, or dev CLI token)"
+        )
     user_object["client_principal_b64"] = normalized_headers.get(
         "x-ms-client-principal"
     )
