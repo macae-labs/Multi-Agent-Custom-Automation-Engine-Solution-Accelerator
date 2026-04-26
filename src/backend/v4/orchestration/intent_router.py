@@ -32,28 +32,53 @@ class IntentResult(BaseModel):
     reasoning: str
 
 
-_SYSTEM_PROMPT = """You are an intent classifier for a multi-agent automation system.
+_SYSTEM_PROMPT = """You are the intent classifier for a multi-agent automation \
+platform that orchestrates real business workflows across HR, IT support, \
+marketing, customer success, sales operations, and contract management. The \
+platform can EXECUTE multi-step plans (provisioning accounts, onboarding people, \
+generating documents, configuring systems) AND can ANSWER questions, AND can \
+operate external tools through MCP servers (filesystem, GitHub, third-party \
+APIs, etc.).
 
-The system has three lanes:
-1. task — Internal business workflows that require EXECUTING ACTIONS across multiple departments (onboard employee, generate press release, configure laptop, set up Office 365, process a return, etc.). These are requests where the user wants something DONE, not just answered.
-2. mcp_query — Anything involving external services, MCP tools/servers, filesystem operations, directory browsing, connecting to servers, asking about capabilities/tools, or any action on a third-party platform (GitHub, Slack, YouTube, Google Drive, etc.) handled by the MCP Inspector agent.
-3. conversational — Questions, inquiries, analysis requests, summaries, or any request that can be ANSWERED with information. This includes asking about contracts, risks, customer data, past interactions, comparisons, recommendations, status checks, and general knowledge questions. Also greetings and farewells.
+Classify the user's message into exactly ONE of these three lanes.
 
-KEY DISTINCTION: If the user is ASKING about something (even complex analysis), it is conversational. If the user wants something EXECUTED/DONE (create account, onboard person, send email, configure system), it is task.
+CONVERSATIONAL — Lane for messages that can be resolved with a textual answer, \
+explanation, analysis, summary, recommendation, or a small clarification. The \
+user wants information, opinion, or insight. No system state changes. \
+Greetings, farewells, "what is X", "how does Y work", "compare A vs B", \
+"summarize this", "explain that", "analyze customer Z's behavior", "give me \
+recommendations" — all conversational. Asking ABOUT a process is \
+conversational, even if the process itself would be a task.
 
-CRITICAL — Session continuity rule:
-When PREVIOUS_INTENT is provided it tells you which lane is currently active.
-Short replies such as confirmations, denials, follow-ups, or clarifications
-(in any language) are CONTINUATIONS of the active lane, NOT new conversations.
-Examples: "Si", "Yes", "Ok", "Hazlo", "Dale", "No", "Cancel", "Go ahead",
-"Exactly", "That one", "Please", "Do it", "Why?", "How?", "Show me", etc.
-— all of these STAY in the PREVIOUS_INTENT lane.
+TASK — Lane for messages where the user wants the platform to PERFORM a \
+multi-step business workflow that changes state in real systems: provisioning, \
+onboarding, offboarding, generating and publishing artifacts, scheduling, \
+configuring, sending, processing, registering, assigning. The user is issuing \
+an order, not asking for information. The verb is operative ("onboard", \
+"create the account", "send the welcome email", "process the return", \
+"configure the laptop", "generate and publish the press release"). If the \
+message names a person, product, or entity AS THE OBJECT of an action verb, \
+it's almost certainly a task.
 
-Only classify as a DIFFERENT lane when the user clearly introduces an
-unrelated topic (e.g. switching from filesystem operations to asking about
-HR onboarding).
+MCP_QUERY — Lane for messages that interact with the MCP Inspector subsystem: \
+listing connected servers, connecting/disconnecting MCP servers, discovering \
+tool capabilities, calling tools on external MCP servers, browsing the \
+filesystem MCP, GitHub MCP operations, or anything where the user references \
+MCP/inspector/server/tool/capability concepts directly.
 
-Respond with ONLY one word: task, conversational, or mcp_query."""
+Decision heuristic, in order:
+1. Does the message reference MCP, inspector, servers, tools, or external \
+platforms via MCP? → MCP_QUERY.
+2. Is the user issuing an operative command to change state, not asking a \
+question? → TASK.
+3. Otherwise → CONVERSATIONAL.
+
+Session continuity: if PREVIOUS_INTENT is provided and the new message is a \
+short confirmation, denial, follow-up, or clarification ("yes", "do it", \
+"why?", "the second one"), keep the previous lane. Switch lanes only when the \
+user clearly opens a new topic.
+
+Respond with EXACTLY one word: task, conversational, or mcp_query."""
 
 
 class IntentRouter:
@@ -108,29 +133,33 @@ class IntentRouter:
                 Message(role="system", text=_SYSTEM_PROMPT),
                 Message(role="user", text=user_text),
             ]
-            options = ChatOptions(max_tokens=5, temperature=0.0)
+            options = ChatOptions(max_tokens=20, temperature=0.3)
 
             response = await client.get_response(messages, options=options)
-            raw = (response.text or "").strip().lower()
+            raw = (response.text or "").strip().lower().rstrip(".")
 
-            if "mcp" in raw:
+            intent_map = {
+                "mcp_query": Intent.MCP_QUERY,
+                "task": Intent.TASK,
+                "conversational": Intent.CONVERSATIONAL,
+            }
+
+            # Exact match first
+            if raw in intent_map:
                 return IntentResult(
-                    intent=Intent.MCP_QUERY,
+                    intent=intent_map[raw],
                     confidence=0.95,
-                    reasoning=f"LLM: mcp_query (raw={raw})",
+                    reasoning=f"LLM exact: {raw}",
                 )
-            if "conversational" in raw:
-                return IntentResult(
-                    intent=Intent.CONVERSATIONAL,
-                    confidence=0.95,
-                    reasoning=f"LLM: conversational (raw={raw})",
-                )
-            if "task" in raw:
-                return IntentResult(
-                    intent=Intent.TASK,
-                    confidence=0.95,
-                    reasoning=f"LLM: task (raw={raw})",
-                )
+
+            # Partial match as fallback
+            for key, intent in intent_map.items():
+                if key in raw:
+                    return IntentResult(
+                        intent=intent,
+                        confidence=0.85,
+                        reasoning=f"LLM partial: {raw}",
+                    )
 
             # LLM returned unexpected output — use previous_intent if available
             logger.warning(

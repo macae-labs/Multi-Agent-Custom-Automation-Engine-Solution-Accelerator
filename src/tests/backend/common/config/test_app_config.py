@@ -515,7 +515,7 @@ class TestAppConfigClientMethods:
 
         with patch.dict(os.environ, self._get_minimal_env()):
             config = AppConfig()
-            config.get_azure_credential = MagicMock(return_value=mock_credential)
+            config.get_azure_credential_async = MagicMock(return_value=mock_credential)
 
             result = config.get_ai_project_client()
 

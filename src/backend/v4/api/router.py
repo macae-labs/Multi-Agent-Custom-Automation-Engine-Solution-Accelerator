@@ -438,7 +438,9 @@ async def process_request(
     try:
 
         async def run_orchestration_task():
-            await OrchestrationManager().run_orchestration(user_id, input_task)
+            await OrchestrationManager().run_orchestration(
+                user_id, input_task.session_id, input_task
+            )
 
         background_tasks.add_task(run_orchestration_task)
 
@@ -776,7 +778,7 @@ async def chat_message_stream(
                     ephemeral=False,
                     user_id=user_id,
                     session_id=chat_request.session_id,
-                    runtime_tools_enabled=True,
+                    runtime_tools_enabled=False,
                     user_access_token=user_access_token,
                 )
                 await a.open()
@@ -1035,7 +1037,7 @@ async def _get_mcp_query_response(
                 ephemeral=False,
                 user_id=user_id,
                 session_id=session_id,
-                runtime_tools_enabled=True,
+                runtime_tools_enabled=False,
                 user_access_token=user_access_token,
             )
             await a.open()

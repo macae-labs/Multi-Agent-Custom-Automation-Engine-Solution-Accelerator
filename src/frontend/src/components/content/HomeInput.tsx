@@ -13,7 +13,6 @@ import "../../styles/prism-material-oceanic.css";
 import "./../../styles/HomeInput.css";
 
 import { HomeInputProps, iconMap, QuickTask } from "../../models/homeInput";
-import { TaskService } from "../../services/TaskService";
 import { NewTaskService } from "../../services/NewTaskService";
 import { ChatService } from "../../services/ChatService";
 
@@ -123,6 +122,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           },
           onDone: (data) => { intent = data.intent; },
           onRedirect: (planId) => { redirectPlan = planId; },
+          onPlanCreated: (planId) => { redirectPlan = planId; },
           onError: (errorMsg) => { fullResponse = `Error: ${errorMsg}`; },
         });
 

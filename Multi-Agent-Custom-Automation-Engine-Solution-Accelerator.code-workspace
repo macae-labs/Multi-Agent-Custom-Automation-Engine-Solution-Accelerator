@@ -44,6 +44,7 @@
 				]
 			}
 		},
-		"workbench.editor.enablePreview": false
+		"workbench.editor.enablePreview": false,
+		"github.copilot.chat.virtualTools.threshold": 0
 	}
 }

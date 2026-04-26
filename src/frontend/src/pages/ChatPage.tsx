@@ -22,7 +22,6 @@ import InlineToaster from '../components/toast/InlineToaster';
 
 import { EnhancedChatPanel } from '@/components/chat/EnhancedChatPanel';
 import { ChatService } from '../services/ChatService';
-import { NewTaskService } from '../services/NewTaskService';
 import type { ChatMessage } from '../lib/types';
 
 const ChatPage: React.FC = () => {
