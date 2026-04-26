@@ -34,7 +34,7 @@ os.environ.setdefault("AZURE_AI_PROJECT_NAME", "test-project")
 os.environ.setdefault("AZURE_AI_AGENT_ENDPOINT", "https://test.ai.azure.com")
 
 # Import the class to test - using absolute import path that coverage can track
-from backend.common.config.app_config import AppConfig
+from backend.common.config.app_config import AppConfig  # noqa: E402
 
 
 class TestAppConfigInitialization:
@@ -507,19 +507,15 @@ class TestAppConfigClientMethods:
                 mock_logger.assert_called_once()
 
     @patch("backend.common.config.app_config.AIProjectClient")
-    @patch("backend.common.config.app_config.DefaultAzureCredential")
-    def test_get_ai_project_client_success(
-        self, mock_default_credential, mock_ai_client
-    ):
+    def test_get_ai_project_client_success(self, mock_ai_client):
         """Test successful AI Project client creation."""
         mock_credential = MagicMock()
-        mock_default_credential.return_value = mock_credential
-
         mock_ai_instance = MagicMock()
         mock_ai_client.return_value = mock_ai_instance
 
         with patch.dict(os.environ, self._get_minimal_env()):
             config = AppConfig()
+            config.get_azure_credential = MagicMock(return_value=mock_credential)
 
             result = config.get_ai_project_client()
 

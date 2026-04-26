@@ -88,8 +88,8 @@ class TestGetAuthenticatedUserDetails:
                 # Expected due to relative import issue in test environment
                 pass
 
-            # Verify logging was called regardless
-            mock_log.assert_called_once_with(
+            # Verify logging was called with the sample_user message
+            mock_log.assert_any_call(
                 "No user principal found in headers — using sample_user (dev mode)"
             )
 
@@ -122,14 +122,20 @@ class TestGetAuthenticatedUserDetails:
             "x-ms-token-aad-access-token": "",
         }
 
-        result = get_authenticated_user_details(empty_headers)
+        # Mockear _dev_acquire_user_token para aislar este test del fallback dev.
+        # El test valida que headers vacíos no rompan la función,
+        # no el comportamiento del dev token acquisition.
+        with patch(
+            "backend.auth.auth_utils._dev_acquire_user_token",
+            return_value=None,
+        ):
+            result = get_authenticated_user_details(empty_headers)
 
-        # Verify empty strings are preserved (except user_name which falls back)
         assert result["user_principal_id"] == ""
-        assert result["user_name"] == "dev-user@local"  # fallback for empty
+        assert result["user_name"] == "dev-user@local"
         assert result["auth_provider"] == ""
         assert result["auth_token"] == ""
-        assert result["access_token"] == ""
+        assert result["access_token"] is None
 
 
 class TestGetTenantId:

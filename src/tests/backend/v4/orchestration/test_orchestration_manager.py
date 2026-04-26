@@ -421,7 +421,7 @@ sys.modules["v4.magentic_agents.magentic_agent_factory"] = Mock(
 )
 
 # Now import the module under test
-from backend.v4.orchestration.orchestration_manager import OrchestrationManager
+from backend.v4.orchestration.orchestration_manager import OrchestrationManager  # noqa: E402
 
 # Get mocked references for tests
 connection_config = sys.modules["v4.config.settings"].connection_config
