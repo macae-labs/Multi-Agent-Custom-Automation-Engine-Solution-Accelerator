@@ -147,8 +147,8 @@ class OrchestrationManager:
                 client=chat_client,
                 name="MagenticManager",
                 default_options=AzureAIProjectAgentOptions(
-                    store=False
-                ),  # Client-managed conversation to avoid stale tool call IDs across rounds
+                    store=True
+                ),  # Foundry persists conversation so the published agent keeps context across rounds
             )
 
             cls.logger.info(
