@@ -438,7 +438,9 @@ async def process_request(
     try:
 
         async def run_orchestration_task():
-            await OrchestrationManager().run_orchestration(user_id, input_task)
+            await OrchestrationManager().run_orchestration(
+                user_id, input_task.session_id, input_task
+            )
 
         background_tasks.add_task(run_orchestration_task)
 
@@ -754,20 +756,30 @@ async def chat_message_stream(
             from common.config.app_config import config as app_config
             from v4.config.agent_pool import get_or_create
             from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+            from v4.magentic_agents.models.agent_models import MCPConfig
 
             async def _factory():
+                try:
+                    mcp_cfg = MCPConfig.from_env()
+                except ValueError:
+                    mcp_cfg = None
+                    logger.warning(
+                        "MCP env vars missing; ChatMCPAgent will have no MCP tools"
+                    )
+
                 a = FoundryAgentTemplate(
                     agent_name="ChatMCPAgent",
                     agent_description="Server-side chat agent with KB and MCP tools",
                     agent_instructions=_MCP_AGENT_INSTRUCTIONS,
-                    use_reasoning=False,
+                    use_reasoning=True,
                     model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                     project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
+                    mcp_config=mcp_cfg,
                     ephemeral=False,
                     user_id=user_id,
                     session_id=chat_request.session_id,
                     runtime_tools_enabled=False,
-                    user_access_token=user_access_token,  # Pass user token for OBO
+                    user_access_token=user_access_token,
                 )
                 await a.open()
                 return a
@@ -780,6 +792,14 @@ async def chat_message_stream(
                 # Process ALL content types from the agent framework
                 for content in update.contents or []:
                     ct = content.type
+                    logger.info(
+                        "SSE content type=%s, name=%s, text=%s",
+                        ct,
+                        getattr(content, "name", None)
+                        or getattr(content, "tool_name", None)
+                        or "",
+                        (getattr(content, "text", None) or "")[:100],
+                    )
 
                     if ct == "text":
                         token = content.text or ""
@@ -788,6 +808,11 @@ async def chat_message_stream(
                             yield _sse_event({"type": "token", "content": token})
 
                     elif ct == "function_call":
+                        logger.info(
+                            "Function call: name=%s args=%s",
+                            content.name,
+                            content.arguments,
+                        )
                         yield _sse_event(
                             {
                                 "type": "tool_activity",
@@ -798,6 +823,11 @@ async def chat_message_stream(
                         )
 
                     elif ct == "function_result":
+                        logger.info(
+                            "Function result: name=%s result=%s",
+                            getattr(content, "name", "?"),
+                            str(getattr(content, "result", content))[:4000],
+                        )
                         yield _sse_event(
                             {
                                 "type": "tool_activity",
@@ -983,22 +1013,32 @@ async def _get_mcp_query_response(
     from common.config.app_config import config as app_config
     from v4.config.agent_pool import get_or_create
     from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+    from v4.magentic_agents.models.agent_models import MCPConfig
 
     try:
 
         async def _factory():
+            try:
+                mcp_cfg = MCPConfig.from_env()
+            except ValueError:
+                mcp_cfg = None
+                logger.warning(
+                    "MCP env vars missing; ChatMCPAgent will have no MCP tools"
+                )
+
             a = FoundryAgentTemplate(
                 agent_name="ChatMCPAgent",
                 agent_description="Server-side chat agent with KB and MCP tools",
                 agent_instructions=_MCP_AGENT_INSTRUCTIONS,
-                use_reasoning=False,
+                use_reasoning=True,
                 model_deployment_name=app_config.AZURE_OPENAI_DEPLOYMENT_NAME,
                 project_endpoint=app_config.AZURE_AI_PROJECT_ENDPOINT,
+                mcp_config=mcp_cfg,
                 ephemeral=False,
                 user_id=user_id,
                 session_id=session_id,
                 runtime_tools_enabled=False,
-                user_access_token=user_access_token,  # For OBO flow
+                user_access_token=user_access_token,
             )
             await a.open()
             return a

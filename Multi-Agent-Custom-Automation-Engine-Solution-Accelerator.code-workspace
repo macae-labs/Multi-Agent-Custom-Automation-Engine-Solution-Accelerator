@@ -43,6 +43,8 @@
 					"copilot/auto"
 				]
 			}
-		}
+		},
+		"workbench.editor.enablePreview": false,
+		"github.copilot.chat.virtualTools.threshold": 0
 	}
 }

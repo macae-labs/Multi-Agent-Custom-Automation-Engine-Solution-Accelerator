@@ -18,7 +18,6 @@ from v4.common.services.team_service import TeamService
 from v4.config.agent_registry import agent_registry
 from v4.magentic_agents.models.agent_models import MCPConfig
 
-
 # Cache Foundry registrations per process so ephemeral runtime agents do not
 # recreate the same persisted agent on every request.
 _FOUNDRY_REGISTERED_AGENT_NAMES: set[str] = set()
@@ -43,6 +42,7 @@ class MCPEnabledBase:
         agent_instructions: str | None = None,
         model_deployment_name: str | None = None,
         project_client=None,
+        user_access_token: str | None = None,
     ) -> None:
         self._stack: AsyncExitStack | None = None
         self.mcp_cfg: MCPConfig | None = mcp
@@ -59,6 +59,7 @@ class MCPEnabledBase:
         self.agent_instructions: str | None = agent_instructions
         self.model_deployment_name: str | None = model_deployment_name
         self.project_client = project_client
+        self.user_access_token = user_access_token
         self.logger = logging.getLogger(__name__)
 
     async def open(self) -> "MCPEnabledBase":
@@ -66,7 +67,9 @@ class MCPEnabledBase:
             return self
         self._stack = AsyncExitStack()
 
-        # Acquire credential using centralized config method
+        # Always use MI/CLI credential for Foundry API calls.
+        # user_access_token is only for MCP tool forwarding (agent365 OBO),
+        # not for the AzureAIClient/ResponsesClient credential.
         self.creds = config.get_azure_credential_async(config.AZURE_CLIENT_ID)
         if self._stack:
             await self._stack.enter_async_context(self.creds)
@@ -267,10 +270,22 @@ class MCPEnabledBase:
         if not self.mcp_cfg:
             return
         try:
+            http_client = None
+            if self.user_access_token:
+                import httpx
+
+                http_client = httpx.AsyncClient(
+                    headers={"Authorization": f"Bearer {self.user_access_token}"}
+                )
+                self.logger.info(
+                    "Forwarding user OBO token to MCP server via Authorization header"
+                )
+
             mcp_tool = MCPStreamableHTTPTool(
                 name=self.mcp_cfg.name,
                 description=self.mcp_cfg.description,
                 url=self.mcp_cfg.url,
+                http_client=http_client,
             )
             if self._stack:
                 await self._stack.enter_async_context(mcp_tool)
@@ -300,6 +315,7 @@ class AzureAgentBase(MCPEnabledBase):
         agent_description: str | None = None,
         agent_instructions: str | None = None,
         project_client=None,
+        user_access_token: str | None = None,
     ) -> None:
         super().__init__(
             mcp=mcp,
@@ -312,6 +328,7 @@ class AzureAgentBase(MCPEnabledBase):
             agent_instructions=agent_instructions,
             model_deployment_name=model_deployment_name,
             project_client=project_client,
+            user_access_token=user_access_token,
         )
 
         self._created_ephemeral: bool = (

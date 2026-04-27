@@ -134,6 +134,7 @@ def _setup_agent_framework_mock():
     if 'agent_framework_azure_ai' not in sys.modules:
         mock_af_ai = ModuleType('agent_framework_azure_ai')
         mock_af_ai.AzureAIClient = type('AzureAIClient', (), {})
+        mock_af_ai.AzureAIProjectAgentOptions = type('AzureAIProjectAgentOptions', (dict,), {})
         sys.modules['agent_framework_azure_ai'] = mock_af_ai
 
 

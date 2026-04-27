@@ -9,6 +9,7 @@ from azure.core.exceptions import (
     ResourceNotFoundError,
 )
 from azure.search.documents.indexes import SearchIndexClient
+
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import (
@@ -175,6 +176,9 @@ class TeamService:
             The unique ID of the saved configuration
         """
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             # Use the specific add_team method from cosmos memory context
             await self.memory_context.add_team(team_config)
 
@@ -201,6 +205,9 @@ class TeamService:
             TeamConfiguration object or None if not found
         """
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             # Get the specific configuration using the team-specific method
             team_config = await self.memory_context.get_team(team_id)
 
@@ -224,6 +231,9 @@ class TeamService:
             True if successful, False otherwise
         """
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             await self.memory_context.delete_current_team(user_id)
             self.logger.info("Successfully deleted current team for user %s", user_id)
             return True
@@ -234,7 +244,7 @@ class TeamService:
 
     async def handle_team_selection(
         self, user_id: str, team_id: str
-    ) -> UserCurrentTeam:
+    ) -> Optional[UserCurrentTeam]:
         """
         Set a default team for a user.
 
@@ -247,6 +257,9 @@ class TeamService:
         """
         print("Handling team selection for user:", user_id, "team:", team_id)
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             await self.memory_context.delete_current_team(user_id)
             current_team = UserCurrentTeam(
                 user_id=user_id,
@@ -270,6 +283,9 @@ class TeamService:
             List of TeamConfiguration objects
         """
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             # Use the specific get_all_teams method
             team_configs = await self.memory_context.get_all_teams()
             return team_configs
@@ -290,6 +306,9 @@ class TeamService:
             True if deleted successfully, False if not found
         """
         try:
+            if self.memory_context is None:
+                raise ValueError("Memory context is not initialized")
+
             # First, verify the configuration exists and belongs to the user
             success = await self.memory_context.delete_team(team_id)
             if success:

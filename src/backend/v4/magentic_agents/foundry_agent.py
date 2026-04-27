@@ -1,7 +1,7 @@
 """Agent template for building Foundry agents with Azure AI Search, optional MCP tool, and Code Interpreter (agent_framework version)."""
 
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 from agent_framework import Agent, ChatOptions, Message
 from agent_framework_azure_ai import AzureAIClient
@@ -81,6 +81,7 @@ class FoundryAgentTemplate(AzureAgentBase):
             agent_description=agent_description,
             agent_instructions=agent_instructions,
             project_client=project_client,
+            user_access_token=user_access_token,  # Pass for OBO flow
         )
 
         self.enable_code_interpreter = enable_code_interpreter
@@ -202,6 +203,14 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Create agent using create_version with PromptAgentDefinition and AzureAISearchTool
         # This approach matches the Knowledge Mining Solution Accelerator pattern
         try:
+            if not self.model_deployment_name:
+                self.logger.error(
+                    "model_deployment_name is required for Azure AI Search agent creation."
+                )
+                raise ValueError(
+                    "model_deployment_name must be provided to create Azure AI Search agent."
+                )
+
             enhanced_instructions = (
                 f"{self.agent_instructions} "
                 "Always use the Azure AI Search tool and configured index for knowledge retrieval."
@@ -291,10 +300,13 @@ class FoundryAgentTemplate(AzureAgentBase):
                     instructions=self.agent_instructions,
                     name=self.agent_name,
                     description=self.agent_description,
-                    default_options=AzureAIProjectAgentOptions(
-                        store=False,
-                        tool_choice="required",
-                        temperature=temp,
+                    default_options=cast(
+                        Any,
+                        AzureAIProjectAgentOptions(
+                            store=False,
+                            tool_choice="required",
+                            temperature=temp,
+                        ),
                     ),
                 )
             else:
@@ -320,10 +332,13 @@ class FoundryAgentTemplate(AzureAgentBase):
                         name=self.agent_name,
                         description=self.agent_description,
                         tools=tools,
-                        default_options=ChatOptions(
-                            store=False,
-                            tool_choice="auto",
-                            temperature=temp,
+                        default_options=cast(
+                            Any,
+                            ChatOptions(
+                                store=False,
+                                tool_choice="auto",
+                                temperature=temp,
+                            ),
                         ),
                     )
                 else:
@@ -340,10 +355,13 @@ class FoundryAgentTemplate(AzureAgentBase):
                         instructions=self.agent_instructions,
                         name=self.agent_name,
                         description=self.agent_description,
-                        default_options=AzureAIProjectAgentOptions(
-                            store=False,
-                            tool_choice="auto",
-                            temperature=temp,
+                        default_options=cast(
+                            Any,
+                            AzureAIProjectAgentOptions(
+                                store=False,
+                                tool_choice="auto",
+                                temperature=temp,
+                            ),
                         ),
                     )
 
@@ -409,7 +427,7 @@ class FoundryAgentTemplate(AzureAgentBase):
             if (
                 self._use_azure_search
                 and self._azure_server_agent_id
-                and hasattr(self, "project_client")
+                and self.project_client is not None
             ):
                 try:
                     await self.project_client.agents.delete_agent(

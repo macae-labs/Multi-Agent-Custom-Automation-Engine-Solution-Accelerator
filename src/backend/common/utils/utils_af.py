@@ -94,7 +94,7 @@ async def create_RAI_agent(
         agent_name=agent_name,
         agent_description=agent_description,
         agent_instructions=agent_instructions,
-        use_reasoning=False,
+        use_reasoning=True,
         model_deployment_name=config.AZURE_OPENAI_RAI_DEPLOYMENT_NAME,
         enable_code_interpreter=False,
         project_endpoint=config.AZURE_AI_PROJECT_ENDPOINT,

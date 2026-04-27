@@ -53,6 +53,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r src/backend/requirements.txt
 
+      - name: Debug SDK exports
+        run: |
+          python -c "import agent_framework_azure_ai; print('Version:', agent_framework_azure_ai.__version__); print('Has AzureAIProjectAgentOptions:', hasattr(agent_framework_azure_ai, 'AzureAIProjectAgentOptions')); print('All exports:', [x for x in dir(agent_framework_azure_ai) if not x.startswith('_')])"
+
       - name: Check if test files exist
         id: check_tests
         run: |

@@ -1,20 +1,22 @@
 """Orchestration manager (agent_framework version) handling multi-agent Magentic workflow creation and execution."""
 
 import asyncio
+import inspect
 import logging
 import re
+import time as _time
 import uuid
 from typing import List, Optional
 
-# agent_framework imports
-from agent_framework_azure_ai import AzureAIClient
 from agent_framework import (
     Agent,
     AgentResponseUpdate,
-    ChatOptions,
-    Message,
     InMemoryCheckpointStorage,
+    Message,
 )
+
+# agent_framework imports
+from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
 from agent_framework_orchestrations import MagenticBuilder
 from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatRequestSentEvent,
@@ -23,17 +25,15 @@ from agent_framework_orchestrations._base_group_chat_orchestrator import (
 from agent_framework_orchestrations._magentic import (
     MagenticProgressLedger,
 )
+from requests import session
 
 from common.config.app_config import config
-from common.models.messages_af import TeamConfiguration
-
 from common.database.database_base import DatabaseBase
-
-from v4.common.services.team_service import TeamService
-import time as _time
+from common.models.messages_af import TeamConfiguration
 from v4.callbacks.response_handlers import (
     streaming_agent_response_callback,
 )
+from v4.common.services.team_service import TeamService
 from v4.config.settings import connection_config, orchestration_config
 from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
 from v4.models.messages import WebsocketMessageType
@@ -146,9 +146,9 @@ class OrchestrationManager:
             manager_agent = Agent(
                 client=chat_client,
                 name="MagenticManager",
-                default_options=ChatOptions(
-                    store=False
-                ),  # Client-managed conversation to avoid stale tool call IDs across rounds
+                default_options=AzureAIProjectAgentOptions(
+                    store=True
+                ),  # Foundry persists conversation so the published agent keeps context across rounds
             )
 
             cls.logger.info(
@@ -267,10 +267,11 @@ class OrchestrationManager:
                         agent, "agent_name", getattr(agent, "name", "")
                     )
                     if agent_name != "ProxyAgent":
-                        close_coro = getattr(agent, "close", None)
-                        if callable(close_coro):
+                        close_method = getattr(agent, "close", None)
+                        if callable(close_method):
                             try:
-                                await close_coro()
+                                if inspect.iscoroutinefunction(close_method):
+                                    await close_method()
                                 cls.logger.debug("Closed agent '%s'", agent_name)
                             except Exception as e:
                                 cls.logger.error("Error closing agent: %s", e)
@@ -304,7 +305,7 @@ class OrchestrationManager:
     # ---------------------------
     # Execution
     # ---------------------------
-    async def run_orchestration(self, user_id: str, input_task) -> None:
+    async def run_orchestration(self, user_id, session_id: str, input_task) -> None:
         """
         Execute the Magentic workflow for the provided user and task description.
         """
@@ -383,40 +384,13 @@ class OrchestrationManager:
         task_text = getattr(input_task, "description", str(input_task))
         self.logger.debug("Task: %s", task_text)
 
-        # ── Inject chat conversation context ──────────────────────────────────
-        # Fetch the last N messages from the Cosmos chat session so Plan agents
-        # have the same conversational context the user built up in chat mode.
-        # This closes the gap where the Plan workflow previously had no awareness
-        # of what was discussed before the task was created.
-        session_id = getattr(input_task, "session_id", None)
-        if session_id and user_id:
-            try:
-                from common.services.chat_cosmos_service import get_chat_cosmos_service
-                _chat_svc = await get_chat_cosmos_service()
-                _session = await _chat_svc.get_session(session_id, user_id)
-                if _session and _session.get("messages"):
-                    # Take the last 10 messages (enough context, bounded token cost).
-                    _recent = _session["messages"][-10:]
-                    _lines = []
-                    for _m in _recent:
-                        _role = _m.get("role", "")
-                        _content = (_m.get("content") or "")[:400]
-                        if _content:
-                            _lines.append(f"{_role}: {_content}")
-                    if _lines:
-                        _ctx = "## Conversation context (most recent messages):\n" + "\n".join(_lines)
-                        task_text = f"{_ctx}\n\n## Task to execute:\n{task_text}"
-                        self.logger.info(
-                            "Injected %d chat messages as context for Plan (session=%s)",
-                            len(_lines),
-                            session_id[:12],
-                        )
-            except Exception as _ctx_err:
-                self.logger.warning(
-                    "Could not fetch chat context for Plan (session=%s): %s",
-                    session_id,
-                    _ctx_err,
-                )
+        # ── Chat context injection DISABLED ─────────────────────────────────
+        # Previously injected the last N chat messages as context for Plan agents.
+        # This caused contamination: Plan agents saw debug conversations,
+        # connection errors, and MCP interactions from chat mode, leading to
+        # confused plans and repeated failed attempts.
+        # Plan agents receive only the task description — they have their own
+        # tools, instructions, and MCP connections to execute independently.
 
         # Track how many times each agent is called (for debugging duplicate calls)
         agent_call_counts: dict = {}
@@ -603,9 +577,12 @@ class OrchestrationManager:
             # This closes the visibility gap: after Plan execution the chat
             # agent will have the Plan outcome in its Cosmos history so the
             # user can continue the conversation with full context.
-            if final_text and session_id:
+            if final_text and session:
                 try:
-                    from common.services.chat_cosmos_service import get_chat_cosmos_service
+                    from common.services.chat_cosmos_service import (
+                        get_chat_cosmos_service,
+                    )
+
                     _chat_svc_wb = await get_chat_cosmos_service()
                     await _chat_svc_wb.add_message(
                         session_id=session_id,

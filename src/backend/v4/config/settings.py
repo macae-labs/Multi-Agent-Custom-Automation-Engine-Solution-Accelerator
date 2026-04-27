@@ -156,9 +156,7 @@ class OrchestrationConfig:
             self._approval_events[plan_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(
-                self._approval_events[plan_id].wait(), timeout=timeout
-            )
+            await self._approval_events[plan_id].wait()
             logger.info(f"Approval received: {plan_id}")
             # After event.wait(), the value is guaranteed to be set (not None)
             result = self.approvals[plan_id]
@@ -166,11 +164,6 @@ class OrchestrationConfig:
                 f"Approval result for {plan_id} should not be None after event"
             )
             return result
-        except asyncio.TimeoutError:
-            # Clean up on timeout
-            logger.warning(f"Approval timeout: {plan_id}")
-            self.cleanup_approval(plan_id)
-            raise
         except asyncio.CancelledError:
             logger.debug("Approval request %s was cancelled", plan_id)
             raise
