@@ -203,6 +203,14 @@ class FoundryAgentTemplate(AzureAgentBase):
         # Create agent using create_version with PromptAgentDefinition and AzureAISearchTool
         # This approach matches the Knowledge Mining Solution Accelerator pattern
         try:
+            if not self.model_deployment_name:
+                self.logger.error(
+                    "model_deployment_name is required for Azure AI Search agent creation."
+                )
+                raise ValueError(
+                    "model_deployment_name must be provided to create Azure AI Search agent."
+                )
+
             enhanced_instructions = (
                 f"{self.agent_instructions} "
                 "Always use the Azure AI Search tool and configured index for knowledge retrieval."
@@ -211,7 +219,7 @@ class FoundryAgentTemplate(AzureAgentBase):
             azure_agent = await self.project_client.agents.create_version(
                 agent_name=self.agent_name,  # Use original name
                 definition=PromptAgentDefinition(
-                    model=self.model_deployment_name or "",
+                    model=self.model_deployment_name,
                     instructions=enhanced_instructions,
                     tools=[
                         AzureAISearchTool(

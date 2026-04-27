@@ -40,11 +40,13 @@ generating documents, configuring systems) AND can ANSWER questions, AND can \
 operate external tools through MCP servers (filesystem, GitHub, third-party \
 APIs, etc.).
 
+Every user message MUST be routed through the multi-step plan \
+
 Classify the user's message into exactly ONE of these three lanes.
 
 CONVERSATIONAL — Lane for messages that can be resolved with a textual answer, \
-explanation, analysis, summary, recommendation, or a small clarification. The \
-user wants information, opinion, or insight. No system state changes. \
+explanation, analysis, summary, recommendation, or a clarification. The \
+user wants information, opinion, or insight \
 Greetings, farewells, "what is X", "how does Y work", "compare A vs B", \
 "summarize this", "explain that", "analyze customer Z's behavior", "give me \
 recommendations" — all conversational. Asking ABOUT a process is \
@@ -71,14 +73,14 @@ Decision heuristic, in order:
 platforms via MCP? → MCP_QUERY.
 2. Is the user issuing an operative command to change state, not asking a \
 question? → TASK.
-3. Otherwise → CONVERSATIONAL.
+3. Otherwise → MCP_QUERY.
 
 Session continuity: if PREVIOUS_INTENT is provided and the new message is a \
 short confirmation, denial, follow-up, or clarification ("yes", "do it", \
 "why?", "the second one"), keep the previous lane. Switch lanes only when the \
 user clearly opens a new topic.
 
-Respond with EXACTLY one word: task, conversational, or mcp_query."""
+Respond with EXACTLY one word: task, or mcp_query."""
 
 
 class IntentRouter:

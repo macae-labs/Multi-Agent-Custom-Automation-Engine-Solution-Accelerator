@@ -40,7 +40,7 @@ const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
                 value={input}
                 onChange={setInput}
                 onEnter={() => OnChatSubmit(input)}
-                disabledChat={submittingChatDisableInput}
+                disabledChat={false}
                 placeholder="Type your message here..."
                 style={{
                     fontSize: '16px',
