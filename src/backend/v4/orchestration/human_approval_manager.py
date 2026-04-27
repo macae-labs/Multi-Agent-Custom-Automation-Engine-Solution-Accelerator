@@ -215,7 +215,9 @@ DO NOT EVER OFFER TO HELP FURTHER IN THE FINAL ANSWER! Just provide the final an
             )
             raise Exception("Plan execution cancelled by user")
 
-    async def replan(self, magentic_context: MagenticContext) -> Any:
+    async def replan(
+        self, magentic_context: MagenticContext, feedback: Optional[str] = None
+    ) -> Any:
         """
         Override to add websocket messages for replanning events.
         """
