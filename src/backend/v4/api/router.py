@@ -2864,15 +2864,43 @@ class _RouterChatClient:
             # fails tools/list and 424s every turn. Toolbox is the fallback
             # only when no public endpoint is configured.
             if self._macae_mcp_url:
+                # IDENTITY HOP ca-mcp → backend. ca-mcp's connect_from_registry /
+                # RegistryBridge call back into THIS backend
+                # (/api/v4/mcp/connections/user/{server}/connect). The backend's
+                # EasyAuth is AllowAnonymous + AAD provider: a request WITHOUT a
+                # bearer it can validate passes through anonymous → no
+                # x-ms-client-principal-* injected → auth_utils raises
+                # "No EasyAuth principal found" (prod log). ca-mcp has no
+                # EasyAuth, so it cannot mint a principal itself; it only relays
+                # whatever `authorization` arrives here (inspector_service reads
+                # it from get_http_headers). Forward the user's EasyAuth access
+                # token: its aud is this app's clientId (that is what makes OBO
+                # succeed), which is exactly the backend's allowedAudiences —
+                # EasyAuth validates it and re-injects the principal. No new
+                # scopes involved. Works locally too (no EasyAuth, principal
+                # header alone suffices).
+                _macae_headers: dict[str, str] = {
+                    "x-ms-client-principal-id": self._user_id or "",
+                }
+                if self._user_access_token:
+                    if self._macae_mcp_url.startswith(
+                        ("https://", "http://localhost", "http://127.0.0.1")
+                    ):
+                        _macae_headers["Authorization"] = (
+                            f"Bearer {self._user_access_token}"
+                        )
+                    else:
+                        logger.warning(
+                            "Refusing to forward end-user access token to non-HTTPS MCP endpoint: %s",
+                            self._macae_mcp_url,
+                        )
                 tools = [
                     {
                         "type": "mcp",
                         "server_label": "MacaeMcpServer",
                         "server_url": self._macae_mcp_url,
                         "require_approval": "never",
-                        "headers": {
-                            "x-ms-client-principal-id": self._user_id or "",
-                        },
+                        "headers": _macae_headers,
                     },
                 ]
             else:
