@@ -2883,9 +2883,17 @@ class _RouterChatClient:
                     "x-ms-client-principal-id": self._user_id or "",
                 }
                 if self._user_access_token:
-                    _macae_headers["Authorization"] = (
-                        f"Bearer {self._user_access_token}"
-                    )
+                    if self._macae_mcp_url.startswith(
+                        ("https://", "http://localhost", "http://127.0.0.1")
+                    ):
+                        _macae_headers["Authorization"] = (
+                            f"Bearer {self._user_access_token}"
+                        )
+                    else:
+                        logger.warning(
+                            "Refusing to forward end-user access token to non-HTTPS MCP endpoint: %s",
+                            self._macae_mcp_url,
+                        )
                 tools = [
                     {
                         "type": "mcp",
