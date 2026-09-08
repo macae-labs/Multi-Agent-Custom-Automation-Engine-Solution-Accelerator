@@ -993,16 +993,19 @@ class RegistryBridge:
     ) -> dict[str, str]:
         """Build auth headers for requests on behalf of a user.
 
-        Forwards the caller's Bearer token so the backend's
-        get_authenticated_user_details can resolve a real identity
-        instead of falling back to sample_user.
+        Always forwards a Bearer: the one passed explicitly, else the one on
+        the inbound MCP request. Locally (no EasyAuth) the principal headers
+        alone suffice; in the Container App only the bearer counts — EasyAuth
+        strips client-supplied x-ms-client-principal-* and re-injects them only
+        after validating the bearer. Without it the hop is anonymous.
         """
         headers: dict[str, str] = {
             "x-ms-client-principal-id": user_id,
             "x-ms-client-principal-name": user_id,
         }
-        if bearer_token:
-            headers["Authorization"] = f"Bearer {bearer_token}"
+        token = bearer_token or _caller_identity()[1]
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     async def lookup_server(self, server_name: str) -> dict[str, Any] | None:
@@ -1060,6 +1063,30 @@ class RegistryBridge:
             logger.warning(f"Connection initiation failed: {e}")
             return None
 
+    async def register_server(
+        self, user_id: str, entry: dict[str, Any], bearer_token: str | None = None
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Persist a NEW catalog entry (POST {base}/servers).
+
+        Same identity hop as ``initiate_connection``: the backend endpoint
+        requires an EasyAuth principal, so the user's bearer is forwarded and
+        the backend records ``added_by`` from it. Returns ``(result, error)``
+        so the caller can surface a 409 (duplicate) distinctly.
+        """
+        try:
+            resp = await self._client.post(
+                f"{self.base}/servers",
+                headers=self._user_headers(user_id, bearer_token),
+                json=entry,
+            )
+            if resp.status_code == 409:
+                return None, resp.json().get("detail", "already exists")
+            resp.raise_for_status()
+            return resp.json(), None
+        except Exception as e:
+            logger.warning(f"Server registration failed: {e}")
+            return None, str(e)
+
     async def activate_connection(
         self, user_id: str, server_name: str, secret_ref: str = ""
     ) -> dict[str, Any] | None:
@@ -1095,6 +1122,33 @@ class RegistryBridge:
     async def close(self):
         """Close the HTTP client."""
         await self._client.aclose()
+
+
+def _caller_identity() -> tuple[str | None, str | None]:
+    """(principal_id, bearer) of the MCP request being served, or (None, None).
+
+    The backend attaches ca-mcp with ``x-ms-client-principal-id`` (who) and the
+    user's EasyAuth ``Authorization: Bearer`` (proof the backend's EasyAuth
+    will validate on the hop back). Never trust ``user_id`` args from the model
+    when a principal is present.
+    """
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+
+        headers = get_http_headers(
+            include={"x-ms-client-principal-id", "authorization"}
+        )
+        principal = headers.get("x-ms-client-principal-id") or None
+        auth = headers.get("authorization", "").strip()
+        if auth.lower().startswith("bearer "):
+            bearer = auth[7:].strip() or None
+        else:
+            # Tolerate a scheme-less token value (a caller that passed only the
+            # token). Downstream always re-attaches the "Bearer " prefix.
+            bearer = auth or None
+        return principal, bearer
+    except Exception:
+        return None, None
 
 
 class InspectorService(MCPToolBase):
@@ -1202,21 +1256,14 @@ class InspectorService(MCPToolBase):
                 Connection status with server info and capabilities.
             """
             try:
-                # Auto-extract user_id from HTTP headers if not provided
-                if not user_id:
-                    try:
-                        from fastmcp.server.dependencies import get_http_headers
-
-                        headers = get_http_headers(include={"x-ms-client-principal-id"})
-                        user_id = headers.get("x-ms-client-principal-id") or ""
-                        if user_id:
-                            logger.info(
-                                f"[connect_mcp_server] Auto-detected user_id: {user_id}"
-                            )
-                    except Exception as e:
-                        logger.debug(
-                            f"[connect_mcp_server] Could not extract user_id: {e}"
-                        )
+                # Identity of the MCP request (principal + forwarded bearer),
+                # resolved ONCE here and reused below — one source of truth.
+                _principal, _inbound_bearer = _caller_identity()
+                if not user_id and _principal:
+                    user_id = _principal
+                    logger.info(
+                        f"[connect_mcp_server] Auto-detected user_id: {user_id}"
+                    )
 
                 logger.info(
                     "[connect_mcp_server] called: server_url=%s, server_name=%s, user_id=%s, has_token=%s",
@@ -1350,30 +1397,13 @@ class InspectorService(MCPToolBase):
                 if not bearer:
                     bearer = access_token
 
-                if not bearer:
-                    try:
-                        from fastmcp.server.dependencies import get_http_headers
-
-                        inbound = get_http_headers(include={"authorization"})
-                        auth_hdr = inbound.get("authorization") or inbound.get(
-                            "Authorization"
-                        )
-                        if auth_hdr:
-                            # Strip scheme if caller passed only the token value.
-                            bearer = (
-                                auth_hdr.split(" ", 1)[1]
-                                if auth_hdr.lower().startswith("bearer ")
-                                else auth_hdr
-                            )
-                            logger.info(
-                                "[connect_mcp_server] Forwarding inbound "
-                                "Authorization header to upstream '%s'",
-                                server_name,
-                            )
-                    except Exception as e:
-                        logger.debug(
-                            "[connect_mcp_server] No inbound auth header: %s", e
-                        )
+                if not bearer and _inbound_bearer:
+                    bearer = _inbound_bearer
+                    logger.info(
+                        "[connect_mcp_server] Forwarding inbound "
+                        "Authorization header to upstream '%s'",
+                        server_name,
+                    )
 
                 # If still no token, resolve the registered connection's secret from
                 # the registry/Key Vault. The lookup MUST key on the AUTHENTICATED user
@@ -1382,17 +1412,7 @@ class InspectorService(MCPToolBase):
                 # which never matches how the connection was registered, so the lookup
                 # silently missed and forced passing a token by hand. Prefer the header;
                 # fall back to the passed user_id only when the header is absent.
-                lookup_user_id = user_id
-                try:
-                    from fastmcp.server.dependencies import get_http_headers
-
-                    _principal = get_http_headers(
-                        include={"x-ms-client-principal-id"}
-                    ).get("x-ms-client-principal-id")
-                    if _principal:
-                        lookup_user_id = _principal
-                except Exception:
-                    pass
+                lookup_user_id = _principal or user_id
 
                 if not bearer and lookup_user_id and server_name:
                     try:
@@ -1877,6 +1897,130 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
+        async def register_mcp_server(
+            server_url: str,
+            server_name: str,
+            display_name: str = "",
+            description: str = "",
+            auth_type: str = "",
+            credential_source: str = "",
+            audience: str = "",
+            transport: str = "streamable-http",
+        ) -> str:
+            """
+            Persist an MCP server URL in the Cosmos registry so it becomes a
+            reusable catalog entry (visible in the UI and to
+            connect_from_registry) instead of an ephemeral in-memory session.
+
+            This is the WRITE half of the Cosmos lane; connect_mcp_server is
+            ephemeral (dies with the replica). Use this for arbitrary /
+            self-hosted / third-party servers where the platform can hold the
+            credential. First-party servers (Graph, Teams, WorkIQ) are NOT for
+            this lane: they are bound server-side to the published Foundry
+            agent and reject third-party OBO.
+
+            You normally only need server_url + server_name. Leave auth_type /
+            credential_source / audience EMPTY unless the user stated them: the
+            backend derives the working credential strategy from the endpoint
+            (Azure data planes such as *.search.windows.net, *.grafana.azure.com,
+            *.services.ai.azure.com, management.azure.com → managed_identity
+            with the right audience; oauth2 → oauth_refresh; api_key →
+            static_secret). Sending explicit values DISABLES that derivation.
+
+            Args:
+                server_url: Full MCP endpoint, e.g. https://host/mcp.
+                server_name: Unique slug key, e.g. "grafana-prod".
+                display_name: UI label; defaults to server_name.
+                description: Optional free text.
+                auth_type: Optional override: none | api_key | oauth2 | bearer_token
+                           | managed_identity (what the wire sees).
+                credential_source: Optional override: static_secret | oauth_refresh
+                           | managed_identity (how the platform OBTAINS the token).
+                audience: Optional AAD scope for managed_identity, e.g. "<appId>/.default".
+                transport: streamable-http | sse.
+
+            Returns:
+                The persisted catalog entry (with the derived auth_type /
+                credential_source / audience), or an error (409 if the name exists).
+                Next step on success: connect_from_registry(server_name).
+            """
+            try:
+                user_id, _bearer_token = _caller_identity()
+                if not user_id:
+                    return format_error_response(
+                        error_message="No authenticated caller identity on the request.",
+                        context="register_mcp_server",
+                    )
+
+                url = (server_url or "").strip()
+                if not url.lower().startswith(("http://", "https://")):
+                    return format_error_response(
+                        error_message=f"server_url must be http(s): {url!r}",
+                        context="register_mcp_server",
+                    )
+                name = (server_name or "").strip()
+                if not name:
+                    return format_error_response(
+                        error_message="server_name is required.",
+                        context="register_mcp_server",
+                    )
+
+                # Send ONLY what the caller stated. MCPServerEntry's
+                # _derive_credential_source runs `if not credential_source`,
+                # so a default here would silently disable it and an Azure
+                # endpoint would be stored none/static_secret → no Authorization
+                # → 401. Same body shape the UI sends.
+                entry: dict[str, Any] = {
+                    "server_name": name,
+                    "display_name": (display_name or name).strip(),
+                    "description": description or "",
+                    "endpoint": url,
+                    "transport": transport or "streamable-http",
+                }
+                if auth_type:
+                    entry["auth_type"] = auth_type
+                if credential_source:
+                    entry["credential_source"] = credential_source
+                if audience:
+                    entry["audience"] = audience
+
+                result, err = await registry.register_server(
+                    user_id, entry, bearer_token=_bearer_token
+                )
+                if result is None:
+                    return format_error_response(
+                        error_message=(
+                            f"Failed to register '{name}': {err}. "
+                            "If it already exists, call connect_from_registry."
+                        ),
+                        context="register_mcp_server",
+                    )
+
+                server = result.get("server", {})
+                # Report what the backend actually persisted (derived values),
+                # not what we sent.
+                eff_auth = server.get("auth_type", "?")
+                eff_src = server.get("credential_source", "?")
+                eff_aud = server.get("audience") or "-"
+                return format_success_response(
+                    action="MCP Server Registered",
+                    details={
+                        "server": server,
+                        "next_step": f"connect_from_registry('{name}')",
+                    },
+                    summary=(
+                        f"Registered '{name}' → {url} (auth_type={eff_auth}, "
+                        f"credential_source={eff_src}, audience={eff_aud}). "
+                        f"Persisted in the catalog; now call "
+                        f"connect_from_registry('{name}')."
+                    ),
+                )
+            except Exception as e:
+                return format_error_response(
+                    error_message=str(e), context="register_mcp_server"
+                )
+
+        @mcp.tool(tags={self.domain.value})
         async def connect_from_registry(
             server_name: str, user_id: str = "sample_user"
         ) -> str:
@@ -1900,21 +2044,9 @@ class InspectorService(MCPToolBase):
                 Connection result or auth instructions.
             """
             try:
-                _bearer_token: str | None = None
-                try:
-                    from fastmcp.server.dependencies import get_http_headers
-
-                    _headers = get_http_headers(
-                        include={"x-ms-client-principal-id", "authorization"}
-                    )
-                    _principal = _headers.get("x-ms-client-principal-id")
-                    if _principal:
-                        user_id = _principal
-                    _auth = _headers.get("authorization", "")
-                    if _auth.lower().startswith("bearer "):
-                        _bearer_token = _auth[7:].strip() or None
-                except Exception:
-                    pass
+                _principal, _bearer_token = _caller_identity()
+                if _principal:
+                    user_id = _principal
 
                 # 1. Lookup server in catalog
                 server = await registry.lookup_server(server_name)
