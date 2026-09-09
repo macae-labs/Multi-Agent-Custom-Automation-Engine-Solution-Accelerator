@@ -1070,7 +1070,10 @@ class RegistryBridge:
             )
             if resp.status_code in (400, 422):
                 # Backend explains why OAuth cannot be set up (no metadata, no DCR).
-                detail = resp.json().get("detail", resp.text)
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except ValueError:
+                    detail = resp.text
                 return {"error": detail}
             resp.raise_for_status()
             return resp.json()
