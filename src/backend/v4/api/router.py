@@ -4091,9 +4091,8 @@ async def chat_message_stream(
                         if _oauth_m:
                             _oauth_link = _oauth_m.group(1).replace("\\/", "/")
                             logger.info(
-                                "OAuth consent required (discovered) for %s: %s",
+                                "OAuth consent required (discovered) for %s (consent link generated)",
                                 server_name,
-                                _oauth_link,
                             )
                             yield _sse_event(
                                 {
