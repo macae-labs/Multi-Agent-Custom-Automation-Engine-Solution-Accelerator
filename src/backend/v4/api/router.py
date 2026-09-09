@@ -6562,7 +6562,9 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
             server.auth_type == MCPAuthType.OAUTH2
             and server.oauth_authorize_url
             and server.oauth_client_id_env
+            and server.oauth_client_secret_env
             and os.environ.get(server.oauth_client_id_env or "", "")
+            and os.environ.get(server.oauth_client_secret_env or "", "")
         )
         # Discovery lane: explicitly requested (401 upstream) OR the entry says
         # oauth2 but nobody pre-registered a client for it.
