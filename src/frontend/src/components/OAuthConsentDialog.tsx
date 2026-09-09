@@ -32,6 +32,8 @@ export function OAuthConsentDialog(): JSX.Element | null {
     if (!consent) return;
     const onMessage = (e: MessageEvent) => {
       if (!e?.data || e.data.type !== 'mcp_oauth') return;
+      if (popupRef.current && e.source !== popupRef.current) return;
+      if (typeof (e.data as { ok?: unknown }).ok !== 'boolean') return;
       try {
         popupRef.current?.close();
       } catch {
