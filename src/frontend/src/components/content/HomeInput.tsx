@@ -22,6 +22,7 @@ import './../../styles/HomeInput.css';
 import { HomeInputProps, iconMap, QuickTask } from '../../models/homeInput';
 import { NewTaskService } from '../../services/NewTaskService';
 import { ChatService } from '../../services/ChatService';
+import { requestOAuthConsent } from '../../utils/oauthConsent';
 
 import ChatInput from '@/coral/modules/ChatInput';
 import InlineToaster, { useInlineToaster } from '../toast/InlineToaster';
@@ -323,23 +324,10 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
                 voiceLiveNarrate(data.tool, data.server);
             },
             onOAuthConsentRequest: (consentLink) => {
-              // NOTE: do NOT pass 'noopener' — with it window.open() returns null
-              // (per spec), so popup.closed polling never runs and the auto-retry
-              // after consent approval is silently skipped (user had to re-send).
-              const popup = window.open(
-                consentLink,
-                'oauth_consent',
-                'width=620,height=720'
-              );
-              if (popup) {
-                const timer = setInterval(() => {
-                  if (popup.closed) {
-                    clearInterval(timer);
-                    // Retry the same message now that the user has approved
-                    handleSubmit(userMessage);
-                  }
-                }, 500);
-              }
+              // A browser blocks window.open() from this async SSE handler, so
+              // publish the request; the shared <OAuthConsentDialog> opens the
+              // popup on the user's click and retries this message on success.
+              requestOAuthConsent(consentLink, () => handleSubmit(userMessage));
             },
           },
           fileIds,

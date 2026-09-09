@@ -1195,6 +1195,61 @@ def _pending_auth_response(
     )
 
 
+async def _oauth_discovery_pivot(
+    registry,
+    user_id: str,
+    server_name: str,
+    endpoint: str,
+    bearer_token: str | None,
+    www_authenticate: str,
+    ensure_registered_url: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Turn a 401 from an external MCP server into the OAuth sign-in flow.
+
+    Shared by BOTH connect paths so neither dead-ends on a raw 401 asking the
+    user for a token. Reads the RFC 9728 ``resource_metadata`` hint from the
+    ``WWW-Authenticate`` header, then asks the backend to run discovery
+    (RFC 9728 -> 8414 -> 7591 + PKCE) and return an authorize URL. For the
+    direct-URL path the server may not be catalogued yet — discovery needs a
+    catalog entry — so it is registered first (best-effort; 409 = already there).
+    Returns ``(discovery_result, None)`` on success or ``(None, error)``.
+    """
+    _rm = None
+    _m = re.search(r'resource_metadata="([^"]+)"', www_authenticate or "")
+    if _m:
+        _rm = _m.group(1)
+    if ensure_registered_url:
+        try:
+            await registry.register_server(
+                user_id,
+                {
+                    "server_name": server_name,
+                    "display_name": server_name,
+                    "endpoint": ensure_registered_url,
+                    "transport": "streamable-http",
+                },
+                bearer_token=bearer_token,
+            )
+        except Exception as exc:  # best-effort; discovery still needs the entry
+            logger.debug(
+                "[oauth pivot] register '%s' best-effort: %s", server_name, exc
+            )
+    logger.info(
+        "[oauth pivot] 401 from %s; requesting OAuth discovery (resource_metadata=%s)",
+        endpoint,
+        _rm,
+    )
+    disc = await registry.initiate_connection(
+        user_id,
+        server_name,
+        bearer_token=bearer_token,
+        body={"oauth_discovery": True, "resource_metadata": _rm},
+    )
+    if not disc or disc.get("error") or not disc.get("oauth_url"):
+        return None, str((disc or {}).get("error", "no metadata"))
+    return disc, None
+
+
 def _caller_identity() -> tuple[str | None, str | None]:
     """(principal_id, bearer) of the MCP request being served, or (None, None).
 
@@ -1526,7 +1581,37 @@ class InspectorService(MCPToolBase):
                         else f"Bearer {bearer}"
                     )
 
-                server_info = await session.initialize()
+                try:
+                    server_info = await session.initialize()
+                except httpx.HTTPStatusError as http_err:
+                    if http_err.response.status_code != 401:
+                        raise
+                    # Same as connect_from_registry: a direct-URL 401 must NOT
+                    # dead-end asking for a token. Register the URL (discovery
+                    # needs a catalog entry) and pivot to the OAuth sign-in flow.
+                    disc, err = await _oauth_discovery_pivot(
+                        registry,
+                        user_id,
+                        server_name,
+                        server_url,
+                        _inbound_bearer,
+                        http_err.response.headers.get("www-authenticate", ""),
+                        ensure_registered_url=server_url,
+                    )
+                    if not disc:
+                        await session.close()
+                        return format_error_response(
+                            error_message=(
+                                f"'{server_url}' returned 401 and OAuth could not "
+                                f"be set up automatically: {err}. Register it in the "
+                                "Applications UI or provide a token."
+                            ),
+                            context=f"connecting to MCP server at {server_url}",
+                        )
+                    await session.close()
+                    return _pending_auth_response(
+                        server_name, server_url, "oauth2", user_id, {}, disc
+                    )
 
                 sessions[_key] = session
 
@@ -2056,7 +2141,29 @@ class InspectorService(MCPToolBase):
                     "transport": transport or "streamable-http",
                 }
                 if auth_type:
-                    entry["auth_type"] = auth_type
+                    # Normalize what models actually send ("oauth", "bearer",
+                    # "api-key") to the catalog enum; anything still unknown is
+                    # dropped so the backend derives it instead of answering 422.
+                    _alias = {
+                        "oauth": "oauth2",
+                        "oauth2": "oauth2",
+                        "bearer": "bearer_token",
+                        "bearer_token": "bearer_token",
+                        "apikey": "api_key",
+                        "api-key": "api_key",
+                        "api_key": "api_key",
+                        "none": "none",
+                        "managed_identity": "managed_identity",
+                    }
+                    _norm = _alias.get(auth_type.strip().lower())
+                    if _norm:
+                        entry["auth_type"] = _norm
+                    else:
+                        logger.info(
+                            "[register_mcp_server] ignoring unknown auth_type=%r; "
+                            "backend will derive it",
+                            auth_type,
+                        )
                 if credential_source:
                     entry["credential_source"] = credential_source
                 if audience:
@@ -2277,33 +2384,21 @@ class InspectorService(MCPToolBase):
                 except httpx.HTTPStatusError as http_err:
                     if http_err.response.status_code != 401:
                         raise
-                    # The remote demands auth we don't hold. Do NOT surface a
-                    # dead-end error: ask the backend to run discovery
-                    # (RFC 9728 -> 8414 -> 7591 + PKCE) and hand back the
-                    # authorize URL; the composer opens it in the popup.
-                    _www = http_err.response.headers.get("www-authenticate", "")
-                    _rm = None
-                    _m = re.search(r'resource_metadata="([^"]+)"', _www or "")
-                    if _m:
-                        _rm = _m.group(1)
-                    logger.info(
-                        "[connect_from_registry] 401 from %s; requesting OAuth "
-                        "discovery (resource_metadata=%s)",
-                        endpoint,
-                        _rm,
-                    )
-                    disc = await registry.initiate_connection(
+                    # The remote demands auth we don't hold. Do NOT dead-end on a
+                    # raw 401 — pivot to the OAuth sign-in flow (shared helper).
+                    disc, err = await _oauth_discovery_pivot(
+                        registry,
                         user_id,
                         server_name,
-                        bearer_token=_bearer_token,
-                        body={"oauth_discovery": True, "resource_metadata": _rm},
+                        endpoint,
+                        _bearer_token,
+                        http_err.response.headers.get("www-authenticate", ""),
                     )
-                    if not disc or disc.get("error") or not disc.get("oauth_url"):
+                    if not disc:
                         return format_error_response(
                             error_message=(
                                 f"'{server_name}' returned 401 and OAuth could not "
-                                f"be set up automatically: "
-                                f"{(disc or {}).get('error', 'no metadata')}. "
+                                f"be set up automatically: {err}. "
                                 "Provide a static token via the Applications UI."
                             ),
                             context=f"connecting to '{server_name}' from registry",
