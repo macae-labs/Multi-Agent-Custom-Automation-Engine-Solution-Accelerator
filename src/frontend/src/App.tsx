@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import store from './store';
 import { PlanPage } from './pages';
 import { useWebSocket } from './hooks/useWebSocket';
+import { OAuthConsentDialog } from './components/OAuthConsentDialog';
 
 function App() {
     useWebSocket();
@@ -18,6 +19,9 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
+      {/* One place renders the MCP OAuth sign-in prompt; the popup opens on the
+          user's click (browsers block the async auto-open the SSE handler used). */}
+      <OAuthConsentDialog />
     </Provider>
   );
 }

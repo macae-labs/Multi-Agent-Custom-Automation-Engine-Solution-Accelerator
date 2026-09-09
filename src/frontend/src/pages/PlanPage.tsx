@@ -8,6 +8,7 @@ import React, {
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Spinner, Text } from '@fluentui/react-components';
 import { PlanDataService } from '../services/PlanDataService';
+import { requestOAuthConsent } from '../utils/oauthConsent';
 import {
   isVoiceLiveActive,
   onVoiceBargeIn,
@@ -1111,23 +1112,13 @@ const PlanPage: React.FC = () => {
             // selector branch above remains the explicit path.
             allowPlan: true,
             onOAuthConsentRequest: (consentLink) => {
-              // NOTE: no 'noopener' — with it window.open() returns null (per
-              // spec), so popup.closed polling never runs and the auto-retry
-              // after consent approval is silently skipped (user had to re-send).
-              const popup = window.open(
-                consentLink,
-                'oauth_consent',
-                'width=620,height=720'
+              // A browser blocks window.open() called straight from this async
+              // SSE handler, so publish the request and let the shared
+              // <OAuthConsentDialog> open the popup on the user's click (a real
+              // gesture). It retries this message once sign-in succeeds.
+              requestOAuthConsent(consentLink, () =>
+                handleOnchatSubmit(chatInput)
               );
-              if (popup) {
-                const timer = setInterval(() => {
-                  if (popup.closed) {
-                    clearInterval(timer);
-                    // Retry the same message now that the user has approved
-                    handleOnchatSubmit(chatInput);
-                  }
-                }, 500);
-              }
             },
           }
         )) {
