@@ -1231,7 +1231,9 @@ async def _oauth_discovery_pivot(
                 bearer_token=bearer_token,
             )
         except Exception as exc:  # best-effort; discovery still needs the entry
-            logger.debug("[oauth pivot] register '%s' best-effort: %s", server_name, exc)
+            logger.debug(
+                "[oauth pivot] register '%s' best-effort: %s", server_name, exc
+            )
     logger.info(
         "[oauth pivot] 401 from %s; requesting OAuth discovery (resource_metadata=%s)",
         endpoint,
