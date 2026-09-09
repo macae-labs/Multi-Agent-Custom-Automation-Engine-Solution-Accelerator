@@ -51,6 +51,11 @@ updates:
     labels:
       - "dependencies"
       - "auto-merge"
+    ignore:
+      # Dependabot security runs for this repo can target starlette even when
+      # the resolved version in metadata is already non-vulnerable, which
+      # produces a security_update_not_needed failure.
+      - dependency-name: "starlette"
     groups:
       python-backend:
         patterns:
