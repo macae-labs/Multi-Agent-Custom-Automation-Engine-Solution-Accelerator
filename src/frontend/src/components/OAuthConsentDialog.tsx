@@ -63,6 +63,17 @@ export function OAuthConsentDialog(): JSX.Element | null {
       'width=620,height=720'
     );
     popupRef.current = popup;
+
+    if (popup) {
+      const timer = window.setInterval(() => {
+        if (popup.closed) {
+          window.clearInterval(timer);
+          setWaiting(false);
+          setFailed(true);
+        }
+      }, 500);
+    }
+
     // If the popup is blocked even on a click (rare), fall back to same-tab nav
     // so the sign-in still proceeds; the callback returns to the app afterwards.
     if (!popup) {
