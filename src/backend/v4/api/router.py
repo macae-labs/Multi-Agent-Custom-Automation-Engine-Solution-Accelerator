@@ -4086,7 +4086,8 @@ async def chat_message_stream(
                         # close they re-send the message and the retry connects
                         # with the fresh token.
                         _oauth_m = re.search(
-                            r"['\"]oauth_url['\"]\s*:\s*['\"]([^'\"]+)['\"]", str(content_preview or "")
+                            r"['\"]oauth_url['\"]\s*:\s*['\"]([^'\"]+)['\"]",
+                            str(content_preview or ""),
                         )
                         if _oauth_m:
                             _oauth_link = _oauth_m.group(1).replace("\\/", "/")
