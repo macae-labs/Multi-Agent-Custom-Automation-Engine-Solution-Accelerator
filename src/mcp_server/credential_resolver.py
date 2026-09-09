@@ -234,6 +234,11 @@ class CredentialResolver:
         scopes = creds.get("scopes")
         if scopes:
             data["scope"] = scopes if isinstance(scopes, str) else " ".join(scopes)
+        # RFC 8707: keep the refreshed token bound to the MCP server it was
+        # issued for (set by the backend callback on the discovery lane).
+        resource = creds.get("resource")
+        if resource:
+            data["resource"] = resource
 
         try:
             import httpx

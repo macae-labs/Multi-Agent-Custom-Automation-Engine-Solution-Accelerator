@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -1049,14 +1050,28 @@ class RegistryBridge:
             return None
 
     async def initiate_connection(
-        self, user_id: str, server_name: str, bearer_token: str | None = None
+        self,
+        user_id: str,
+        server_name: str,
+        bearer_token: str | None = None,
+        body: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Initiate / create a user connection to a cataloged server."""
+        """Initiate / create a user connection to a cataloged server.
+
+        ``body`` may carry ``{"oauth_discovery": true, "resource_metadata": ...}``
+        after the remote answered 401: the backend then discovers the AS
+        (RFC 9728/8414), registers a client (RFC 7591) and returns ``oauth_url``.
+        """
         try:
             resp = await self._client.post(
                 f"{self.base}/user/{server_name}/connect",
                 headers=self._user_headers(user_id, bearer_token),
+                json=body or {},
             )
+            if resp.status_code in (400, 422):
+                # Backend explains why OAuth cannot be set up (no metadata, no DCR).
+                detail = resp.json().get("detail", resp.text)
+                return {"error": detail}
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -1122,6 +1137,59 @@ class RegistryBridge:
     async def close(self):
         """Close the HTTP client."""
         await self._client.aclose()
+
+
+def _pending_auth_response(
+    server_name: str,
+    endpoint: str,
+    auth_type: str,
+    user_id: str,
+    server: dict[str, Any],
+    conn_result: dict[str, Any],
+) -> str:
+    """Uniform "Authentication Required" result for connect_from_registry.
+
+    Carries ``oauth_url`` when the backend produced one (pre-configured OAuth or
+    the discovery lane after a 401). The router turns that field into an
+    ``oauth_consent_request`` SSE event so the composer opens the SAME popup the
+    Applications UI uses; on close the message is re-sent and the retry connects
+    with the fresh token. Without a URL the user must supply a static token.
+    """
+    oauth_url = conn_result.get("oauth_url")
+    details: dict[str, Any] = {
+        "server_name": server_name,
+        "endpoint": endpoint,
+        "auth_type": auth_type,
+        "status": "pending_auth",
+        "user_id": user_id,
+        "oauth_scopes": server.get("oauth_scopes", []),
+    }
+    if oauth_url:
+        details["oauth_url"] = oauth_url
+        details["instructions"] = (
+            f"Server '{server_name}' requires the user to sign in. The sign-in "
+            f"window opens automatically; tell the user to complete it. Then call "
+            f"connect_from_registry('{server_name}') again. Do NOT paste the URL "
+            f"as text unless the user asks for it."
+        )
+        summary = (
+            f"Server '{server_name}' requires {auth_type} sign-in. Authorization "
+            f"window opened for the user; retry connect_from_registry after they "
+            f"finish."
+        )
+    else:
+        details["instructions"] = (
+            f"Server '{server_name}' requires {auth_type} authentication and no "
+            f"OAuth flow is available. The user must add a token in Applications, "
+            f"then call connect_from_registry again."
+        )
+        summary = (
+            f"Server '{server_name}' requires {auth_type} auth. User must "
+            f"authorize first, then retry."
+        )
+    return format_success_response(
+        action="Authentication Required", details=details, summary=summary
+    )
 
 
 def _caller_identity() -> tuple[str | None, str | None]:
@@ -1906,6 +1974,7 @@ class InspectorService(MCPToolBase):
             credential_source: str = "",
             audience: str = "",
             transport: str = "streamable-http",
+            user_id: str = "",
         ) -> str:
             """
             Persist an MCP server URL in the Cosmos registry so it becomes a
@@ -1938,14 +2007,20 @@ class InspectorService(MCPToolBase):
                            | managed_identity (how the platform OBTAINS the token).
                 audience: Optional AAD scope for managed_identity, e.g. "<appId>/.default".
                 transport: streamable-http | sse.
+                user_id: Optional; the authenticated caller identity on the
+                         request always wins (accepted so callers that pass it
+                         are not rejected).
 
             Returns:
                 The persisted catalog entry (with the derived auth_type /
                 credential_source / audience), or an error (409 if the name exists).
-                Next step on success: connect_from_registry(server_name).
+                Next step on success: connect_from_registry(server_name). If the
+                server then answers 401, connect_from_registry returns an
+                oauth_url the user must open (OAuth is discovered automatically).
             """
             try:
-                user_id, _bearer_token = _caller_identity()
+                _principal, _bearer_token = _caller_identity()
+                user_id = _principal or user_id
                 if not user_id:
                     return format_error_response(
                         error_message="No authenticated caller identity on the request.",
@@ -2082,33 +2157,19 @@ class InspectorService(MCPToolBase):
                         context="connection initiation",
                     )
 
+                if conn_result.get("error"):
+                    return format_error_response(
+                        error_message=str(conn_result["error"]),
+                        context="connection initiation",
+                    )
+
                 connection = conn_result.get("connection", {})
                 status = connection.get("status", "unknown")
 
                 # 3. Handle pending auth
                 if status == "pending_auth":
-                    return format_success_response(
-                        action="Authentication Required",
-                        details={
-                            "server_name": server_name,
-                            "endpoint": endpoint,
-                            "auth_type": auth_type,
-                            "status": status,
-                            "user_id": user_id,
-                            "oauth_scopes": server.get("oauth_scopes", []),
-                            "instructions": (
-                                f"Server '{server_name}' requires "
-                                f"{auth_type} authentication. "
-                                f"Complete the authorization flow, "
-                                f"then call connect_from_registry "
-                                f"again."
-                            ),
-                        },
-                        summary=(
-                            f"Server '{server_name}' requires "
-                            f"{auth_type} auth. User must "
-                            f"authorize first, then retry."
-                        ),
+                    return _pending_auth_response(
+                        server_name, endpoint, auth_type, user_id, server, conn_result
                     )
 
                 # 4. Active — connect to endpoint
@@ -2208,7 +2269,45 @@ class InspectorService(MCPToolBase):
                     session.audience = _audience
                     session.secret_ref = _secret_ref
 
-                server_info = await session.initialize()
+                try:
+                    server_info = await session.initialize()
+                except httpx.HTTPStatusError as http_err:
+                    if http_err.response.status_code != 401:
+                        raise
+                    # The remote demands auth we don't hold. Do NOT surface a
+                    # dead-end error: ask the backend to run discovery
+                    # (RFC 9728 -> 8414 -> 7591 + PKCE) and hand back the
+                    # authorize URL; the composer opens it in the popup.
+                    _www = http_err.response.headers.get("www-authenticate", "")
+                    _rm = None
+                    _m = re.search(r'resource_metadata="([^"]+)"', _www or "")
+                    if _m:
+                        _rm = _m.group(1)
+                    logger.info(
+                        "[connect_from_registry] 401 from %s; requesting OAuth "
+                        "discovery (resource_metadata=%s)",
+                        endpoint,
+                        _rm,
+                    )
+                    disc = await registry.initiate_connection(
+                        user_id,
+                        server_name,
+                        bearer_token=_bearer_token,
+                        body={"oauth_discovery": True, "resource_metadata": _rm},
+                    )
+                    if not disc or disc.get("error") or not disc.get("oauth_url"):
+                        return format_error_response(
+                            error_message=(
+                                f"'{server_name}' returned 401 and OAuth could not "
+                                f"be set up automatically: "
+                                f"{(disc or {}).get('error', 'no metadata')}. "
+                                "Provide a static token via the Applications UI."
+                            ),
+                            context=f"connecting to '{server_name}' from registry",
+                        )
+                    return _pending_auth_response(
+                        server_name, endpoint, "oauth2", user_id, server, disc
+                    )
                 sessions[_reg_key] = session
 
                 return format_success_response(

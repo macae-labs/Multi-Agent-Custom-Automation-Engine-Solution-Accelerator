@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import AsyncExitStack
 from typing import Annotated, Any, Optional, cast
@@ -4079,6 +4080,28 @@ async def chat_message_stream(
                                     else True,
                                 }
                             )
+                        # ca-mcp connect_from_registry -> pending_auth with an
+                        # oauth_url (discovery lane). Reuse the SAME popup the
+                        # composers already wire for oauth_consent_request; on
+                        # close they re-send the message and the retry connects
+                        # with the fresh token.
+                        _oauth_m = re.search(
+                            r'"oauth_url":\s*"([^"]+)"', str(content_preview or "")
+                        )
+                        if _oauth_m:
+                            _oauth_link = _oauth_m.group(1).replace("\\/", "/")
+                            logger.info(
+                                "OAuth consent required (discovered) for %s: %s",
+                                server_name,
+                                _oauth_link,
+                            )
+                            yield _sse_event(
+                                {
+                                    "type": "oauth_consent_request",
+                                    "consent_link": _oauth_link,
+                                    "message": "Authorization required to use this MCP server",
+                                }
+                            )
 
                     elif ct == "code_interpreter_tool_call":
                         args_text = str(
@@ -6320,6 +6343,141 @@ async def get_user_mcp_connection_by_server(server_name: str, request: Request):
         raise HTTPException(status_code=500, detail="Failed to get user connection")
 
 
+async def _start_discovered_oauth(
+    svc, server, user_id: str, resource_metadata_hint: Optional[str] = None
+) -> str:
+    """Zero-config OAuth for a URL the user pasted: discover the AS (RFC 9728 ->
+    8414), register a client if none is cached (RFC 7591), mint PKCE, persist
+    the pending context in Key Vault bound to the signed state, and promote the
+    catalog entry to oauth2/oauth_refresh with the discovered endpoints. Returns
+    the authorize URL for the popup. Raises HTTPException when the server
+    exposes no standards-compliant metadata (then only a static token works).
+    """
+    from credential_resolver import CredentialResolver
+    from v4.api.oauth_helpers import (
+        build_authorize_url,
+        dcr_provider_id,
+        discover_oauth_metadata,
+        dynamic_client_register,
+        generate_pkce,
+        sign_state,
+        store_pending_oauth,
+    )
+    from v4.common.models.mcp_connection_models import (
+        MCPAuthType,
+        MCPCredentialSource,
+    )
+
+    resolver = CredentialResolver()
+
+    # 1. Endpoints: reuse what a previous discovery persisted, else discover.
+    auth_ep = server.oauth_authorize_url
+    token_ep = server.oauth_token_url
+    reg_ep = server.oauth_registration_url
+    resource = server.oauth_resource
+    scopes = list(server.oauth_scopes or [])
+    if not (auth_ep and token_ep):
+        meta = await discover_oauth_metadata(server.endpoint, resource_metadata_hint)
+        if not meta:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"'{server.server_name}' requires authentication but exposes no "
+                    "OAuth metadata (RFC 9728/8414). Provide a static token via "
+                    "credentials instead."
+                ),
+            )
+        auth_ep = meta["authorization_endpoint"]
+        token_ep = meta["token_endpoint"]
+        reg_ep = meta.get("registration_endpoint")
+        resource = meta.get("resource") or server.endpoint
+        if not scopes:
+            scopes = list(meta.get("scopes_supported") or [])
+
+    # 2. Client: cached dynamic registration in KV, else DCR now.
+    client: Optional[dict] = None
+    if server.oauth_client_ref:
+        client = await resolver.resolve_credentials(
+            "catalog", dcr_provider_id(server.server_name)
+        )
+    client_ref = server.oauth_client_ref
+    if not client or not client.get("client_id"):
+        if not reg_ep:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"'{server.server_name}' needs OAuth but its authorization server "
+                    "offers no dynamic registration and no client is configured."
+                ),
+            )
+        try:
+            reg = await dynamic_client_register(
+                reg_ep, client_name="MACAE", scopes=scopes or None
+            )
+        except Exception as exc:
+            logger.error("DCR failed for %s: %s", server.server_name, exc)
+            raise HTTPException(
+                status_code=502, detail=f"Dynamic client registration failed: {exc}"
+            )
+        client = {
+            "client_id": reg["client_id"],
+            "client_secret": reg.get("client_secret") or "",
+        }
+        client_ref = await resolver.store_credentials(
+            "catalog", dcr_provider_id(server.server_name), client
+        )
+
+    # 3. PKCE + state; secrets go to KV, only the HMAC state goes in the URL.
+    verifier, challenge = generate_pkce()
+    state = sign_state(user_id, server.server_name)
+    await store_pending_oauth(
+        resolver,
+        user_id,
+        server.server_name,
+        state,
+        {
+            "code_verifier": verifier,
+            "client_id": client["client_id"],
+            "client_secret": client.get("client_secret") or "",
+            "token_endpoint": token_ep,
+            "resource": resource or "",
+            "scopes": " ".join(scopes),
+        },
+    )
+
+    # 4. Promote the catalog entry so the UI and the resolver see the truth.
+    changed = (
+        server.auth_type != MCPAuthType.OAUTH2
+        or server.credential_source != MCPCredentialSource.OAUTH_REFRESH
+        or server.oauth_authorize_url != auth_ep
+        or server.oauth_token_url != token_ep
+        or server.oauth_client_ref != client_ref
+    )
+    if changed:
+        server.auth_type = MCPAuthType.OAUTH2
+        server.credential_source = MCPCredentialSource.OAUTH_REFRESH
+        server.oauth_authorize_url = auth_ep
+        server.oauth_token_url = token_ep
+        server.oauth_registration_url = reg_ep
+        server.oauth_resource = resource
+        server.oauth_client_ref = client_ref
+        server.oauth_scopes = scopes
+        await svc.upsert_server(server)
+        logger.info(
+            "Catalog '%s' promoted to oauth2/oauth_refresh via discovery",
+            server.server_name,
+        )
+
+    return build_authorize_url(
+        auth_ep,
+        client["client_id"],
+        scopes,
+        state,
+        code_challenge=challenge,
+        resource=resource,
+    )
+
+
 @app_v4.post("/mcp/connections/user/{server_name}/connect")
 async def connect_user_to_mcp_server(server_name: str, request: Request):
     """
@@ -6332,11 +6490,9 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
 
     Request body (optional):
     {
-      "credentials": {
-        "access_token": "ghp_xxxx",
-        "api_key": "sk_xxxx",
-        ...
-      }
+      "credentials": { "access_token": "...", "api_key": "..." },
+      "oauth_discovery": true,          # remote answered 401: discover+DCR+PKCE
+      "resource_metadata": "https://..." # RFC 9728 hint from WWW-Authenticate
     }
     """
     try:
@@ -6358,15 +6514,9 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
                 status_code=404, detail=f"Server '{server_name}' not found"
             )
 
-        # Check existing connection
-        existing = await svc.get_user_connection(user_id, server_name)
-        if existing and existing.status == MCPConnectionStatus.ACTIVE:
-            return {
-                "connection": existing.model_dump(mode="json"),
-                "already_connected": True,
-            }
-
-        # Parse request body for credentials
+        # Parse request body FIRST — oauth_discovery must be read before the
+        # already_connected short-circuit, otherwise a re-call with
+        # oauth_discovery=true after a 401 never runs discovery.
         body = {}
         try:
             body = await request.json()
@@ -6376,6 +6526,24 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
             )
 
         credentials = body.get("credentials")
+        # ca-mcp sets this after the remote server answered 401 to an
+        # unauthenticated connect: "this URL needs OAuth, discover it".
+        oauth_discovery = bool(body.get("oauth_discovery"))
+        resource_metadata_hint = body.get("resource_metadata")
+
+        # Check existing connection — but NOT when oauth_discovery is requested:
+        # the caller got a 401 from the remote, so the "active" status is stale
+        # (registered as auth_type=none but the server actually requires OAuth).
+        existing = await svc.get_user_connection(user_id, server_name)
+        if (
+            existing
+            and existing.status == MCPConnectionStatus.ACTIVE
+            and not oauth_discovery
+        ):
+            return {
+                "connection": existing.model_dump(mode="json"),
+                "already_connected": True,
+            }
 
         # Determine status and secret_ref
         from v4.common.models.mcp_connection_models import (
@@ -6387,7 +6555,25 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
         secret_ref = None
         oauth_url: Optional[str] = None
 
-        if server.auth_type == MCPAuthType.NONE:
+        # Operator-preconfigured OAuth (client_id via env var) keeps its legacy path.
+        _preconfigured_oauth = bool(
+            server.auth_type == MCPAuthType.OAUTH2
+            and server.oauth_authorize_url
+            and server.oauth_client_id_env
+            and os.environ.get(server.oauth_client_id_env or "", "")
+        )
+        # Discovery lane: explicitly requested (401 upstream) OR the entry says
+        # oauth2 but nobody pre-registered a client for it.
+        _needs_discovery = not credentials and (
+            oauth_discovery
+            or (server.auth_type == MCPAuthType.OAUTH2 and not _preconfigured_oauth)
+        )
+
+        if _needs_discovery:
+            oauth_url = await _start_discovered_oauth(
+                svc, server, user_id, resource_metadata_hint
+            )
+        elif server.auth_type == MCPAuthType.NONE:
             status = MCPConnectionStatus.ACTIVE
         elif server.credential_source == MCPCredentialSource.MANAGED_IDENTITY:
             # Managed Identity tokens are minted by the platform at call time;
@@ -6526,7 +6712,11 @@ async def mcp_oauth_callback(query: Annotated[OAuthCallbackQuery, Query()]):
     from fastapi.responses import HTMLResponse
 
     from credential_resolver import CredentialResolver
-    from v4.api.oauth_helpers import exchange_code_for_token, verify_state
+    from v4.api.oauth_helpers import (
+        exchange_code_for_token,
+        load_pending_oauth,
+        verify_state,
+    )
     from v4.common.services.mcp_connections_service import MCPConnectionsService
 
     def _html(message: str, ok: bool = True, status_code: int = 200) -> HTMLResponse:
@@ -6562,20 +6752,50 @@ async def mcp_oauth_callback(query: Annotated[OAuthCallbackQuery, Query()]):
             f"Servidor '{server_name}' no encontrado", ok=False, status_code=404
         )
 
-    client_id_env = server.oauth_client_id_env or ""
-    client_secret_env = server.oauth_client_secret_env or ""
-    client_id = os.environ.get(client_id_env, "") if client_id_env else ""
-    client_secret = os.environ.get(client_secret_env, "") if client_secret_env else ""
-    if not client_id or not client_secret or not server.oauth_token_url:
-        return _html(
-            "OAuth no está completamente configurado en el catálogo.",
-            ok=False,
-            status_code=500,
+    # Discovery lane: the pending ctx (code_verifier + dynamic client + token
+    # endpoint) was stored in KV at /connect, bound to this state. Legacy lane:
+    # operator env vars. Never mix.
+    resolver = CredentialResolver()
+    pending = await load_pending_oauth(resolver, user_id, server_name, state)
+    code_verifier: Optional[str] = None
+    resource: Optional[str] = None
+    if pending:
+        client_id = pending.get("client_id", "")
+        client_secret = pending.get("client_secret") or ""
+        token_url = pending.get("token_endpoint") or server.oauth_token_url
+        code_verifier = pending.get("code_verifier")
+        resource = pending.get("resource") or None
+        scopes_used = [s for s in (pending.get("scopes") or "").split() if s]
+        if not client_id or not token_url:
+            return _html(
+                "El contexto de autorización está incompleto.",
+                ok=False,
+                status_code=500,
+            )
+    else:
+        client_id_env = server.oauth_client_id_env or ""
+        client_secret_env = server.oauth_client_secret_env or ""
+        client_id = os.environ.get(client_id_env, "") if client_id_env else ""
+        client_secret = (
+            os.environ.get(client_secret_env, "") if client_secret_env else ""
         )
+        token_url = server.oauth_token_url
+        scopes_used = list(server.oauth_scopes or [])
+        if not client_id or not client_secret or not token_url:
+            return _html(
+                "OAuth no está completamente configurado en el catálogo.",
+                ok=False,
+                status_code=500,
+            )
 
     try:
         token_data = await exchange_code_for_token(
-            server.oauth_token_url, client_id, client_secret, code
+            token_url,
+            client_id,
+            client_secret or None,
+            code,
+            code_verifier=code_verifier,
+            resource=resource,
         )
     except Exception as exc:
         logger.error(f"OAuth token exchange failed for '{server_name}': {exc}")
@@ -6585,18 +6805,20 @@ async def mcp_oauth_callback(query: Annotated[OAuthCallbackQuery, Query()]):
 
     # Enrich the raw provider response with everything credential_resolver needs to
     # REFRESH this token later from ca-mcp — which has neither the token endpoint nor
-    # the OAuth client env vars. Without these, oauth_refresh cannot mint a new
-    # access_token when the current one expires. Providers rotate refresh_token, so
-    # the resolver also writes the rotation back (needs KV Secrets Officer on its MI).
+    # the OAuth client. Without these, oauth_refresh cannot mint a new access_token
+    # when the current one expires. Providers rotate refresh_token, so the resolver
+    # also writes the rotation back (needs KV Secrets Officer on its MI).
     import time as _time
 
     token_data = dict(token_data)
-    token_data.setdefault("token_endpoint", server.oauth_token_url)
+    token_data.setdefault("token_endpoint", token_url)
     token_data.setdefault("client_id", client_id)
     if client_secret:
         token_data.setdefault("client_secret", client_secret)
-    if server.oauth_scopes:
-        token_data.setdefault("scopes", server.oauth_scopes)
+    if scopes_used:
+        token_data.setdefault("scopes", scopes_used)
+    if resource:
+        token_data.setdefault("resource", resource)
     _expires_in = token_data.get("expires_in")
     if _expires_in and "expires_at" not in token_data:
         try:
@@ -6605,7 +6827,6 @@ async def mcp_oauth_callback(query: Annotated[OAuthCallbackQuery, Query()]):
             pass
 
     try:
-        resolver = CredentialResolver()
         secret_ref = await resolver.store_credentials(user_id, server_name, token_data)
     except Exception as exc:
         logger.error(f"Failed to store OAuth token in Key Vault: {exc}")

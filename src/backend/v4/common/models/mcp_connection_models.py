@@ -154,6 +154,20 @@ class MCPServerEntry(BaseModel):
         default=None,
         description="Env var name holding the OAuth client_secret (e.g. 'GITHUB_CLIENT_SECRET')",
     )
+    # Discovered at runtime (RFC 9728/8414/7591) for servers registered by URL
+    # with no operator pre-configuration. The dynamic client credentials live
+    # in Key Vault (``oauth_client_ref``), never here.
+    oauth_registration_url: Optional[str] = Field(
+        default=None, description="RFC 7591 registration_endpoint (discovered)."
+    )
+    oauth_resource: Optional[str] = Field(
+        default=None,
+        description="RFC 8707 resource indicator (canonical MCP server URI).",
+    )
+    oauth_client_ref: Optional[str] = Field(
+        default=None,
+        description="Key Vault secret URI holding the dynamically registered client.",
+    )
 
     # Capabilities discovered on last connect (cached)
     capabilities: List[str] = Field(
