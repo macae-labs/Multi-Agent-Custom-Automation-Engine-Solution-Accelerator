@@ -1599,6 +1599,7 @@ class InspectorService(MCPToolBase):
                         ensure_registered_url=server_url,
                     )
                     if not disc:
+                        await session.close()
                         return format_error_response(
                             error_message=(
                                 f"'{server_url}' returned 401 and OAuth could not "
@@ -1607,6 +1608,7 @@ class InspectorService(MCPToolBase):
                             ),
                             context=f"connecting to MCP server at {server_url}",
                         )
+                    await session.close()
                     return _pending_auth_response(
                         server_name, server_url, "oauth2", user_id, {}, disc
                     )
