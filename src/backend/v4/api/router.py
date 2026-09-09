@@ -6450,6 +6450,9 @@ async def _start_discovered_oauth(
         or server.credential_source != MCPCredentialSource.OAUTH_REFRESH
         or server.oauth_authorize_url != auth_ep
         or server.oauth_token_url != token_ep
+        or server.oauth_registration_url != reg_ep
+        or server.oauth_resource != resource
+        or list(server.oauth_scopes or []) != scopes
         or server.oauth_client_ref != client_ref
     )
     if changed:
