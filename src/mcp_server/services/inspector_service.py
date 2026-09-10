@@ -1143,9 +1143,16 @@ class RegistryBridge:
                 return False
             resp.raise_for_status()
             return True
-        except Exception as e:
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                "User connection delete failed (status=%s): %s",
+                e.response.status_code,
+                e,
+            )
+            raise
+        except httpx.HTTPError as e:
             logger.warning(f"User connection delete failed: {e}")
-            return False
+            raise
 
     async def get_user_servers(self, user_id: str) -> list[dict[str, Any]]:
         """Get all servers with the user's connection status."""
