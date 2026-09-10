@@ -6632,7 +6632,13 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
                 state,
             )
 
-        # Create connection
+        # Create or UPDATE the user's connection. A user has exactly ONE record
+        # per server: when one already exists (e.g. active from a no-auth first
+        # connect, then re-entered via the oauth_discovery lane after a 401) we
+        # must update it in place — MCPUserConnection defaults `id` to a fresh
+        # uuid, and Cosmos upsert keys on `id`, so a new object would INSERT a
+        # duplicate. Duplicates break disconnect (only one gets deleted) and
+        # make a re-login reuse the stale record instead of starting fresh.
         conn = MCPUserConnection(
             pk=user_id,
             user_id=user_id,
@@ -6641,6 +6647,8 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
             status=status,
             secret_ref=secret_ref,
         )
+        if existing:
+            conn.id = existing.id
         result = await svc.upsert_user_connection(conn)
 
         track_event_if_configured(
