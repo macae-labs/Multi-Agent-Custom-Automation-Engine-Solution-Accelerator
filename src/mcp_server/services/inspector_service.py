@@ -34,6 +34,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from core.factory import Domain, MCPToolBase
 from utils.formatters import format_error_response, format_success_response
+from utils.tool_arguments import normalize_arguments, validate_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,50 @@ def _truncate(obj: Any, max_len: int) -> str:
     return s if len(s) <= max_len else s[:max_len] + "..."
 
 
-class ExternalMCPSession:
+class ToolSchemaCache:
+    """Per-session cached ``tools/list`` index.
+
+    ``call_external_tool`` conforms LLM-composed arguments to the target
+    tool's declared ``inputSchema`` before the network round-trip; that needs
+    the schema without paying a full ``tools/list`` (Higgsfield: 101 tools)
+    on every call. The index is filled lazily and refreshed on a miss — a
+    server may add tools at runtime — at most once per ``_REFRESH_INTERVAL``
+    so an unlisted tool called in a loop does not re-list every time.
+    """
+
+    _REFRESH_INTERVAL = 60.0
+    _tool_index: dict[str, dict[str, Any]] | None = None
+    _tool_index_at: float = 0.0
+
+    async def list_tools(self) -> list[dict[str, Any]]:  # pragma: no cover
+        raise NotImplementedError
+
+    async def tool_schema(self, tool_name: str) -> dict[str, Any] | None:
+        """``inputSchema`` of *tool_name*, or ``None`` when the server does
+        not list it (hidden member tools, pagination, list failure). ``None``
+        means "unknown", never "invalid": the caller passes the call through
+        unchanged and the remote stays the authority.
+        """
+        stale = self._tool_index is None or (
+            tool_name not in self._tool_index
+            and time.time() - self._tool_index_at > self._REFRESH_INTERVAL
+        )
+        if stale:
+            try:
+                tools = await self.list_tools()
+            except Exception as exc:
+                logger.debug("tools/list for schema lookup failed: %s", exc)
+                return None
+            self._tool_index = {
+                t["name"]: t for t in tools if isinstance(t, dict) and t.get("name")
+            }
+            self._tool_index_at = time.time()
+        entry = (self._tool_index or {}).get(tool_name)
+        schema = entry.get("inputSchema") if entry else None
+        return schema if isinstance(schema, dict) else None
+
+
+class ExternalMCPSession(ToolSchemaCache):
     """Manages a single connection to an external MCP server."""
 
     def __init__(self, server_url: str, server_name: str):
@@ -336,7 +380,7 @@ class ExternalMCPSession:
         self._initialized = False
 
 
-class DirectStdioSession:
+class DirectStdioSession(ToolSchemaCache):
     """Manages a DIRECT connection to a stdio MCP server — no proxy needed.
 
     Uses the MCP SDK's ``stdio_client`` to spawn the command as a child
@@ -527,7 +571,9 @@ class DirectStdioSession:
                 else {"type": "unknown", "data": str(item)}
             )
             content.append(d)
-        return {"content": content}
+        # Same shape as the JSON-RPC sessions: isError is part of the MCP
+        # tool-result contract and the caller decides success on it.
+        return {"content": content, "isError": bool(getattr(result, "isError", False))}
 
     async def list_resources(self) -> list[dict[str, Any]]:
         if not self._session or "resources" not in self.capabilities:
@@ -587,7 +633,7 @@ class DirectStdioSession:
         logger.info("[DirectStdio] Closed session '%s'", self.server_name)
 
 
-class ProxiedStdioSession:
+class ProxiedStdioSession(ToolSchemaCache):
     """LEGACY: Manages a connection to a stdio MCP server via the Inspector proxy.
 
     NOTE: This class is kept for backward compatibility but is no longer the
@@ -1817,6 +1863,50 @@ class InspectorService(MCPToolBase):
                 else:
                     args = {}
 
+                # Pre-flight against the tool's declared inputSchema, BEFORE
+                # any network round-trip: the model writes property names in
+                # its own convention (job_id) while the server declares
+                # another (jobId). Conform the names deterministically when
+                # the match is unambiguous, and reject here — with the schema
+                # in hand for a one-step retry — what the server would reject
+                # anyway. Unknown schema (unlisted tool, list failure) → pass
+                # through untouched; the remote stays the authority.
+                schema = await session.tool_schema(target_tool)
+                renamed: dict[str, str] = {}
+                if schema is not None:
+                    conformed = normalize_arguments(args, schema)
+                    args, renamed = conformed.arguments, conformed.renamed
+                    if renamed:
+                        logger.info(
+                            "[call_external_tool] %s/%s: arguments conformed to "
+                            "inputSchema: %s",
+                            server_name,
+                            target_tool,
+                            renamed,
+                        )
+                    check = validate_arguments(args, schema)
+                    if not check.ok:
+                        problems = []
+                        if check.missing_required:
+                            problems.append(
+                                f"missing required {check.missing_required}"
+                            )
+                        if check.unknown:
+                            problems.append(
+                                f"unknown {check.unknown} "
+                                f"(schema declares additionalProperties: false)"
+                            )
+                        return format_error_response(
+                            error_message=(
+                                f"Arguments for '{target_tool}' on '{server_name}' "
+                                f"do not match its inputSchema: "
+                                f"{'; '.join(problems)}. The call was NOT sent. "
+                                f"Retry using exactly these properties: "
+                                f"{_truncate(json.dumps(schema, ensure_ascii=False), 4000)}"
+                            ),
+                            context="validating arguments before calling external tool",
+                        )
+
                 # Call the tool
                 result = await session.call_tool(target_tool, args)
 
@@ -1830,14 +1920,37 @@ class InspectorService(MCPToolBase):
                         res = part.get("resource") or {}
                         text_content += res.get("text", "") or res.get("blob", "")
 
+                # MCP tool-result contract: isError=true is a FAILED call even
+                # though the transport succeeded. Reporting it as SUCCESS hid
+                # the failure from the model.
+                if result.get("isError"):
+                    schema_hint = (
+                        f" inputSchema: "
+                        f"{_truncate(json.dumps(schema, ensure_ascii=False), 2000)}"
+                        if schema is not None
+                        else ""
+                    )
+                    return format_error_response(
+                        error_message=(
+                            text_content
+                            or f"'{target_tool}' returned isError with no message."
+                        ),
+                        context=(
+                            f"'{target_tool}' on '{server_name}' reported an error "
+                            f"for arguments {_truncate(json.dumps(args), 1000)}."
+                            f"{schema_hint}"
+                        ),
+                    )
+
                 return format_success_response(
                     action="TOOL SUCCESS - External Tool Executed",
                     details={
                         "server_name": server_name,
                         "target_tool": target_tool,
                         "arguments": args,
+                        "renamed_arguments": renamed,
                         "result": text_content or result,
-                        "is_error": False,  # Always False for successful tool calls
+                        "is_error": False,
                         "status": "SUCCESS",
                     },
                     summary=(

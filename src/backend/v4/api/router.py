@@ -6656,7 +6656,12 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
             {"user_id": user_id, "server_name": server_name, "status": status.value},
         )
 
-        response = {"connection": result.model_dump(mode="json"), "created": True}
+        # `created` reflects reality: False when an existing (user, server)
+        # record was updated in place (e.g. re-entered via oauth_discovery).
+        response = {
+            "connection": result.model_dump(mode="json"),
+            "created": existing is None,
+        }
         if oauth_url:
             response["oauth_url"] = oauth_url
         return response

@@ -304,6 +304,130 @@ const GeneratedImage = ({ alt, src, ...props }: any) => {
 // reference on every render and defeat ReactMarkdown's internal memoization.
 // Shared by every agent-bubble ReactMarkdown (this file + StreamingBufferMessage)
 // so links and generated images render identically everywhere.
+
+// URL de video (Higgsfield, Sora, blobs propios…). Se mira el path sin query:
+// los CDNs firman con `?token=` y la extensión queda antes.
+const VIDEO_URL_RE = /\.(mp4|webm|mov|m4v)(?=($|[?#]))/i;
+export const isVideoUrl = (u?: string) =>
+  !!u && VIDEO_URL_RE.test(u.split(/[?#]/)[0]);
+
+// Nombre para "Descargar": el alt/label del markdown solo sirve si ya es un
+// nombre de archivo de video; si es un rótulo ("Ver video") o la URL misma
+// (autolink de remark-gfm), se toma el basename del path de la URL.
+export const videoFilename = (alt: string | undefined, url: string) => {
+  if (alt && VIDEO_URL_RE.test(alt) && !/^https?:/i.test(alt)) return alt;
+  const base = url.split(/[?#]/)[0].split('/').pop() ?? '';
+  return VIDEO_URL_RE.test(base) ? base : 'generated.mp4';
+};
+
+// Único hijo de texto de un nodo hast (label de `[label](url)` o la URL de un
+// autolink). react-markdown entrega `children` como string cuando hay UN hijo,
+// así que no se puede indexar `children[0]` (sería la primera letra).
+const soleTextChild = (node: any): string | null => {
+  const kids = node?.children;
+  if (!Array.isArray(kids) || kids.length !== 1 || kids[0]?.type !== 'text') {
+    return null;
+  }
+  return String(kids[0].value ?? '');
+};
+
+// Video generado: mismo contrato que GeneratedImage (card 16:9, overlay de
+// acciones al hover). El modelo lo entrega como `![alt](url.mp4)`, como
+// `[texto](url.mp4)` o como URL suelta; los renderers img/a delegan acá cuando
+// la URL es de video. No hay "copiar" (el portapapeles no admite video/*),
+// sí compartir/descargar.
+const GeneratedVideo = ({ alt, src }: { alt?: string; src: string }) => {
+  const styles = useStyles();
+  const url = resolveApiUrl(src);
+  const filename = videoFilename(alt, url);
+  const [hover, setHover] = React.useState(false);
+
+  const download = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const blob = await (await fetch(url)).blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch {
+      // CORS del CDN puede impedir el fetch: abrir en pestaña nueva como fallback
+      window.open(url, '_blank', 'noopener');
+    }
+  };
+  const share = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (navigator.share) await navigator.share({ title: filename, url });
+      else await navigator.clipboard.writeText(url);
+    } catch {
+      // usuario cerró el share sheet
+    }
+  };
+
+  return (
+    <span
+      style={{ position: 'relative', display: 'block', margin: '8px 0' }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+    >
+      {/* playsInline: iOS reproduce dentro de la card, no a pantalla completa */}
+      <video
+        src={url}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={alt ?? 'video generado'}
+        style={{
+          width: '100%',
+          aspectRatio: '16 / 9',
+          maxHeight: '480px',
+          display: 'block',
+          borderRadius: '12px',
+          backgroundColor: '#000',
+        }}
+      />
+      <span
+        style={{
+          position: 'absolute',
+          top: '8px',
+          right: '8px',
+          display: 'flex',
+          gap: '4px',
+          opacity: hover ? 1 : 0,
+          visibility: hover ? 'visible' : 'hidden',
+          transform: hover ? 'translateY(0)' : 'translateY(-4px)',
+          pointerEvents: hover ? 'auto' : 'none',
+          transition: 'opacity 150ms ease, transform 150ms ease',
+        }}
+      >
+        <button
+          type="button"
+          title="Compartir"
+          aria-label="Compartir video"
+          className={styles.imageOverlayButton}
+          onClick={share}
+        >
+          <ShareRegular fontSize={16} />
+        </button>
+        <button
+          type="button"
+          title="Descargar"
+          aria-label="Descargar video"
+          className={styles.imageOverlayButton}
+          onClick={download}
+        >
+          <ArrowDownloadRegular fontSize={16} />
+        </button>
+      </span>
+    </span>
+  );
+};
+
 export const markdownComponents = {
   // Wide code blocks scroll inside their own box; without this a long
   // unbreakable line widens the whole message column (horizontal scrollbar
@@ -368,34 +492,47 @@ export const markdownComponents = {
       </code>
     );
   },
-  img: ({ node, ...props }: any) => <GeneratedImage {...props} />,
-  a: ({ node, children, href, ...props }: any) => (
-    <a
-      href={resolveApiUrl(href)}
-      {...props}
-      style={{
-        color: 'var(--colorNeutralBrandForeground1)',
-        textDecoration: 'none',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.textDecoration = 'underline';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.textDecoration = 'none';
-      }}
-    >
-      {children}
-    </a>
-  ),
+  img: ({ node, ...props }: any) =>
+    isVideoUrl(props.src) ? (
+      <GeneratedVideo alt={props.alt} src={props.src} />
+    ) : (
+      <GeneratedImage {...props} />
+    ),
+  a: ({ node, children, href, ...props }: any) => {
+    // Un enlace a un .mp4 es el artefacto: se muestra como reproductor en vez
+    // de texto azul. Aplica a `[label](url.mp4)` y a la URL suelta (autolink):
+    // en ambos el <a> tiene un único hijo de texto. Un enlace con contenido
+    // compuesto (imagen, énfasis…) sigue siendo enlace.
+    const label = soleTextChild(node);
+    if (isVideoUrl(href) && label !== null) {
+      return <GeneratedVideo alt={label} src={href} />;
+    }
+    return (
+      <a
+        href={resolveApiUrl(href)}
+        {...props}
+        style={{
+          color: 'var(--colorNeutralBrandForeground1)',
+          textDecoration: 'none',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.textDecoration = 'underline';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.textDecoration = 'none';
+        }}
+      >
+        {children}
+      </a>
+    );
+  },
 };
 
 // Filename map for the fences of ONE message: fence start line → the filename
 // the model wrote just above it (heading/bold "templates/index.html" style).
 // The code renderer reads its own start line from the hast node and looks the
 // name up here — that name IS the artifact identity for the panel.
-const FenceNamesContext = React.createContext<Map<number, string> | null>(
-  null
-);
+const FenceNamesContext = React.createContext<Map<number, string> | null>(null);
 
 const FILENAME_RE = /([\w@-][\w@./-]*\.[A-Za-z0-9]{1,8})/;
 
