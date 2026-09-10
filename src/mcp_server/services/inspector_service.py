@@ -88,7 +88,7 @@ def _truncate(obj: Any, max_len: int) -> str:
 
 
 class ToolSchemaCache:
-    """Cached ``tools/list`` index shared by every session class.
+    """Per-session cached ``tools/list`` index.
 
     ``call_external_tool`` conforms LLM-composed arguments to the target
     tool's declared ``inputSchema`` before the network round-trip; that needs
