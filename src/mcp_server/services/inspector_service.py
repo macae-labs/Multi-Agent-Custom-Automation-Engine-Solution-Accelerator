@@ -1124,6 +1124,29 @@ class RegistryBridge:
             logger.warning(f"Connection activation failed: {e}")
             return None
 
+    async def disconnect_user_connection(
+        self, user_id: str, server_name: str, bearer_token: str | None = None
+    ) -> bool:
+        """Delete the user's connection record (DELETE {base}/user/{name}).
+
+        Discards the stored credential (e.g. an OAuth token) so the next
+        connect starts a fresh sign-in — required when the user authenticated
+        with the wrong account. Same identity hop as ``initiate_connection``.
+        Returns True when a record was removed; False when there was none.
+        """
+        try:
+            resp = await self._client.delete(
+                f"{self.base}/user/{server_name}",
+                headers=self._user_headers(user_id, bearer_token),
+            )
+            if resp.status_code == 404:
+                return False
+            resp.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning(f"User connection delete failed: {e}")
+            return False
+
     async def get_user_servers(self, user_id: str) -> list[dict[str, Any]]:
         """Get all servers with the user's connection status."""
         try:
@@ -2434,45 +2457,80 @@ class InspectorService(MCPToolBase):
                     context=(f"connecting to '{server_name}' from registry"),
                 )
 
-        # Not exposed as an MCP tool — agents must never disconnect servers.
-        # Disconnection is user-only, handled via the REST API (/api/v4/mcp/connections/user/{name}).
+        # Exposed as an MCP tool on purpose (design change 2026-09-10): the user
+        # connects servers from the chat, so they must be able to disconnect
+        # from the chat too — e.g. they signed in with the wrong account and
+        # need a fresh login. It acts on the CALLER's identity only (the
+        # principal on the request wins over any user_id the model passes),
+        # clears the live session AND the stored connection/credential, and
+        # never removes the server from the catalog.
+        @mcp.tool(tags={self.domain.value})
         async def disconnect_mcp_server(server_name: str, user_id: str = "") -> str:
             """
-            Disconnect from an external MCP server (internal use only — not an MCP tool).
+            Disconnect the current user from an external MCP server and forget
+            its stored credential.
+
+            Use this when the user asks to disconnect, or signed in to the
+            server with the WRONG account and needs to re-authenticate: it drops
+            the live session AND deletes the user's connection record in the
+            catalog (discarding any stored OAuth token), so the next
+            connect_from_registry starts a fresh sign-in. The server itself
+            stays registered in the catalog.
 
             Args:
                 server_name: Name of the server to disconnect from.
+                user_id: Optional; the authenticated caller identity on the
+                         request always wins.
 
             Returns:
-                Disconnection confirmation.
+                What was cleared (live session, stored connection) or an error.
             """
             try:
-                all_sess = _all_sessions(user_id)
-                if server_name not in all_sess:
-                    available = list(all_sess.keys())
+                _principal, _bearer = _caller_identity()
+                user_id = _principal or user_id
+                cleared: list[str] = []
+
+                # 1. Drop the live in-memory session, if this replica holds one.
+                _dis_key = (user_id, server_name)
+                session = sessions.pop(_dis_key, None) or proxied_sessions.pop(
+                    _dis_key, None
+                )
+                if session is not None:
+                    try:
+                        await session.close()
+                    except Exception as close_err:
+                        logger.debug("session close on disconnect: %s", close_err)
+                    cleared.append("live session")
+
+                # 2. Delete the stored user connection (and its credential) so a
+                #    re-connect triggers a fresh sign-in instead of reusing it.
+                if await registry.disconnect_user_connection(
+                    user_id, server_name, bearer_token=_bearer
+                ):
+                    cleared.append("stored connection/credential")
+
+                if not cleared:
                     return format_error_response(
                         error_message=(
-                            f"Server '{server_name}' not connected. "
-                            f"Available: {available or 'none'}."
+                            f"Server '{server_name}' is not connected for this "
+                            f"user (no live session and no stored connection)."
                         ),
                         context="disconnecting server",
                     )
-
-                # Remove from whichever dict it's in
-                _dis_key = (user_id, server_name)
-                if _dis_key in sessions:
-                    session = sessions.pop(_dis_key)
-                else:
-                    session = proxied_sessions.pop(_dis_key)
-                await session.close()
-
                 return format_success_response(
                     action="Server Disconnected",
                     details={
                         "server_name": server_name,
-                        "server_url": session.server_url,
+                        "user_id": user_id,
+                        "cleared": cleared,
+                        "next_step": (
+                            f"connect_from_registry('{server_name}') to sign in again"
+                        ),
                     },
-                    summary=f"Disconnected from '{server_name}'.",
+                    summary=(
+                        f"Disconnected from '{server_name}' ({', '.join(cleared)}). "
+                        f"Re-connect to sign in again, e.g. with a different account."
+                    ),
                 )
 
             except Exception as e:
