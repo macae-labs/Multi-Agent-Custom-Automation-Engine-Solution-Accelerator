@@ -187,6 +187,12 @@ async def audio_stream(
             # activa → se devuelve en transcript_start/end para correlación.
             response_idle = asyncio.Event()
             response_idle.set()
+            # response_created: set cuando llega RESPONSE_CREATED de la
+            # respuesta recién pedida. _create_lane_response NO devuelve hasta
+            # verlo: el created tarda 150-200 ms y un "respiro" fijo dejaba al
+            # siguiente carril ver response_idle aún set → creaba sin cancelar
+            # y una de las dos respuestas se perdía en silencio (3 say → 2).
+            response_created = asyncio.Event()
             lane_ctx: dict[str, object] = {"turn_id": 0, "lane": ""}
             # Último error de Voice Live (para diagnosticar colisión en create)
             last_vl_error: dict[str, str] = {"code": "", "message": ""}
@@ -218,11 +224,17 @@ async def audio_stream(
                     lane_ctx["turn_id"] = turn_id
                     lane_ctx["lane"] = lane
                     last_vl_error["code"] = ""
+                    response_created.clear()
                     try:
                         await vl.response.create(
                             response={
                                 "modalities": ["audio"],
                                 "instructions": instructions,
+                                # Vuelve en response.created / response.done
+                                # (verificado en vivo): etiqueta AUTORITATIVA
+                                # de cada respuesta, sin depender del orden de
+                                # lane_ctx. Valores string por contrato.
+                                "metadata": {"turn_id": str(turn_id), "lane": lane},
                             }
                         )
                     except Exception as exc:
@@ -233,10 +245,23 @@ async def audio_stream(
                             exc,
                         )
                         break
-                    # La colisión llega como evento ERROR asíncrono, no como
-                    # excepción: dar un respiro y mirar si el server la reportó.
-                    await asyncio.sleep(0.15)
-                    if "active_response" not in last_vl_error["code"]:
+                    # Esperar a que ESTA respuesta exista (RESPONSE_CREATED) o
+                    # a que el server reporte la colisión (evento ERROR
+                    # asíncrono, no excepción). Determinista: el carril
+                    # devuelve solo cuando su respuesta está viva, así el
+                    # siguiente siempre la ve y la cancela antes de crear.
+                    t_wait = time.monotonic()
+                    while time.monotonic() - t_wait < 3.0:
+                        if (
+                            response_created.is_set()
+                            or "active_response" in last_vl_error["code"]
+                        ):
+                            break
+                        await asyncio.sleep(0.02)
+                    if (
+                        response_created.is_set()
+                        and "active_response" not in last_vl_error["code"]
+                    ):
                         logging.info(
                             "[audio/stream] turn=%s lane=%s create ok attempt=%d "
                             "wait_ms=%d",
@@ -391,6 +416,44 @@ async def audio_stream(
                 except Exception as exc:
                     logging.error("[audio/stream] _browser_to_vl: %s", exc)
 
+            def _labels(resp_obj) -> tuple[object, object]:
+                """(turn_id, lane) de una respuesta: la metadata que viajó en
+                el create y vuelve en el evento; lane_ctx solo como respaldo."""
+                meta = getattr(resp_obj, "metadata", None) or {}
+                turn: object = lane_ctx["turn_id"]
+                lane: object = lane_ctx["lane"]
+                try:
+                    if meta.get("turn_id"):
+                        turn = int(meta["turn_id"])
+                except (TypeError, ValueError):
+                    pass
+                if meta.get("lane"):
+                    lane = str(meta["lane"])
+                return turn, lane
+
+            async def _forget_response_items(resp_obj) -> None:
+                """Borra de la conversación de Voice Live los items de salida
+                de una respuesta terminada (completada o cancelada).
+
+                La conversación de Voice Live no es memoria de nada: el hilo
+                vive en el router. Si los items se quedan, la siguiente
+                respuesta los ve: un `say` tras un `speak` cancelado repetía
+                "Resumen largo…" en vez de la frase pedida (visto en la 0109 y
+                en local). `commit=False`, `input_items` y `cancel_previous`
+                los rechaza el servicio; `conversation.item.delete` sí lo
+                acepta (verificado en vivo, evento `deleted`).
+                """
+                for item in getattr(resp_obj, "output", None) or []:
+                    iid = getattr(item, "id", None)
+                    if not iid:
+                        continue
+                    try:
+                        await vl.conversation.item.delete(item_id=iid)
+                    except Exception as exc:
+                        logging.debug(
+                            "[audio/stream] item.delete(%s) ignorado: %s", iid, exc
+                        )
+
             async def _vl_to_browser() -> None:
                 audio_frames = 0
                 resp_text: list[str] = []
@@ -463,6 +526,15 @@ async def audio_stream(
                                 delta = getattr(event, "delta", None)
                                 if delta:
                                     audio_frames += 1
+                                    # response_id REAL del frame (el evento lo
+                                    # trae). Tras cancel(A)+create(B), Voice
+                                    # Live sigue vaciando deltas de A durante
+                                    # unos segundos, ya con B creada. El
+                                    # cliente descarta por este id, no por
+                                    # turno (ack/say/speak comparten turno).
+                                    frame_rid = getattr(
+                                        event, "response_id", None
+                                    ) or lane_ctx.get("response_id", "")
                                     if audio_b64:
                                         b64 = (
                                             base64.b64encode(delta).decode()
@@ -475,6 +547,7 @@ async def audio_stream(
                                                 {
                                                     "type": "audio_chunk",
                                                     "data": b64,
+                                                    "response_id": frame_rid,
                                                 }
                                             )
                                         )
@@ -504,21 +577,23 @@ async def audio_stream(
                                 audio_frames = 0
                                 resp_text = []
                                 response_idle.clear()
+                                response_created.set()
                                 resp_obj = getattr(event, "response", None)
                                 rid = getattr(resp_obj, "id", None) or ""
                                 lane_ctx["response_id"] = rid
+                                turn_lbl, lane_lbl = _labels(resp_obj)
                                 logging.info(
                                     "[audio/stream] 🔊 turn=%s lane=%s rid=%s RESPONDIENDO",
-                                    lane_ctx["turn_id"],
-                                    lane_ctx["lane"],
+                                    turn_lbl,
+                                    lane_lbl,
                                     rid,
                                 )
                                 await websocket.send_text(
                                     json.dumps(
                                         {
                                             "type": "transcript_start",
-                                            "turn_id": lane_ctx["turn_id"],
-                                            "lane": lane_ctx["lane"],
+                                            "turn_id": turn_lbl,
+                                            "lane": lane_lbl,
                                             "response_id": rid,
                                         }
                                     )
@@ -531,11 +606,12 @@ async def audio_stream(
                                 )
                                 status = getattr(resp_obj, "status", None) or ""
                                 response_idle.set()
+                                turn_lbl, lane_lbl = _labels(resp_obj)
                                 logging.info(
                                     "[audio/stream] ✅ turn=%s lane=%s rid=%s status=%s "
                                     'frames=%d — "%s"',
-                                    lane_ctx["turn_id"],
-                                    lane_ctx["lane"],
+                                    turn_lbl,
+                                    lane_lbl,
                                     rid,
                                     status,
                                     audio_frames,
@@ -545,14 +621,17 @@ async def audio_stream(
                                     json.dumps(
                                         {
                                             "type": "transcript_end",
-                                            "turn_id": lane_ctx["turn_id"],
-                                            "lane": lane_ctx["lane"],
+                                            "turn_id": turn_lbl,
+                                            "lane": lane_lbl,
                                             "response_id": rid,
                                             "status": str(status),
                                             "audio_frames": audio_frames,
                                         }
                                     )
                                 )
+                                # Terminada (completed o cancelled): fuera de
+                                # la conversación, no contamina la siguiente.
+                                await _forget_response_items(resp_obj)
 
                             elif (
                                 etype
