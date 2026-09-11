@@ -10,6 +10,7 @@ import {
   ArrowDownloadRegular,
   CopyRegular,
   PersonRegular,
+  PlayRegular,
   ShareRegular,
 } from '@fluentui/react-icons';
 import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
@@ -147,6 +148,43 @@ const useStyles = makeStyles({
     },
     ':active': {
       transform: 'scale(0.92)',
+    },
+  },
+  // Adjuntos multimedia del mensaje (video hoy; generated_file por media_type
+  // después). Viven FUERA de la burbuja y del flujo del markdown: el modelo
+  // suele escribir la URL dentro de una viñeta, y un reproductor incrustado
+  // ahí hereda sangría de lista, padding de burbuja y columna del avatar
+  // (en móvil quedaba en 222 px de 390). Aquí ocupa la columna completa.
+  mediaBlock: {
+    alignSelf: 'stretch',
+    display: 'grid',
+    rowGap: '8px',
+    marginTop: '8px',
+    '@media (max-width: 640px)': {
+      // En pantallas estrechas el medio se extiende sobre el canal del avatar
+      // (32px + gap 16px): el avatar solo ocupa la primera línea del mensaje.
+      marginLeft: '-48px',
+      width: 'calc(100% + 48px)',
+    },
+  },
+  // Chip inline que sustituye al enlace del video dentro de la prosa: el
+  // artefacto se ve abajo, el texto conserva su lugar.
+  videoChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    columnGap: '6px',
+    padding: '2px 10px 2px 8px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--colorNeutralBackground3)',
+    color: 'var(--colorNeutralBrandForeground1)',
+    fontSize: '13px',
+    lineHeight: '20px',
+    textDecoration: 'none',
+    verticalAlign: 'middle',
+    maxWidth: '100%',
+    ':hover': {
+      backgroundColor: 'var(--colorNeutralBackground3Hover)',
+      textDecoration: 'none',
     },
   },
 });
@@ -331,16 +369,19 @@ const soleTextChild = (node: any): string | null => {
   return String(kids[0].value ?? '');
 };
 
-// Video generado: mismo contrato que GeneratedImage (card 16:9, overlay de
-// acciones al hover). El modelo lo entrega como `![alt](url.mp4)`, como
-// `[texto](url.mp4)` o como URL suelta; los renderers img/a delegan acá cuando
-// la URL es de video. No hay "copiar" (el portapapeles no admite video/*),
-// sí compartir/descargar.
+// Video generado: mismo contrato de acciones que GeneratedImage (overlay
+// compartir/descargar al hover; no hay "copiar", el portapapeles no admite
+// video/*). Se renderiza en el bloque de adjuntos del mensaje (MessageMedia),
+// no en el sitio del enlace. La proporción es la INTRÍNSECA del archivo
+// (16:9 solo como placeholder hasta loadedmetadata): un vertical 9:16 no se
+// encajona en negro dentro de un marco 16:9.
 const GeneratedVideo = ({ alt, src }: { alt?: string; src: string }) => {
   const styles = useStyles();
   const url = resolveApiUrl(src);
   const filename = videoFilename(alt, url);
   const [hover, setHover] = React.useState(false);
+  const [ratio, setRatio] = React.useState(16 / 9);
+  const portrait = ratio < 1;
 
   const download = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -369,7 +410,14 @@ const GeneratedVideo = ({ alt, src }: { alt?: string; src: string }) => {
 
   return (
     <span
-      style={{ position: 'relative', display: 'block', margin: '8px 0' }}
+      style={{
+        position: 'relative',
+        display: 'block',
+        // Horizontal: llena la columna. Vertical: alto acotado y ancho al
+        // contenido, así el overlay queda sobre el video y no sobre un hueco.
+        width: portrait ? 'fit-content' : '100%',
+        maxWidth: '100%',
+      }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
@@ -382,10 +430,17 @@ const GeneratedVideo = ({ alt, src }: { alt?: string; src: string }) => {
         playsInline
         preload="metadata"
         aria-label={alt ?? 'video generado'}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoWidth && v.videoHeight) {
+            setRatio(v.videoWidth / v.videoHeight);
+          }
+        }}
         style={{
-          width: '100%',
-          aspectRatio: '16 / 9',
-          maxHeight: '480px',
+          aspectRatio: String(ratio),
+          ...(portrait
+            ? { height: 'min(480px, 70vh)', width: 'auto', maxWidth: '100%' }
+            : { width: '100%', maxHeight: 'min(480px, 70vh)' }),
           display: 'block',
           borderRadius: '12px',
           backgroundColor: '#000',
@@ -425,6 +480,79 @@ const GeneratedVideo = ({ alt, src }: { alt?: string; src: string }) => {
         </button>
       </span>
     </span>
+  );
+};
+
+// Chip inline que ocupa el lugar del enlace al video dentro de la prosa.
+const VideoChip = ({ href, label }: { href: string; label?: string }) => {
+  const styles = useStyles();
+  const url = resolveApiUrl(href);
+  const text =
+    label && !/^https?:/i.test(label) ? label : videoFilename(undefined, url);
+  return (
+    <a
+      className={styles.videoChip}
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={url}
+    >
+      <PlayRegular fontSize={14} />
+      <span
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {text}
+      </span>
+    </a>
+  );
+};
+
+export interface VideoLink {
+  url: string;
+  label?: string;
+}
+
+// Videos referenciados en el markdown de UN mensaje, en orden y sin repetir:
+// `[label](url.mp4)`, `![alt](url.mp4)` y URLs sueltas. Determinista sobre la
+// fuente, así el bloque de adjuntos no depende de cómo react-markdown parte
+// los nodos ni de en qué lista o párrafo cayó la URL.
+const MD_LINK_RE = /!?\[([^\]]*)\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+const BARE_URL_RE = /https?:\/\/[^\s<>()[\]]+/g;
+export const extractVideoLinks = (content: string): VideoLink[] => {
+  const out: VideoLink[] = [];
+  const seen = new Set<string>();
+  const add = (url: string, label?: string) => {
+    if (!isVideoUrl(url) || seen.has(url)) return;
+    seen.add(url);
+    const clean = label?.trim();
+    out.push(clean ? { url, label: clean } : { url });
+  };
+  let m: RegExpExecArray | null;
+  MD_LINK_RE.lastIndex = 0;
+  while ((m = MD_LINK_RE.exec(content)) !== null) add(m[2], m[1]);
+  BARE_URL_RE.lastIndex = 0;
+  while ((m = BARE_URL_RE.exec(content)) !== null) {
+    add(m[0].replace(/[.,;:!?]+$/, ''));
+  }
+  return out;
+};
+
+// Bloque de adjuntos multimedia del mensaje: debajo de la burbuja, a ancho de
+// columna. Hoy lo alimenta extractVideoLinks; el canal generated_file con
+// media_type se conecta aquí mismo cuando llegue.
+const MessageMedia = ({ videos }: { videos: VideoLink[] }) => {
+  const styles = useStyles();
+  if (!videos.length) return null;
+  return (
+    <div className={styles.mediaBlock} data-testid="message-media">
+      {videos.map((v) => (
+        <GeneratedVideo key={v.url} alt={v.label} src={v.url} />
+      ))}
+    </div>
   );
 };
 
@@ -494,18 +622,19 @@ export const markdownComponents = {
   },
   img: ({ node, ...props }: any) =>
     isVideoUrl(props.src) ? (
-      <GeneratedVideo alt={props.alt} src={props.src} />
+      <VideoChip href={props.src} label={props.alt} />
     ) : (
       <GeneratedImage {...props} />
     ),
   a: ({ node, children, href, ...props }: any) => {
-    // Un enlace a un .mp4 es el artefacto: se muestra como reproductor en vez
-    // de texto azul. Aplica a `[label](url.mp4)` y a la URL suelta (autolink):
-    // en ambos el <a> tiene un único hijo de texto. Un enlace con contenido
-    // compuesto (imagen, énfasis…) sigue siendo enlace.
+    // Un enlace a un video NO se incrusta aquí: dentro de una viñeta o un
+    // párrafo heredaría sangría y paddings. Queda un chip y el reproductor va
+    // al bloque de adjuntos del mensaje (MessageMedia). Aplica a
+    // `[label](url.mp4)` y a la URL suelta (autolink): en ambos el <a> tiene
+    // un único hijo de texto. Un enlace con contenido compuesto sigue igual.
     const label = soleTextChild(node);
     if (isVideoUrl(href) && label !== null) {
-      return <GeneratedVideo alt={label} src={href} />;
+      return <VideoChip href={href} label={label} />;
     }
     return (
       <a
@@ -593,6 +722,12 @@ export const AgentMessageItem = React.memo(
     const isClarification =
       !isHuman && isClarificationMessage(msg.content || '');
     const content = TaskService.cleanHRAgent(msg.content) || '';
+    // Adjuntos del mensaje (solo respuestas del agente): se extraen de la
+    // fuente markdown una vez por contenido, como AgentMarkdown.
+    const videos = React.useMemo(
+      () => (isHuman ? [] : extractVideoLinks(content)),
+      [content, isHuman]
+    );
 
     return (
       <div
@@ -636,6 +771,7 @@ export const AgentMessageItem = React.memo(
           >
             <AgentMarkdown content={content} />
           </div>
+          {!isHuman && <MessageMedia videos={videos} />}
         </div>
       </div>
     );
