@@ -30,7 +30,7 @@ import PromptCard from '@/coral/components/PromptCard';
 import { Send } from '@/coral/imports/bundleicons';
 import MicButton from './MicButton';
 import {
-  isVoiceLiveActive,
+  currentVoiceTurnId,
   onVoiceBargeIn,
   voiceLiveAck,
   voiceLiveNarrate,
@@ -258,7 +258,11 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
         abortInFlightStream();
         const abort = new AbortController();
         streamAbortRef.current = abort;
-        const voiceTurn = isVoiceLiveActive();
+        // Turno de voz que originó ESTE stream (0 = tecleado / sin voz). Se pasa
+        // a los 3 carriles: si el turno cambia mientras el SSE sigue vivo, los
+        // carriles de este stream dejan de hablar (no cruzan al turno nuevo).
+        const voiceTurnId = currentVoiceTurnId();
+        const voiceTurn = voiceTurnId > 0;
 
         dispatch(setSessionId(sessionId));
         // Dispatch user message to Redux
@@ -269,7 +273,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
 
         // Carril 1 — acuse hablado inmediato (plantilla, TTS literal). Mata el
         // silencio mientras el router clasifica / llama tools.
-        if (voiceTurn) voiceLiveAck();
+        if (voiceTurn) voiceLiveAck(voiceTurnId);
 
         if (!overrideMessage) {
           setInput('');
@@ -321,7 +325,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             // Carril 2 — narración de la tool en el momento ("Consultando X…").
             onToolActivity: (data) => {
               if (voiceTurn && data.activity === 'calling')
-                voiceLiveNarrate(data.tool, data.server);
+                voiceLiveNarrate(data.tool, data.server, voiceTurnId);
             },
             onOAuthConsentRequest: (consentLink) => {
               // A browser blocks window.open() from this async SSE handler, so
@@ -353,8 +357,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
         );
         // Carril 3 — contenido final del router (parafraseo). Sólo si el turno
         // sigue vivo: un barge-in ya lo canceló y esta respuesta no debe hablar.
-        if (!aborted && isVoiceLiveActive() && fullResponse) {
-          voiceLiveSpeak(fullResponse);
+        if (!aborted && voiceTurn && fullResponse) {
+          voiceLiveSpeak(fullResponse, voiceTurnId);
         }
         dismissToast(id);
 

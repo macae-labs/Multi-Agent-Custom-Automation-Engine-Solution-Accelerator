@@ -10,7 +10,7 @@ import { Spinner, Text } from '@fluentui/react-components';
 import { PlanDataService } from '../services/PlanDataService';
 import { requestOAuthConsent } from '../utils/oauthConsent';
 import {
-  isVoiceLiveActive,
+  currentVoiceTurnId,
   onVoiceBargeIn,
   voiceLiveAck,
   voiceLiveNarrate,
@@ -1051,8 +1051,9 @@ const PlanPage: React.FC = () => {
       abortInFlightChat();
       const abort = new AbortController();
       chatAbortRef.current = abort;
-      const voiceTurn = isVoiceLiveActive();
-      if (voiceTurn) voiceLiveAck();
+      const voiceTurnId = currentVoiceTurnId();
+      const voiceTurn = voiceTurnId > 0;
+      if (voiceTurn) voiceLiveAck(voiceTurnId);
       // Once the plan is closed in place, follow-ups are plain chat: no
       // in-plan flag, or the backend would treat them as plan follow-ups.
       const activePlanId = planClosed
@@ -1099,7 +1100,7 @@ const PlanPage: React.FC = () => {
             // Carril 2 — narración de la tool en el momento.
             onToolActivity: (data) => {
               if (voiceTurn && data.activity === 'calling')
-                voiceLiveNarrate(data.tool, data.server);
+                voiceLiveNarrate(data.tool, data.server, voiceTurnId);
             },
             onGeneratedFile: (f) => {
               collectedFiles.push(f);
@@ -1151,8 +1152,8 @@ const PlanPage: React.FC = () => {
         if (chatAbortRef.current === abort) chatAbortRef.current = null;
         // Carril 3 — contenido final del router (parafraseo). Un barge-in ya
         // canceló el turno: esa respuesta no debe hablar.
-        if (!abort.signal.aborted && accumulated && isVoiceLiveActive())
-          voiceLiveSpeak(accumulated);
+        if (!abort.signal.aborted && accumulated && voiceTurn)
+          voiceLiveSpeak(accumulated, voiceTurnId);
       } catch (e: any) {
         if (abort.signal.aborted) {
           // Interrumpido por el usuario: dejar la burbuja con lo recibido.
