@@ -270,6 +270,25 @@ export function voiceLiveSpeak(text: string, turnId?: number): void {
   sendLane('speak', { text, acked, narrated: already });
 }
 
+/** Regla de admisión de un frame a la cola de reproducción (pura, testeable).
+ *  - Frame etiquetado (vía b64, la de prod): entra solo si su response_id es el
+ *    que fijó el último transcript_start Y el turno sigue vivo. Sin respuesta
+ *    viva ('' tras barge-in) NO entra: un frame etiquetado nunca precede al
+ *    START de su respuesta (el relay lo envía en RESPONSE_CREATED por el mismo
+ *    socket), así que si no coincide es un rezago de una respuesta cancelada.
+ *  - Frame sin etiqueta (binario): solo la guarda por turno. */
+export function shouldAdmitFrame(args: {
+  rid?: string;
+  playingRid: string;
+  playingTurn: number;
+  liveTurn: number;
+}): boolean {
+  const { rid, playingRid, playingTurn, liveTurn } = args;
+  const turnOk = playingTurn === 0 || playingTurn === liveTurn;
+  if (rid) return rid === playingRid && turnOk;
+  return turnOk;
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -286,6 +305,12 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
   // turn_id de la respuesta de Voice Live que está sonando (0 = ninguna). Lo
   // fija transcript_start; sirve para descartar frames de un turno ya cerrado.
   const playingTurnRef = useRef(0);
+  // response_id de Voice Live que tiene el altavoz ('' = ninguna). Es la
+  // clave REAL de descarte: ack/say/speak comparten turn_id, así que el turno
+  // no distingue los frames del ACK cancelado de los del say que lo sustituyó.
+  // Voice Live sigue vaciando deltas de la respuesta cancelada ~3-4 s después
+  // de crear la nueva; con solo el flush de la cola en START vuelven a entrar.
+  const playingRidRef = useRef('');
   // Diagnóstico: localizar el fallo (captura vs recepción vs playback).
   const statsRef = useRef({
     sent: 0,
@@ -372,16 +397,38 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
   }, []);
   drainQueueRef.current = drainQueue;
 
-  const enqueueAudio = useCallback(
-    (b64: string) => {
-      const raw = atob(b64);
-      const buf = new ArrayBuffer(raw.length);
-      const view = new Uint8Array(buf);
-      for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+  /** Único punto de entrada a la cola de reproducción (b64 y binario).
+   *  La regla vive en shouldAdmitFrame. Frames tardíos de una respuesta
+   *  cancelada llegan — es normal por asincronía, y también DESPUÉS de un
+   *  barge-in — pero no se reproducen: descartarlos no pierde contexto. */
+  const admitFrame = useCallback(
+    (buf: ArrayBuffer, rid?: string) => {
+      if (
+        !shouldAdmitFrame({
+          rid,
+          playingRid: playingRidRef.current,
+          playingTurn: playingTurnRef.current,
+          liveTurn: voiceTurn.id,
+        })
+      ) {
+        statsRef.current.dropped++;
+        return;
+      }
       playQueueRef.current.push(buf);
       if (!playingRef.current) drainQueue();
     },
     [drainQueue]
+  );
+
+  const enqueueAudio = useCallback(
+    (b64: string, rid?: string) => {
+      const raw = atob(b64);
+      const buf = new ArrayBuffer(raw.length);
+      const view = new Uint8Array(buf);
+      for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+      admitFrame(buf, rid);
+    },
+    [admitFrame]
   );
 
   const stopPlayback = useCallback(() => {
@@ -510,17 +557,8 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
         // grandes de audio).
         if (e.data instanceof ArrayBuffer) {
           statsRef.current.recvA++;
-          // Audio de una respuesta cuyo turno ya no es el vivo (speak tardío
-          // del turno anterior que el server alcanzó a crear) → descartar.
-          if (
-            playingTurnRef.current !== 0 &&
-            playingTurnRef.current !== voiceTurn.id
-          ) {
-            statsRef.current.dropped++;
-            return;
-          }
-          playQueueRef.current.push(e.data);
-          if (!playingRef.current) drainQueue();
+          // El binario no lleva response_id: sólo aplica la guarda por turno.
+          admitFrame(e.data);
           return;
         }
         try {
@@ -542,6 +580,8 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
               // server-side: vaciar la cola para no seguir sonando su cola.
               const t = typeof msg.turn_id === 'number' ? msg.turn_id : 0;
               playingTurnRef.current = t;
+              playingRidRef.current =
+                typeof msg.response_id === 'string' ? msg.response_id : '';
               playQueueRef.current = [];
               console.log(
                 `[VL] ← response START lane=${msg.lane ?? '?'} turn=${t} rid=${msg.response_id ?? '?'} live=${voiceTurn.id} t=${Date.now()}`
@@ -562,7 +602,7 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
               );
               break;
             case 'audio_chunk':
-              if (msg.data) enqueueAudio(msg.data);
+              if (msg.data) enqueueAudio(msg.data, msg.response_id);
               break;
             case 'barge_in_ack': {
               // El usuario habló encima: transición EXPLÍCITA de turno. Cortar
@@ -575,6 +615,7 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
               );
               stopPlayback();
               playingTurnRef.current = 0;
+              playingRidRef.current = '';
               cancelVoiceTurn();
               bargeInListeners.forEach((cb) => {
                 try {
@@ -631,7 +672,7 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
       console.error('[useVoiceLive] start error', err);
       stop();
     }
-  }, [recording, drainQueue, enqueueAudio, stopPlayback, stop, diag]);
+  }, [recording, diag, stop, admitFrame, enqueueAudio, stopPlayback]);
 
   const toggle = useCallback(() => {
     recording ? stop() : start();
