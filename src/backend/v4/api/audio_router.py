@@ -257,7 +257,14 @@ async def audio_stream(
                     try:
                         await asyncio.wait_for(response_idle.wait(), timeout=1.5)
                     except asyncio.TimeoutError:
-                        pass
+                        logging.warning(
+                            "[audio/stream] turn=%s lane=%s: timeout esperando "
+                            "response_idle tras cancel en retry (attempt=%d); "
+                            "continuando con lane_error",
+                            turn_id,
+                            lane,
+                            attempt,
+                        )
                 await websocket.send_text(
                     json.dumps(
                         {
