@@ -14,7 +14,8 @@ JSON events sent to browser (dictation):
   { "type": "transcript",     "text": "..." }
   { "type": "transcript_end", "text": "..." }
 
-JSON commands from browser (voicelive) — tres carriles, orden determinista:
+JSON commands from browser (voicelive) — tres carriles, orden determinista.
+Todos llevan { turn_id, lane } (trazabilidad e2e):
   { "type": "ack",   "user_text" }  carril 1: acuse generado por el modelo a
                                      partir del enunciado del usuario (no plantilla).
   { "type": "say",   "text" }       carril 2: narración de tools. TTS literal.
@@ -22,6 +23,13 @@ JSON commands from browser (voicelive) — tres carriles, orden determinista:
                                      carril 3: contenido final del router,
                                      parafraseado, excluyendo lo ya dicho en 1 y 2.
   { "type": "barge_in" }             cancela la respuesta activa.
+
+Voice Live admite UNA respuesta activa. Cada carril cancela la anterior y
+ESPERA su response.done antes de crear la nueva (`response_idle`); si aún así
+colisiona ("already has an active response") reintenta una vez. Sin esto el
+speak se perdía en silencio (ERROR sólo logueado). transcript_start /
+transcript_end devuelven { turn_id, lane, response_id } del comando que
+originó la respuesta para correlacionar browser ↔ backend ↔ Voice Live.
 Cada say/speak cancela la respuesta activa anterior (Voice Live admite una).
 
 The backend never touches local audio (no PyAudio). The browser is mic + speaker.
@@ -36,6 +44,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 
 from azure.ai.voicelive.aio import connect as vl_connect
 from azure.ai.voicelive.models import (
@@ -171,6 +180,95 @@ async def audio_stream(
                     )
                 )
 
+            # ---- estado de carril compartido entre las dos tareas ----------
+            # response_idle: set cuando NO hay respuesta activa en Voice Live
+            # (arranca idle; clear en RESPONSE_CREATED; set en RESPONSE_DONE).
+            # lane_ctx: {turn_id, lane} del comando que originó la respuesta
+            # activa → se devuelve en transcript_start/end para correlación.
+            response_idle = asyncio.Event()
+            response_idle.set()
+            lane_ctx: dict[str, object] = {"turn_id": 0, "lane": ""}
+            # Último error de Voice Live (para diagnosticar colisión en create)
+            last_vl_error: dict[str, str] = {"code": "", "message": ""}
+
+            async def _create_lane_response(
+                lane: str, turn_id: int, instructions: str
+            ) -> None:
+                """Cancela la respuesta activa, ESPERA su done y crea la nueva.
+
+                Voice Live sólo admite una respuesta activa. `cancel` es
+                asíncrono: un `create` inmediato colisiona
+                ("conversation_already_has_active_response") y el carril se
+                pierde en silencio. Se espera `response_idle` (≤ 1.5 s) y, si
+                la colisión ocurre igual, se reintenta UNA vez.
+                """
+                t0 = time.monotonic()
+                if not response_idle.is_set():
+                    await _cancel_active_response(vl)
+                    try:
+                        await asyncio.wait_for(response_idle.wait(), timeout=1.5)
+                    except asyncio.TimeoutError:
+                        logging.warning(
+                            "[audio/stream] turn=%s lane=%s: la respuesta previa "
+                            "no reportó done en 1.5s; creando igual",
+                            turn_id,
+                            lane,
+                        )
+                for attempt in (1, 2):
+                    lane_ctx["turn_id"] = turn_id
+                    lane_ctx["lane"] = lane
+                    last_vl_error["code"] = ""
+                    try:
+                        await vl.response.create(
+                            response={
+                                "modalities": ["audio"],
+                                "instructions": instructions,
+                            }
+                        )
+                    except Exception as exc:
+                        logging.error(
+                            "[audio/stream] turn=%s lane=%s create failed: %s",
+                            turn_id,
+                            lane,
+                            exc,
+                        )
+                        break
+                    # La colisión llega como evento ERROR asíncrono, no como
+                    # excepción: dar un respiro y mirar si el server la reportó.
+                    await asyncio.sleep(0.15)
+                    if "active_response" not in last_vl_error["code"]:
+                        logging.info(
+                            "[audio/stream] turn=%s lane=%s create ok attempt=%d "
+                            "wait_ms=%d",
+                            turn_id,
+                            lane,
+                            attempt,
+                            int((time.monotonic() - t0) * 1000),
+                        )
+                        return
+                    logging.warning(
+                        "[audio/stream] turn=%s lane=%s colisión con respuesta "
+                        "activa (attempt=%d) → cancel + retry",
+                        turn_id,
+                        lane,
+                        attempt,
+                    )
+                    await _cancel_active_response(vl)
+                    try:
+                        await asyncio.wait_for(response_idle.wait(), timeout=1.5)
+                    except asyncio.TimeoutError:
+                        pass
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "lane_error",
+                            "turn_id": turn_id,
+                            "lane": lane,
+                            "error": last_vl_error["code"] or "create_failed",
+                        }
+                    )
+                )
+
             async def _browser_to_vl() -> None:
                 try:
                     while True:
@@ -205,39 +303,34 @@ async def audio_stream(
                                 # un acuse coherente con eso. Brevísimo y sin responder
                                 # de fondo: el contenido llega por 'speak'.
                                 user_text = str(msg.get("user_text") or "")[:400]
-                                await _cancel_active_response(vl)
-                                await vl.response.create(
-                                    response={
-                                        "modalities": ["audio"],
-                                        "instructions": (
-                                            "El usuario acaba de decir lo siguiente y "
-                                            "su petición se está procesando en segundo "
-                                            "plano. Responde con UNA frase muy breve "
-                                            "(máximo 10 palabras) que acuse recibo de "
-                                            "forma natural y específica a lo que dijo, "
-                                            "en su mismo idioma. Si es un saludo, "
-                                            "saluda; si es una pregunta, indica que lo "
-                                            "revisas. NO respondas la pregunta de fondo "
-                                            "ni inventes datos.\n\n"
-                                            f"USUARIO: {user_text}"
-                                        ),
-                                    }
+                                await _create_lane_response(
+                                    "ack",
+                                    int(msg.get("turn_id") or 0),
+                                    (
+                                        "El usuario acaba de decir lo siguiente y "
+                                        "su petición se está procesando en segundo "
+                                        "plano. Responde con UNA frase muy breve "
+                                        "(máximo 10 palabras) que acuse recibo de "
+                                        "forma natural y específica a lo que dijo, "
+                                        "en su mismo idioma. Si es un saludo, "
+                                        "saluda; si es una pregunta, indica que lo "
+                                        "revisas. NO respondas la pregunta de fondo "
+                                        "ni inventes datos.\n\n"
+                                        f"USUARIO: {user_text}"
+                                    ),
                                 )
                             elif msg.get("type") == "say" and msg.get("text"):
                                 # Carril 2 (narración de tools): frase corta derivada
                                 # del nombre real de la tool, TTS LITERAL, sin
-                                # parafraseo. Cancela cualquier respuesta activa:
-                                # Voice Live sólo admite una a la vez.
-                                await _cancel_active_response(vl)
-                                await vl.response.create(
-                                    response={
-                                        "modalities": ["audio"],
-                                        "instructions": (
-                                            "Di exactamente la siguiente frase, sin "
-                                            "añadir, quitar ni comentar nada:\n"
-                                            f"{str(msg['text'])[:200]}"
-                                        ),
-                                    }
+                                # parafraseo.
+                                await _create_lane_response(
+                                    "say",
+                                    int(msg.get("turn_id") or 0),
+                                    (
+                                        "Di exactamente la siguiente frase, sin "
+                                        "añadir, quitar ni comentar nada:\n"
+                                        f"{str(msg['text'])[:200]}"
+                                    ),
                                 )
                             elif msg.get("type") == "speak" and msg.get("text"):
                                 # Carril 3 (contenido final): verbalizar la respuesta
@@ -272,21 +365,19 @@ async def audio_stream(
                                     if exclusions
                                     else ""
                                 )
-                                await _cancel_active_response(vl)
-                                await vl.response.create(
-                                    response={
-                                        "modalities": ["audio"],
-                                        "instructions": (
-                                            "Transmite el siguiente contenido en voz alta, "
-                                            "de forma natural y conversacional, en el mismo "
-                                            "idioma del contenido. No leas símbolos de "
-                                            "Markdown, código ni URLs literalmente: "
-                                            "descríbelos brevemente si aportan. No inventes "
-                                            "información que no esté en el contenido."
-                                            f"{exclusion_block}\n\n"
-                                            f"CONTENIDO:\n{msg['text']}"
-                                        ),
-                                    }
+                                await _create_lane_response(
+                                    "speak",
+                                    int(msg.get("turn_id") or 0),
+                                    (
+                                        "Transmite el siguiente contenido en voz alta, "
+                                        "de forma natural y conversacional, en el mismo "
+                                        "idioma del contenido. No leas símbolos de "
+                                        "Markdown, código ni URLs literalmente: "
+                                        "descríbelos brevemente si aportan. No inventes "
+                                        "información que no esté en el contenido."
+                                        f"{exclusion_block}\n\n"
+                                        f"CONTENIDO:\n{msg['text']}"
+                                    ),
                                 )
                 except WebSocketDisconnect:
                     pass
@@ -348,6 +439,10 @@ async def audio_stream(
                                 # MODEL ROUTER como un mensaje normal de chat.
                                 transcript = getattr(event, "transcript", None)
                                 if transcript:
+                                    logging.info(
+                                        '[audio/stream] 🎙 user_transcript "%s"',
+                                        transcript[:120],
+                                    )
                                     await websocket.send_text(
                                         json.dumps(
                                             {
@@ -401,21 +496,55 @@ async def audio_stream(
                             elif etype == ServerEventType.RESPONSE_CREATED:
                                 audio_frames = 0
                                 resp_text = []
+                                response_idle.clear()
+                                resp_obj = getattr(event, "response", None)
+                                rid = getattr(resp_obj, "id", None) or ""
+                                lane_ctx["response_id"] = rid
                                 logging.info(
-                                    "[audio/stream] 🔊 Voice Live: modelo RESPONDIENDO"
+                                    "[audio/stream] 🔊 turn=%s lane=%s rid=%s RESPONDIENDO",
+                                    lane_ctx["turn_id"],
+                                    lane_ctx["lane"],
+                                    rid,
                                 )
                                 await websocket.send_text(
-                                    json.dumps({"type": "transcript_start"})
+                                    json.dumps(
+                                        {
+                                            "type": "transcript_start",
+                                            "turn_id": lane_ctx["turn_id"],
+                                            "lane": lane_ctx["lane"],
+                                            "response_id": rid,
+                                        }
+                                    )
                                 )
 
                             elif etype == ServerEventType.RESPONSE_DONE:
+                                resp_obj = getattr(event, "response", None)
+                                rid = getattr(resp_obj, "id", None) or lane_ctx.get(
+                                    "response_id", ""
+                                )
+                                status = getattr(resp_obj, "status", None) or ""
+                                response_idle.set()
                                 logging.info(
-                                    '[audio/stream] ✅ modelo terminó: %d audio frames — "%s"',
+                                    "[audio/stream] ✅ turn=%s lane=%s rid=%s status=%s "
+                                    'frames=%d — "%s"',
+                                    lane_ctx["turn_id"],
+                                    lane_ctx["lane"],
+                                    rid,
+                                    status,
                                     audio_frames,
                                     "".join(resp_text)[:150],
                                 )
                                 await websocket.send_text(
-                                    json.dumps({"type": "transcript_end"})
+                                    json.dumps(
+                                        {
+                                            "type": "transcript_end",
+                                            "turn_id": lane_ctx["turn_id"],
+                                            "lane": lane_ctx["lane"],
+                                            "response_id": rid,
+                                            "status": str(status),
+                                            "audio_frames": audio_frames,
+                                        }
+                                    )
                                 )
 
                             elif (
@@ -441,7 +570,21 @@ async def audio_stream(
                                 if err
                                 else str(event)
                             )
-                            logging.error("[audio/stream] VoiceLive error: %s", msg_txt)
+                            code = str(getattr(err, "code", "") or "")
+                            last_vl_error["code"] = code
+                            last_vl_error["message"] = msg_txt
+                            # Una colisión deja la respuesta previa viva: no
+                            # marcar idle. Cualquier otro error termina la
+                            # respuesta en curso → liberar el carril.
+                            if "active_response" not in code:
+                                response_idle.set()
+                            logging.error(
+                                "[audio/stream] VoiceLive error turn=%s lane=%s code=%s: %s",
+                                lane_ctx["turn_id"],
+                                lane_ctx["lane"],
+                                code,
+                                msg_txt,
+                            )
 
                 except Exception as exc:
                     logging.error("[audio/stream] _vl_to_browser: %s", exc)

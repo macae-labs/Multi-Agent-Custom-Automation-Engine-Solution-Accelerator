@@ -134,8 +134,16 @@ function buildAudioSocketUrl(): string {
 //     (un speak tardío del turno viejo NO habla) y se avisa al composer para
 //     que aborte el SSE y cierre la burbuja. El siguiente user_transcript abre
 //     un turno NUEVO → burbuja nueva, nunca se anexa a la anterior.
+//
+// Trazabilidad e2e: cada comando lleva { turn_id, lane }. El backend los
+// devuelve en transcript_start/transcript_end junto con el response_id de
+// Voice Live y los loguea. Un turno completo se sigue por turn_id en
+// consola del browser y en el log del Container App; un frame de audio
+// cuyo response no corresponde al turno actual se descarta.
 // ---------------------------------------------------------------------------
 let activeVoiceWs: WebSocket | null = null;
+
+export type VoiceLane = 'ack' | 'say' | 'speak';
 
 type VoiceTurn = {
   id: number;
@@ -168,6 +176,26 @@ function sendJson(payload: Record<string, unknown>): boolean {
   return true;
 }
 
+/** Envía un comando de carril etiquetado con el turno actual (trazable). */
+function sendLane(lane: VoiceLane, payload: Record<string, unknown>): boolean {
+  const ok = sendJson({ type: lane, turn_id: voiceTurn.id, lane, ...payload });
+  console.log(
+    `[VL] → lane=${lane} turn=${voiceTurn.id} sent=${ok} t=${Date.now()}`
+  );
+  return ok;
+}
+
+/** true si `turnId` (capturado por el composer al abrir su stream) sigue siendo
+ *  el turno vivo. Sin id (caller legacy) sólo exige turno abierto. */
+function isLiveTurn(turnId?: number): boolean {
+  if (!voiceTurn.open) return false;
+  if (turnId !== undefined && turnId !== voiceTurn.id) {
+    console.log(`[VL] stale turn ${turnId} (live=${voiceTurn.id}) → ignorado`);
+    return false;
+  }
+  return true;
+}
+
 function openVoiceTurn(userText: string): number {
   voiceTurn = {
     id: voiceTurn.id + 1,
@@ -176,10 +204,15 @@ function openVoiceTurn(userText: string): number {
     acked: false,
     narrated: new Map(),
   };
+  console.log(
+    `[VL] turn OPEN id=${voiceTurn.id} t=${Date.now()} text="${userText.slice(0, 60)}"`
+  );
   return voiceTurn.id;
 }
 
 function cancelVoiceTurn(): void {
+  if (voiceTurn.open)
+    console.log(`[VL] turn CANCEL id=${voiceTurn.id} t=${Date.now()}`);
   voiceTurn = { ...voiceTurn, open: false };
 }
 
@@ -200,33 +233,41 @@ export function onVoiceBargeIn(cb: (turnId: number) => void): () => void {
 
 /** Carril 1 — acuse inmediato generado por el modelo (Voice Live) a partir del
  *  enunciado del usuario. Sin plantillas: "hola" recibe un saludo, "¿en qué
- *  quedamos?" recibe un acuse coherente con eso. Una vez por turno. */
-export function voiceLiveAck(): void {
-  if (!voiceTurn.open || voiceTurn.acked) return;
+ *  quedamos?" recibe un acuse coherente con eso. Una vez por turno.
+ *  `turnId`: el que el composer capturó con currentVoiceTurnId() al abrir su
+ *  stream; si ya no es el turno vivo, no habla (evita cruzar turnos). */
+export function voiceLiveAck(turnId?: number): void {
+  if (!isLiveTurn(turnId) || voiceTurn.acked) return;
   voiceTurn.acked = true;
-  sendJson({ type: 'ack', user_text: voiceTurn.userText });
+  sendLane('ack', { user_text: voiceTurn.userText });
 }
 
 /** Carril 2 — narración de tool en el momento. Dedupe por tool en el turno. */
-export function voiceLiveNarrate(tool: string, server?: string): void {
-  if (!voiceTurn.open) return;
+export function voiceLiveNarrate(
+  tool: string,
+  server?: string,
+  turnId?: number
+): void {
+  if (!isLiveTurn(turnId)) return;
   const key = `${server ?? ''}/${tool}`;
   if (voiceTurn.narrated.has(key)) return;
   const phrase = humanizeTool(tool, server);
   voiceTurn.narrated.set(key, phrase);
-  sendJson({ type: 'say', text: phrase });
+  sendLane('say', { text: phrase });
 }
 
 /** Carril 3 — contenido final del MODEL ROUTER (parafraseo). Un solo speak por
  *  turno. Envía lo ya dicho en carriles 1 y 2 para que el modelo no lo repita:
  *  esos puestos ya se ocuparon en tiempo real. */
-export function voiceLiveSpeak(text: string): void {
+export function voiceLiveSpeak(text: string, turnId?: number): void {
   if (!text) return;
-  if (!voiceTurn.open) return; // sin turno abierto (2º caller, tecleado, o cancelado) → no vocea
+  if (!isLiveTurn(turnId)) return; // turno cerrado/cancelado/ajeno → no vocea
   const already = [...voiceTurn.narrated.values()];
   const acked = voiceTurn.acked;
+  const id = voiceTurn.id;
   voiceTurn = { ...voiceTurn, open: false }; // consumir el turno
-  sendJson({ type: 'speak', text, acked, narrated: already });
+  console.log(`[VL] turn CLOSE id=${id} t=${Date.now()} (speak)`);
+  sendLane('speak', { text, acked, narrated: already });
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +283,17 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
   const workletUrlRef = useRef<string | null>(null);
   const playingRef = useRef(false);
   const playQueueRef = useRef<ArrayBuffer[]>([]);
+  // turn_id de la respuesta de Voice Live que está sonando (0 = ninguna). Lo
+  // fija transcript_start; sirve para descartar frames de un turno ya cerrado.
+  const playingTurnRef = useRef(0);
   // Diagnóstico: localizar el fallo (captura vs recepción vs playback).
-  const statsRef = useRef({ sent: 0, recvA: 0, recvT: 0, played: 0 });
+  const statsRef = useRef({
+    sent: 0,
+    recvA: 0,
+    recvT: 0,
+    played: 0,
+    dropped: 0,
+  });
   const statsIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Guard SÍNCRONO contra doble-start: el estado `recording` sigue false durante
   // el setup async (~3s de getUserMedia+WS+AudioContext), así que un 2º clic se
@@ -460,6 +510,15 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
         // grandes de audio).
         if (e.data instanceof ArrayBuffer) {
           statsRef.current.recvA++;
+          // Audio de una respuesta cuyo turno ya no es el vivo (speak tardío
+          // del turno anterior que el server alcanzó a crear) → descartar.
+          if (
+            playingTurnRef.current !== 0 &&
+            playingTurnRef.current !== voiceTurn.id
+          ) {
+            statsRef.current.dropped++;
+            return;
+          }
           playQueueRef.current.push(e.data);
           if (!playingRef.current) drainQueue();
           return;
@@ -476,6 +535,32 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
                 onUserTranscriptRef.current?.(msg.text);
               }
               break;
+            case 'transcript_start': {
+              // Voice Live creó una respuesta (ack/say/speak). El server la
+              // etiqueta con el turn_id/lane del comando que la originó y su
+              // response_id. La respuesta anterior (si había) ya fue cancelada
+              // server-side: vaciar la cola para no seguir sonando su cola.
+              const t = typeof msg.turn_id === 'number' ? msg.turn_id : 0;
+              playingTurnRef.current = t;
+              playQueueRef.current = [];
+              console.log(
+                `[VL] ← response START lane=${msg.lane ?? '?'} turn=${t} rid=${msg.response_id ?? '?'} live=${voiceTurn.id} t=${Date.now()}`
+              );
+              break;
+            }
+            case 'transcript_end':
+              console.log(
+                `[VL] ← response END lane=${msg.lane ?? '?'} turn=${msg.turn_id ?? '?'} rid=${msg.response_id ?? '?'} frames=${msg.audio_frames ?? '?'} t=${Date.now()}`
+              );
+              break;
+            case 'lane_error':
+              // El server no pudo crear la respuesta (colisión con otra activa
+              // tras reintento, etc.). Se registra para que el turno sea
+              // auditable: NO cambia el estado del turno.
+              console.warn(
+                `[VL] ← lane ERROR lane=${msg.lane} turn=${msg.turn_id} err=${msg.error}`
+              );
+              break;
             case 'audio_chunk':
               if (msg.data) enqueueAudio(msg.data);
               break;
@@ -485,7 +570,11 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
               // al composer para que aborte el SSE y cierre su burbuja. El
               // próximo user_transcript abre otro turno → burbuja nueva.
               const cancelled = voiceTurn.id;
+              console.log(
+                `[VL] ← barge_in_ack turn=${cancelled} t=${Date.now()}`
+              );
               stopPlayback();
+              playingTurnRef.current = 0;
               cancelVoiceTurn();
               bargeInListeners.forEach((cb) => {
                 try {
@@ -531,11 +620,11 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
 
       setRecording(true);
       console.log('[VL] recording ON — capturando');
-      statsRef.current = { sent: 0, recvA: 0, recvT: 0, played: 0 };
+      statsRef.current = { sent: 0, recvA: 0, recvT: 0, played: 0, dropped: 0 };
       statsIvRef.current = setInterval(() => {
         const s = statsRef.current;
         console.log(
-          `[VL] stats sent=${s.sent} recvAudio=${s.recvA} recvText=${s.recvT} played=${s.played} ctx=${actxRef.current?.state}`
+          `[VL] stats sent=${s.sent} recvAudio=${s.recvA} recvText=${s.recvT} played=${s.played} dropped=${s.dropped} turn=${voiceTurn.id}${voiceTurn.open ? '(open)' : ''} playingTurn=${playingTurnRef.current} ctx=${actxRef.current?.state}`
         );
       }, 2000);
     } catch (err) {
