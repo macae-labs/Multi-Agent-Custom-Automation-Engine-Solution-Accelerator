@@ -14,6 +14,10 @@ dependencies = [
     "azure-monitor-opentelemetry>=1.8.5,<2",
     "azure-search-documents>=11.5.3,<12",
     "fastapi>=0.116.1,<1",
+    # Importada directamente (middleware/health_check.py); declarada para que
+    # Dependabot la trate como directa y no como transitiva de fastapi. Piso =
+    # versión actual del lock: declararla no mueve nada, la mueve Dependabot.
+    "starlette>=0.47.3,<2",
     "openai>=2.16.0,<3",
     "opentelemetry-api>=1.39.0,<2",
     "opentelemetry-exporter-otlp-proto-grpc>=1.39.0,<2",
