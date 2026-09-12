@@ -268,7 +268,12 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
 
         dispatch(setSessionId(sessionId));
         // Dispatch user message to Redux
-        dispatch(addUserMessage(userMessage));
+        dispatch(
+          addUserMessage({
+            content: userMessage,
+            transientVoiceInput: voiceTurn,
+          })
+        );
         // Initialize assistant message placeholder
         dispatch(initAssistantMessage());
         dispatch(startStreaming());

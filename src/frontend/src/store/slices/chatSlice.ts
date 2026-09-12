@@ -21,6 +21,7 @@ export interface ChatMessage {
     agent?: string;
     confidence?: number;
     fullResponse?: string;
+    transientVoiceInput?: boolean;
     generatedFiles?: Array<{
       file_id: string;
       filename: string;
@@ -28,6 +29,13 @@ export interface ChatMessage {
     }>;
   };
 }
+
+type AddUserMessagePayload =
+  | string
+  | {
+      content: string;
+      transientVoiceInput?: boolean;
+    };
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -67,12 +75,19 @@ const chatSlice = createSlice({
       state.messages.push(action.payload);
     },
 
-    addUserMessage(state, action: PayloadAction<string>) {
+    addUserMessage(state, action: PayloadAction<AddUserMessagePayload>) {
+      const payload =
+        typeof action.payload === 'string'
+          ? { content: action.payload }
+          : action.payload;
       state.messages.push({
         id: `msg-${Date.now()}-user`,
         role: 'user',
-        content: action.payload,
+        content: payload.content,
         timestamp: Date.now(),
+        metadata: payload.transientVoiceInput
+          ? { transientVoiceInput: true }
+          : undefined,
       });
     },
 
@@ -130,7 +145,13 @@ const chatSlice = createSlice({
         !last.metadata;
       if (removedAssistant) state.messages.pop();
       const user = state.messages[state.messages.length - 1];
-      if (removedAssistant && user?.role === 'user') state.messages.pop();
+      if (
+        removedAssistant &&
+        user?.role === 'user' &&
+        user.metadata?.transientVoiceInput
+      ) {
+        state.messages.pop();
+      }
       state.isStreaming = false;
       state.streamingContent = '';
       state.streamingBuffer = '';
