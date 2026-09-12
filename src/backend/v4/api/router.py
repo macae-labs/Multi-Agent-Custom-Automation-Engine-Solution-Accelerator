@@ -45,7 +45,7 @@ from common.utils.utils_af import (
     rai_success,
     rai_validate_team_config,
 )
-from v4.api.tool_activity import describe_tool_call
+from .tool_activity import describe_tool_call
 from v4.common.models.mcp_connection_models import (
     McpReadResourceRequest,
     MCPServerEntry,
