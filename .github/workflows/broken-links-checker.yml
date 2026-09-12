@@ -30,6 +30,9 @@ jobs:
             **/*.md
 
 
+      # lychee 2.x no acepta `--exclude-mail` (error: unexpected argument) y no
+      # revisa mailto: por defecto, así que el flag sobra. Se rompió al subir
+      # lychee-action de 2.4.1 a 2.9.0 en #194.
       # For PR: Check broken links only in changed files
       - name: Check Broken Links in Changed Markdown Files
         id: lychee-check-pr
@@ -37,7 +40,7 @@ jobs:
         uses: lycheeverse/lychee-action@v2.9.0
         with:
           args: >
-            --verbose --exclude-mail --no-progress --exclude ^https?://
+            --verbose --no-progress --exclude ^https?://
             ${{ steps.changed-markdown-files.outputs.all_changed_files }}
           failIfEmpty: false
         env:
@@ -50,7 +53,7 @@ jobs:
         uses: lycheeverse/lychee-action@v2.9.0
         with:
           args: >
-            --verbose --exclude-mail --no-progress --exclude ^https?://
+            --verbose --no-progress --exclude ^https?://
             '**/*.md'
           failIfEmpty: false
         env:
