@@ -45,7 +45,6 @@ from common.utils.utils_af import (
     rai_success,
     rai_validate_team_config,
 )
-from .tool_activity import describe_tool_call
 from v4.common.models.mcp_connection_models import (
     McpReadResourceRequest,
     MCPServerEntry,
@@ -69,6 +68,8 @@ from v4.config.settings import (
 )
 from v4.models.messages import WebsocketMessageType
 from v4.orchestration.orchestration_manager import OrchestrationManager
+
+from .tool_activity import describe_tool_call
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
