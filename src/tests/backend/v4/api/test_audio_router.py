@@ -131,6 +131,37 @@ async def test_audio_stream_stops_reading_after_disconnect(caplog):
     assert "_browser_to_vl" not in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_speech_without_transcript_is_reported_as_discarded():
+    """Cada SPEECH_STARTED (barge-in) termina en user_transcript o en NADA.
+    Ese "nada" (transcripción vacía o fallida) viaja como speech_discarded para
+    que el cliente cierre la cadena causal del turno interrumpido sin reloj."""
+    websocket = _WebSocket()
+    voice_live = _VoiceLive(
+        [
+            SimpleNamespace(
+                type=ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED,
+                transcript="   ",
+            ),
+            SimpleNamespace(
+                type=ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_FAILED,
+                error="noise",
+            ),
+        ]
+    )
+
+    with (
+        patch.object(audio_router.config, "get_shared_async_credential"),
+        patch.object(audio_router, "vl_connect", return_value=voice_live),
+    ):
+        await audio_router.audio_stream(websocket)
+
+    assert [json.loads(m)["type"] for m in websocket.sent_text] == [
+        "speech_discarded",
+        "speech_discarded",
+    ]
+
+
 def _run(websocket, voice_live, **kwargs):
     async def go():
         with (
@@ -230,12 +261,20 @@ class _SlowCreateVoiceLive(_VoiceLive):
         super().__init__()
         self._q: asyncio.Queue = asyncio.Queue()
         self._n = 0
+        self.calls: list[str] = []  # orden REAL de comandos hacia Voice Live
         self.response = SimpleNamespace(
             create=AsyncMock(side_effect=self._create),
             cancel=AsyncMock(side_effect=self._cancel),
         )
+        self.conversation = SimpleNamespace(
+            item=SimpleNamespace(delete=AsyncMock(side_effect=self._delete))
+        )
+
+    async def _delete(self, **_kw):
+        self.calls.append("delete")
 
     async def _create(self, response):
+        self.calls.append("create")
         self._n += 1
         rid = f"resp_{self._n}"
         meta = response.get("metadata", {})
@@ -254,11 +293,13 @@ class _SlowCreateVoiceLive(_VoiceLive):
         asyncio.get_running_loop().create_task(later())
 
     async def _cancel(self, **_kw):
+        self.calls.append("cancel")
+        # La respuesta cancelada deja UN item en la conversación (como el real).
         done = SimpleNamespace(
             id=self._active.id,
             metadata=self._active.metadata,
             status="ResponseStatus.CANCELLED",
-            output=[],
+            output=[SimpleNamespace(id=f"item_{self._active.id}")],
         )
         await self._q.put(
             SimpleNamespace(type=ServerEventType.RESPONSE_DONE, response=done)
@@ -303,3 +344,7 @@ async def test_back_to_back_lanes_serialize_on_response_created():
     ]
     assert [s["response_id"] for s in starts] == ["resp_1", "resp_2"]
     assert all((s["turn_id"], s["lane"]) == (3, "say") for s in starts)
+    # El item de la respuesta cancelada se borra ANTES de crear la siguiente:
+    # si el create sale primero, el say nace con el item del ack aún vivo y
+    # dice su contenido (visto en la 0110).
+    assert voice_live.calls == ["create", "cancel", "delete", "create"]

@@ -145,9 +145,14 @@ let activeVoiceWs: WebSocket | null = null;
 
 export type VoiceLane = 'ack' | 'say' | 'speak';
 
+export type VoiceTurnState = 'none' | 'open' | 'spoken' | 'interrupted';
+export type TranscriptMeta = { turnId: number; continued: boolean };
+
 type VoiceTurn = {
   id: number;
   open: boolean; // true entre user_transcript y speak (o barge-in)
+  state: VoiceTurnState;
+  answered: boolean; // el router ya produjo texto para este turno
   userText: string; // enunciado STT que abrió el turno (contexto del ack)
   acked: boolean; // carril 1 ya emitido
   narrated: Map<string, string>; // carril 2: key tool → frase dicha
@@ -155,10 +160,36 @@ type VoiceTurn = {
 let voiceTurn: VoiceTurn = {
   id: 0,
   open: false,
+  state: 'none',
+  answered: false,
   userText: '',
   acked: false,
   narrated: new Map(),
 };
+
+/** Regla de continuación (pura, testeable). El VAD del server cierra el turno
+ *  a los 500 ms de silencio: una pausa a mitad de frase produce DOS
+ *  user_transcript, el segundo cancela al primero por barge-in y al router le
+ *  llega medio enunciado (visto en la 0110: "…los contextos del prime" /
+ *  "Terminan con cero f…" → el router respondió "no puedo consultar GitHub").
+ *  Si el turno anterior fue interrumpido y el router AÚN no había producido
+ *  texto, el nuevo transcript es continuación del mismo enunciado: se fusiona
+ *  y se reenvía como un solo mensaje. Con texto ya en curso es interrupción. */
+export function resolveTranscript(
+  prev: { state: VoiceTurnState; answered: boolean; userText: string },
+  text: string
+): { text: string; continued: boolean } {
+  if (prev.state === 'interrupted' && !prev.answered && prev.userText.trim()) {
+    return { text: `${prev.userText.trim()} ${text.trim()}`, continued: true };
+  }
+  return { text, continued: false };
+}
+
+/** El composer lo llama con el PRIMER token del router: a partir de ahí una
+ *  nueva voz del usuario es interrupción, no continuación. */
+export function markVoiceTurnAnswered(turnId: number): void {
+  if (turnId === voiceTurn.id) voiceTurn.answered = true;
+}
 
 /** Composers registran acá qué hacer cuando el usuario interrumpe (barge-in). */
 const bargeInListeners = new Set<(turnId: number) => void>();
@@ -200,6 +231,8 @@ function openVoiceTurn(userText: string): number {
   voiceTurn = {
     id: voiceTurn.id + 1,
     open: true,
+    state: 'open',
+    answered: false,
     userText,
     acked: false,
     narrated: new Map(),
@@ -210,10 +243,10 @@ function openVoiceTurn(userText: string): number {
   return voiceTurn.id;
 }
 
-function cancelVoiceTurn(): void {
+function cancelVoiceTurn(state: VoiceTurnState = 'interrupted'): void {
   if (voiceTurn.open)
     console.log(`[VL] turn CANCEL id=${voiceTurn.id} t=${Date.now()}`);
-  voiceTurn = { ...voiceTurn, open: false };
+  voiceTurn = { ...voiceTurn, open: false, state };
 }
 
 export function isVoiceLiveActive(): boolean {
@@ -265,7 +298,7 @@ export function voiceLiveSpeak(text: string, turnId?: number): void {
   const already = [...voiceTurn.narrated.values()];
   const acked = voiceTurn.acked;
   const id = voiceTurn.id;
-  voiceTurn = { ...voiceTurn, open: false }; // consumir el turno
+  voiceTurn = { ...voiceTurn, open: false, state: 'spoken' }; // consumir el turno
   console.log(`[VL] turn CLOSE id=${id} t=${Date.now()} (speak)`);
   sendLane('speak', { text, acked, narrated: already });
 }
@@ -292,7 +325,9 @@ export function shouldAdmitFrame(args: {
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
-export function useVoiceLive(onUserTranscript?: (text: string) => void) {
+export function useVoiceLive(
+  onUserTranscript?: (text: string, meta: TranscriptMeta) => void
+) {
   const [recording, setRecording] = useState(false);
   const onUserTranscriptRef = useRef(onUserTranscript);
   onUserTranscriptRef.current = onUserTranscript;
@@ -453,7 +488,7 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
       URL.revokeObjectURL(workletUrlRef.current);
       workletUrlRef.current = null;
     }
-    cancelVoiceTurn();
+    cancelVoiceTurn('none'); // fin de sesión: nada que continuar
 
     if (
       wsRef.current &&
@@ -566,11 +601,31 @@ export function useVoiceLive(onUserTranscript?: (text: string) => void) {
           const msg = JSON.parse(e.data as string);
           switch (msg.type) {
             case 'user_transcript':
-              // STT del usuario → abre un turno NUEVO (una utterance = un turno) y
-              // va al MODEL ROUTER vía el composer (flujo normal).
+              // STT del usuario → abre un turno y va al MODEL ROUTER vía el
+              // composer. Si el turno anterior fue interrumpido antes de que
+              // el router hablara, es continuación: texto fusionado, y el
+              // composer sustituye la burbuja del fragmento anterior.
               if (msg.text) {
-                openVoiceTurn(msg.text);
-                onUserTranscriptRef.current?.(msg.text);
+                const r = resolveTranscript(voiceTurn, msg.text);
+                const id = openVoiceTurn(r.text);
+                if (r.continued) {
+                  console.log(`[VL] turn ${id} CONTINÚA el anterior (fusionado)`);
+                }
+                onUserTranscriptRef.current?.(r.text, {
+                  turnId: id,
+                  continued: r.continued,
+                });
+              }
+              break;
+            case 'speech_discarded':
+              // La voz que interrumpió el turno no produjo texto: la cadena
+              // causal se cierra sin continuación. El próximo transcript es
+              // una petición nueva. Identidad del evento, no reloj.
+              if (voiceTurn.state === 'interrupted') {
+                console.log(
+                  `[VL] turn ${voiceTurn.id} interrumpido sin voz útil → abandonado`
+                );
+                voiceTurn = { ...voiceTurn, state: 'none' };
               }
               break;
             case 'transcript_start': {

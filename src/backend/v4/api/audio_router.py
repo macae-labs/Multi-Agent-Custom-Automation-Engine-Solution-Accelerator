@@ -508,7 +508,7 @@ async def audio_stream(
                                 # Lo que DIJO el usuario → el frontend lo envía al
                                 # MODEL ROUTER como un mensaje normal de chat.
                                 transcript = getattr(event, "transcript", None)
-                                if transcript:
+                                if transcript and transcript.strip():
                                     logging.info(
                                         '[audio/stream] 🎙 user_transcript "%s"',
                                         transcript[:120],
@@ -521,6 +521,28 @@ async def audio_stream(
                                             }
                                         )
                                     )
+                                else:
+                                    # La voz que disparó el barge-in no produjo
+                                    # texto (ruido, respiración). Cierra la
+                                    # cadena causal SPEECH_STARTED → transcript:
+                                    # el cliente sabe que el turno interrumpido
+                                    # NO continúa, sin reloj.
+                                    logging.info("[audio/stream] 🎙 speech_discarded")
+                                    await websocket.send_text(
+                                        json.dumps({"type": "speech_discarded"})
+                                    )
+
+                            elif (
+                                etype
+                                == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_FAILED
+                            ):
+                                logging.warning(
+                                    "[audio/stream] transcription failed: %s",
+                                    getattr(event, "error", None),
+                                )
+                                await websocket.send_text(
+                                    json.dumps({"type": "speech_discarded"})
+                                )
 
                             elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
                                 delta = getattr(event, "delta", None)
@@ -605,6 +627,13 @@ async def audio_stream(
                                     "response_id", ""
                                 )
                                 status = getattr(resp_obj, "status", None) or ""
+                                # ANTES de liberar el carril: el siguiente
+                                # create solo sale cuando el delete ya viajó por
+                                # el mismo socket y el server los aplica en
+                                # orden. Con el delete después, el say se creaba
+                                # con el item del ack cancelado aún vivo y decía
+                                # su contenido (0110: "revisaré tu solicitud").
+                                await _forget_response_items(resp_obj)
                                 response_idle.set()
                                 turn_lbl, lane_lbl = _labels(resp_obj)
                                 logging.info(
@@ -629,9 +658,6 @@ async def audio_stream(
                                         }
                                     )
                                 )
-                                # Terminada (completed o cancelled): fuera de
-                                # la conversación, no contamina la siguiente.
-                                await _forget_response_items(resp_obj)
 
                             elif (
                                 etype

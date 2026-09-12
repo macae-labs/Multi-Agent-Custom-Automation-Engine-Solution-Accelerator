@@ -118,6 +118,19 @@ const chatSlice = createSlice({
       state.streamingBuffer = '';
     },
 
+    // Enunciado de voz partido por el VAD: el fragmento anterior ya publicó su
+    // par usuario/asistente (vacío, abortado por barge-in). Se retira ese par y
+    // el composer reenvía el enunciado fusionado como UN solo mensaje.
+    dropLastExchange(state) {
+      const last = state.messages[state.messages.length - 1];
+      if (last?.role === 'assistant' && !last.content) state.messages.pop();
+      const user = state.messages[state.messages.length - 1];
+      if (user?.role === 'user') state.messages.pop();
+      state.isStreaming = false;
+      state.streamingContent = '';
+      state.streamingBuffer = '';
+    },
+
     // UI State
     setSubmittingDisabled(state, action: PayloadAction<boolean>) {
       state.submittingDisabled = action.payload;
@@ -153,6 +166,7 @@ export const {
   startStreaming,
   addStreamToken,
   finishStreaming,
+  dropLastExchange,
   setSubmittingDisabled,
   setError,
   clearMessages,
