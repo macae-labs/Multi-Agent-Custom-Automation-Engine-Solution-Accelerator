@@ -35,6 +35,7 @@ import {
   voiceLiveAck,
   voiceLiveNarrate,
   voiceLiveSpeak,
+  markVoiceTurnAnswered,
 } from '../../hooks/useVoiceLive';
 import {
   Attach20Regular,
@@ -57,6 +58,7 @@ import {
   setSessionId,
   setSubmittingDisabled,
   selectSessionId,
+  dropLastExchange,
 } from '../../store/slices/chatSlice';
 
 // Icon mapping function to convert string icons to FluentUI icons
@@ -266,7 +268,12 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
 
         dispatch(setSessionId(sessionId));
         // Dispatch user message to Redux
-        dispatch(addUserMessage(userMessage));
+        dispatch(
+          addUserMessage({
+            content: userMessage,
+            transientVoiceInput: voiceTurn,
+          })
+        );
         // Initialize assistant message placeholder
         dispatch(initAssistantMessage());
         dispatch(startStreaming());
@@ -297,6 +304,9 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           sessionId,
           {
             onToken: (token) => {
+              // Primer texto del router: desde aquí una nueva voz del usuario
+              // es interrupción, no continuación del enunciado.
+              if (voiceTurn && !fullResponse) markVoiceTurnAnswered(voiceTurnId);
               fullResponse += token;
               dispatch(addStreamToken(token));
             },
@@ -620,7 +630,12 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             <MicButton
               mode="voicelive"
               disabled={submitting}
-              onUserTranscript={(t) => handleSubmit(t)}
+              onUserTranscript={(t, meta) => {
+                // Continuación de un enunciado partido: se retira el par del
+                // fragmento anterior y se publica el enunciado completo una vez.
+                if (meta.continued) dispatch(dropLastExchange());
+                handleSubmit(t);
+              }}
             />
             <MicButton
               mode="dictation"

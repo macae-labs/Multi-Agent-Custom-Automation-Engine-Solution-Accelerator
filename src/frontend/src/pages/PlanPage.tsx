@@ -15,6 +15,8 @@ import {
   voiceLiveAck,
   voiceLiveNarrate,
   voiceLiveSpeak,
+  markVoiceTurnAnswered,
+  type TranscriptMeta,
 } from '@/hooks/useVoiceLive';
 import {
   ProcessedPlanData,
@@ -957,7 +959,7 @@ const PlanPage: React.FC = () => {
   ]);
 
   const handleOnchatSubmit = useCallback(
-    async (chatInput: string) => {
+    async (chatInput: string, meta?: TranscriptMeta) => {
       if (!chatInput.trim()) return;
       setInput('');
 
@@ -1007,7 +1009,16 @@ const PlanPage: React.FC = () => {
         content: chatInput,
         raw_data: chatInput,
       };
-      setAgentMessages((prev) => [...prev, userMsg]);
+      // Continuación de un enunciado partido por el VAD: se retira la burbuja
+      // del fragmento anterior (su stream ya fue abortado por el barge-in) y se
+      // publica el enunciado completo una sola vez.
+      setAgentMessages((prev) => {
+        if (!meta?.continued) return [...prev, userMsg];
+        const i = prev
+          .map((m) => m.agent_type)
+          .lastIndexOf(AgentMessageType.HUMAN_AGENT);
+        return [...(i >= 0 ? prev.slice(0, i) : prev), userMsg];
+      });
       setSubmittingChatDisableInput(true);
       setShowProcessingPlanSpinner(true);
       scrollToBottom();
@@ -1123,6 +1134,9 @@ const PlanPage: React.FC = () => {
             },
           }
         )) {
+          // Primer texto del router: desde aquí una nueva voz del usuario es
+          // interrupción, no continuación del enunciado.
+          if (voiceTurn && !accumulated) markVoiceTurnAnswered(voiceTurnId);
           accumulated += token;
           const snap = accumulated;
 

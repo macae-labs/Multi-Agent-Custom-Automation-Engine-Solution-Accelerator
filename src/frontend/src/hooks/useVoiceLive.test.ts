@@ -1,4 +1,4 @@
-import { shouldAdmitFrame } from './useVoiceLive';
+import { resolveTranscript, shouldAdmitFrame } from './useVoiceLive';
 
 // Regla de admisión de frames a la cola de reproducción. Cada caso es una
 // situación observada en el contrato de Playwright (T4/T5/T5b/T8) o en el
@@ -39,5 +39,44 @@ describe('shouldAdmitFrame', () => {
     expect(
       shouldAdmitFrame({ playingRid: '', playingTurn: 0, liveTurn: 3 })
     ).toBe(true);
+  });
+});
+
+// Enunciado partido por el VAD (visto en la 0110): "…los contextos del prime"
+// + 500 ms de pausa + "Terminan con cero f…" → dos turnos, el router recibió
+// medio enunciado y contestó "no puedo consultar GitHub".
+describe('resolveTranscript', () => {
+  const prev = (over: Partial<Parameters<typeof resolveTranscript>[0]>) => ({
+    state: 'interrupted' as const,
+    answered: false,
+    userText: 'valida los contextos del primer',
+    ...over,
+  });
+
+  it('turno interrumpido ANTES de que el router hablara → continuación fusionada', () => {
+    expect(resolveTranscript(prev({}), 'commit con cero f')).toEqual({
+      text: 'valida los contextos del primer commit con cero f',
+      continued: true,
+    });
+  });
+
+  it('el router ya había producido texto → es interrupción, turno nuevo', () => {
+    expect(resolveTranscript(prev({ answered: true }), 'otra cosa')).toEqual({
+      text: 'otra cosa',
+      continued: false,
+    });
+  });
+
+  it('turno anterior consumido por speak, cerrado o sin sesión → turno nuevo', () => {
+    for (const state of ['spoken', 'open', 'none'] as const) {
+      expect(resolveTranscript(prev({ state }), 'hola').continued).toBe(false);
+    }
+  });
+
+  it('sin texto previo no hay nada que fusionar', () => {
+    expect(resolveTranscript(prev({ userText: '  ' }), 'hola')).toEqual({
+      text: 'hola',
+      continued: false,
+    });
   });
 });

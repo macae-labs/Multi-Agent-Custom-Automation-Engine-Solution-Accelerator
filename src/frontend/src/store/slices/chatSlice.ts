@@ -21,6 +21,7 @@ export interface ChatMessage {
     agent?: string;
     confidence?: number;
     fullResponse?: string;
+    transientVoiceInput?: boolean;
     generatedFiles?: Array<{
       file_id: string;
       filename: string;
@@ -28,6 +29,13 @@ export interface ChatMessage {
     }>;
   };
 }
+
+type AddUserMessagePayload =
+  | string
+  | {
+      content: string;
+      transientVoiceInput?: boolean;
+    };
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -67,12 +75,19 @@ const chatSlice = createSlice({
       state.messages.push(action.payload);
     },
 
-    addUserMessage(state, action: PayloadAction<string>) {
+    addUserMessage(state, action: PayloadAction<AddUserMessagePayload>) {
+      const payload =
+        typeof action.payload === 'string'
+          ? { content: action.payload }
+          : action.payload;
       state.messages.push({
         id: `msg-${Date.now()}-user`,
         role: 'user',
-        content: action.payload,
+        content: payload.content,
         timestamp: Date.now(),
+        metadata: payload.transientVoiceInput
+          ? { transientVoiceInput: true }
+          : undefined,
       });
     },
 
@@ -118,6 +133,30 @@ const chatSlice = createSlice({
       state.streamingBuffer = '';
     },
 
+    // Enunciado de voz partido por el VAD: el fragmento anterior ya publicó su
+    // par usuario/asistente (vacío, abortado por barge-in). Se retira ese par y
+    // el composer reenvía el enunciado fusionado como UN solo mensaje.
+    dropLastExchange(state) {
+      const last = state.messages[state.messages.length - 1];
+      const removedAssistant =
+        state.isStreaming &&
+        last?.role === 'assistant' &&
+        !last.content &&
+        !last.metadata;
+      if (removedAssistant) state.messages.pop();
+      const user = state.messages[state.messages.length - 1];
+      if (
+        removedAssistant &&
+        user?.role === 'user' &&
+        user.metadata?.transientVoiceInput
+      ) {
+        state.messages.pop();
+      }
+      state.isStreaming = false;
+      state.streamingContent = '';
+      state.streamingBuffer = '';
+    },
+
     // UI State
     setSubmittingDisabled(state, action: PayloadAction<boolean>) {
       state.submittingDisabled = action.payload;
@@ -153,6 +192,7 @@ export const {
   startStreaming,
   addStreamToken,
   finishStreaming,
+  dropLastExchange,
   setSubmittingDisabled,
   setError,
   clearMessages,

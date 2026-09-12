@@ -1,7 +1,7 @@
 import { Button } from '@fluentui/react-components';
 import { Mic, PersonVoice } from '@/coral/imports/bundleicons';
 import React from 'react';
-import { useVoiceLive } from '../../hooks/useVoiceLive';
+import { useVoiceLive, type TranscriptMeta } from '../../hooks/useVoiceLive';
 import { useDictation } from '../../hooks/useDictation';
 
 interface MicButtonProps {
@@ -11,7 +11,7 @@ interface MicButtonProps {
   /** Only used in dictation mode: called with the final transcript text. */
   onTranscript?: (text: string) => void;
   /** Only used in voicelive mode: user speech transcript → send through the normal chat flow. */
-  onUserTranscript?: (text: string) => void;
+  onUserTranscript?: (text: string, meta: TranscriptMeta) => void;
 }
 
 /** Dictation shell — uses useDictation internally */
@@ -44,7 +44,7 @@ const DictationButton: React.FC<{
 /** VoiceLive shell — uses useVoiceLive internally */
 const VoiceLiveButton: React.FC<{
   disabled?: boolean;
-  onUserTranscript?: (t: string) => void;
+  onUserTranscript?: (t: string, meta: TranscriptMeta) => void;
 }> = ({ disabled, onUserTranscript }) => {
   const { recording, toggle } = useVoiceLive(onUserTranscript);
   return (

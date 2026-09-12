@@ -1281,6 +1281,35 @@ async def chat_message(
 # ── Streaming Chat Endpoint (SSE) ────────────────────────────────
 
 
+def _describe_tool_call(
+    tool_name: str, server_name: str, arguments: Any
+) -> tuple[str, str]:
+    """Nombre REAL de la tool y del servidor para narrar y mostrar.
+
+    ``call_external_tool`` es un envoltorio: la tool y el servidor reales van
+    en sus argumentos (``target_tool`` / ``server_name``) y, en el Toolbox
+    (``call_tool``), un nivel más adentro (``arguments.name``). Sin esto la
+    voz decía "Consultando call external tool en MacaeMcpServer" cuando la
+    llamada real era ``GitHub___list_commits`` en ``tool-box``.
+    """
+    if tool_name != "call_external_tool":
+        return tool_name, server_name
+    args = arguments
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (TypeError, ValueError):
+            return tool_name, server_name
+    if not isinstance(args, dict):
+        return tool_name, server_name
+    tool = str(args.get("target_tool") or tool_name)
+    server = str(args.get("server_name") or server_name)
+    inner = args.get("arguments")
+    if tool == "call_tool" and isinstance(inner, dict) and inner.get("name"):
+        tool = str(inner["name"])
+    return tool, server
+
+
 def _sse_event(data: dict) -> str:
     """Format a dict as an SSE data event."""
     return f"data: {json.dumps(data)}\n\n"
@@ -4038,15 +4067,21 @@ async def chat_message_stream(
                         server_name = getattr(content, "server_name", None) or "unknown"
                         last_mcp_tool_call = (tool_name, server_name)
                         _ledger_pending_args = str(content.arguments or "")[:300]
-                        _mcp_call_key = ("calling", tool_name, server_name)
+                        # La UI y la voz narran la tool REAL (dentro de los
+                        # argumentos del envoltorio), no "call external tool".
+                        _tool_lbl, _server_lbl = _describe_tool_call(
+                            tool_name, server_name, content.arguments
+                        )
+                        _mcp_call_key = ("calling", _tool_lbl, _server_lbl)
                         if _mcp_call_key != _last_tool_activity_key:
                             _last_tool_activity_key = _mcp_call_key
                             yield _sse_event(
                                 {
                                     "type": "tool_activity",
                                     "activity": "calling",
-                                    "tool": tool_name,
-                                    "server": server_name,
+                                    "tool": _tool_lbl,
+                                    "server": _server_lbl,
+                                    "wrapper": tool_name,
                                     "args": str(content.arguments or "")[:200],
                                 }
                             )

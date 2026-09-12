@@ -14,6 +14,7 @@ import {
 } from '@fluentui/react-components';
 import { Send } from '@/coral/imports/bundleicons';
 import MicButton from './MicButton';
+import type { TranscriptMeta } from '../../hooks/useVoiceLive';
 import {
   Attach20Regular,
   Dismiss20Regular,
@@ -30,7 +31,7 @@ interface SimplifiedPlanChatProps extends PlanChatProps {
   input: string;
   setInput: React.Dispatch<React.SetStateAction<string>>;
   submittingChatDisableInput: boolean;
-  OnChatSubmit: (input: string) => void;
+  OnChatSubmit: (input: string, meta?: TranscriptMeta) => void;
   waitingForPlan: boolean;
   attachedFiles?: Array<{ name: string; file_id: string }>;
   generatedFiles?: Array<{
@@ -371,7 +372,7 @@ const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
         <MicButton
           mode="voicelive"
           disabled={isDisabled}
-          onUserTranscript={(t) => OnChatSubmit(t)}
+          onUserTranscript={(t, meta) => OnChatSubmit(t, meta)}
         />
         <MicButton
           mode="dictation"
