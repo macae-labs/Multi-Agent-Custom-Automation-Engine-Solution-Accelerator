@@ -40,10 +40,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -55,7 +55,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Start Container App
-        uses: azure/cli@v2
+        uses: azure/cli@v3
         with:
           azcliversion: "latest"
           inlineScript: |
@@ -139,7 +139,7 @@ jobs:
 
       - name: Upload test report
         id: upload_report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: test-report-${{ github.run_id }}
@@ -188,7 +188,7 @@ jobs:
 
       # - name: Stop Container App
       #   if: always()
-      #   uses: azure/cli@v2
+      #   uses: azure/cli@v3
       #   with:
       #     azcliversion: "latest"
       #     inlineScript: |

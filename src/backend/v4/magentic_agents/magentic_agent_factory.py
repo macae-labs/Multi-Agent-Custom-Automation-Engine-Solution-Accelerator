@@ -250,8 +250,8 @@ class MagenticAgentFactory:
     @classmethod
     async def cleanup_all_agents(cls, agent_list: List):
         """Clean up all created agents."""
-        cls.logger = logging.getLogger(__name__)
-        cls.logger.info(f"Cleaning up {len(agent_list)} agents")
+        logger = logging.getLogger(__name__)
+        logger.info(f"Cleaning up {len(agent_list)} agents")
 
         for agent in agent_list:
             try:
@@ -262,7 +262,7 @@ class MagenticAgentFactory:
                     "agent_name",
                     getattr(agent, "__class__", type("X", (object,), {})).__name__,
                 )
-                cls.logger.warning(f"Error closing agent {name}: {ex}")
+                logger.warning(f"Error closing agent {name}: {ex}")
 
         agent_list.clear()
-        cls.logger.info("Agent cleanup completed")
+        logger.info("Agent cleanup completed")
