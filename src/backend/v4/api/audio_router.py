@@ -658,10 +658,6 @@ async def audio_stream(
                                         }
                                     )
                                 )
-                                # Terminada (completed o cancelled): fuera de
-                                # la conversación, no contamina la siguiente.
-                                await _forget_response_items(resp_obj)
-
                             elif (
                                 etype
                                 == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED
