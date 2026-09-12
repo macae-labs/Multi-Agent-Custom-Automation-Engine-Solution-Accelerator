@@ -20,31 +20,31 @@ dynamic = ["version"]
 # FastMCP 3.1+ for MCP Protocol 2025-11-25 with UI Resources support
 dependencies = [
   "fastmcp>=3.2.0",
-  "uvicorn[standard]==0.38.0",
-  "python-dotenv==1.2.2",
-  "azure-identity==1.19.0",
-  "azure-keyvault-secrets==4.11.0",
+  "uvicorn[standard]==0.52.4",
+  "python-dotenv==1.2.3",
+  "azure-identity==1.25.3",
+  "azure-keyvault-secrets==4.11.2",
   # Required async transport for azure.*.aio (ManagedIdentityCredential token
   # minting + Key Vault reads in credential_resolver). Without it azure-core
   # raises "aiohttp package is not installed" and the MI token is never obtained
   # → the request goes out with no Authorization header → 401.
   "aiohttp==3.14.3",
-  "pydantic==2.11.7",
-  "pydantic-settings==2.6.1",
-  "python-multipart==0.0.31",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
+  "python-multipart==0.0.32",
   "httpx==0.28.1",
-  "werkzeug==3.1.6",
+  "werkzeug==3.1.8",
   "urllib3==2.7.0",
-  "azure-core==1.38.0",
-  "cryptography==50.0.0",
+  "azure-core==1.41.0",
+  "cryptography==50.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest==8.3.4",
   "pytest-asyncio==0.24.0",
-  "mypy==1.19.1",
-  "ruff>=0.15.7,<0.16",
+  "mypy==2.3.1",
+  "ruff>=0.15.7,<0.17",
 ]
 
 [tool.mypy]
