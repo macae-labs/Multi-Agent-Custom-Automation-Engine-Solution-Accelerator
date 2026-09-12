@@ -69,6 +69,8 @@ from v4.config.settings import (
 from v4.models.messages import WebsocketMessageType
 from v4.orchestration.orchestration_manager import OrchestrationManager
 
+from .tool_activity import describe_tool_call
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -1279,35 +1281,6 @@ async def chat_message(
 
 
 # ── Streaming Chat Endpoint (SSE) ────────────────────────────────
-
-
-def _describe_tool_call(
-    tool_name: str, server_name: str, arguments: Any
-) -> tuple[str, str]:
-    """Nombre REAL de la tool y del servidor para narrar y mostrar.
-
-    ``call_external_tool`` es un envoltorio: la tool y el servidor reales van
-    en sus argumentos (``target_tool`` / ``server_name``) y, en el Toolbox
-    (``call_tool``), un nivel más adentro (``arguments.name``). Sin esto la
-    voz decía "Consultando call external tool en MacaeMcpServer" cuando la
-    llamada real era ``GitHub___list_commits`` en ``tool-box``.
-    """
-    if tool_name != "call_external_tool":
-        return tool_name, server_name
-    args = arguments
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except (TypeError, ValueError):
-            return tool_name, server_name
-    if not isinstance(args, dict):
-        return tool_name, server_name
-    tool = str(args.get("target_tool") or tool_name)
-    server = str(args.get("server_name") or server_name)
-    inner = args.get("arguments")
-    if tool == "call_tool" and isinstance(inner, dict) and inner.get("name"):
-        tool = str(inner["name"])
-    return tool, server
 
 
 def _sse_event(data: dict) -> str:
@@ -4069,7 +4042,7 @@ async def chat_message_stream(
                         _ledger_pending_args = str(content.arguments or "")[:300]
                         # La UI y la voz narran la tool REAL (dentro de los
                         # argumentos del envoltorio), no "call external tool".
-                        _tool_lbl, _server_lbl = _describe_tool_call(
+                        _tool_lbl, _server_lbl = describe_tool_call(
                             tool_name, server_name, content.arguments
                         )
                         _mcp_call_key = ("calling", _tool_lbl, _server_lbl)

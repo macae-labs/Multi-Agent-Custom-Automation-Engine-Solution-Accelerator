@@ -51,10 +51,48 @@ updates:
     labels:
       - "dependencies"
       - "auto-merge"
-    ignore:
-      - dependency-name: "starlette"
+    # Sin `ignore`: un ignore incondicional apaga también las correcciones de
+    # seguridad de esa dependencia. Que un job de seguridad termine en
+    # `security_update_not_needed` no es un fallo que arreglar aquí.
     groups:
       python-backend:
+        patterns:
+          - "*"
+
+  # Servidor Python del frontend (uvicorn que sirve el build de React).
+  # La imagen instala requirements.txt (Dockerfile), así que ese es el
+  # artefacto a mantener: ecosistema pip, no uv.
+  - package-ecosystem: "pip"
+    directory: "/src/frontend"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build(deps)"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "auto-merge"
+    groups:
+      python-frontend-server:
+        patterns:
+          - "*"
+
+  # Infra vscode_web (requirements.txt + endpoint-requirements.txt): sin
+  # entrada, las alertas de ansible-core no tenían quién las cerrara.
+  - package-ecosystem: "pip"
+    directory: "/infra/vscode_web"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build(deps)"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "auto-merge"
+    groups:
+      infra-vscode-web:
         patterns:
           - "*"
 
