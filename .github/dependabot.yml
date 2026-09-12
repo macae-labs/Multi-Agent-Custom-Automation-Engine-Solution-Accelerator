@@ -51,6 +51,8 @@ updates:
     labels:
       - "dependencies"
       - "auto-merge"
+    ignore:
+      - dependency-name: "starlette"
     groups:
       python-backend:
         patterns:
