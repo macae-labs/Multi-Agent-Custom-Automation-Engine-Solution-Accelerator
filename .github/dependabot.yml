@@ -23,6 +23,10 @@ updates:
   # npm frontend — monthly, grouped
   - package-ecosystem: "npm"
     directory: "/src/frontend"
+    # lockfile-only: package-lock se mueve dentro de los rangos de package.json.
+    # Sin esto Dependabot reescribía "typescript": "5.1.6" a 7.0.2 y react ^18
+    # a 19 en el mismo PR, y npm install ya no resolvía.
+    versioning-strategy: "lockfile-only"
     schedule:
       interval: "monthly"
     commit-message:
@@ -42,6 +46,13 @@ updates:
   # editaría requirements.txt (artefacto exportado) sin tocar el lock.
   - package-ecosystem: "uv"
     directory: "/src/backend"
+    # lockfile-only: Dependabot mueve uv.lock DENTRO de los rangos que declara
+    # pyproject.toml y nunca reescribe el manifiesto. El manifiesto es la
+    # política de compatibilidad (rangos hasta el siguiente major; las líneas
+    # en migración manual, fijas); los majors se adoptan editando pyproject.
+    # Con "increase" (el default) Dependabot reescribía pines y topes y
+    # proponía 98 bumps a la vez, agent-framework 1.18 incluido.
+    versioning-strategy: "lockfile-only"
     schedule:
       interval: "monthly"
     commit-message:
@@ -99,6 +110,7 @@ updates:
   # Python MCP server — monthly, grouped
   - package-ecosystem: "uv"
     directory: "/src/mcp_server"
+    versioning-strategy: "lockfile-only"
     schedule:
       interval: "monthly"
     commit-message:
