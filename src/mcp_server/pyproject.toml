@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 name = "macae-mcp-server"
 description = "FastMCP-based Model Context Protocol (MCP) server for the MACAE solution accelerator"
 readme = "README.md"
-requires-python = ">=3.10"
+# Igual que la imagen (python:3.11) y que el backend. Con ">=3.10" el lock
+# mantenía un fork para 3.10 donde mcp no pasa de 1.27.2, y Dependabot
+# reportaba la corrección de seguridad de mcp (>=1.28.1) como imposible.
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [
   { name = "Microsoft MACAE Team" }
