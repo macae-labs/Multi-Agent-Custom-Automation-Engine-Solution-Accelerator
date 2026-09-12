@@ -123,7 +123,11 @@ const chatSlice = createSlice({
     // el composer reenvía el enunciado fusionado como UN solo mensaje.
     dropLastExchange(state) {
       const last = state.messages[state.messages.length - 1];
-      const removedAssistant = last?.role === 'assistant' && !last.content;
+      const removedAssistant =
+        state.isStreaming &&
+        last?.role === 'assistant' &&
+        !last.content &&
+        !last.metadata;
       if (removedAssistant) state.messages.pop();
       const user = state.messages[state.messages.length - 1];
       if (removedAssistant && user?.role === 'user') state.messages.pop();
