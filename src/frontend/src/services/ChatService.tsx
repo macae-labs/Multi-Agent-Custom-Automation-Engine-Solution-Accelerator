@@ -12,6 +12,7 @@
 import { apiService } from '../api/apiService';
 import { ChatMessageRequest, ChatMessageResponse } from '../models/chatMessage';
 import type { ChatMessage, ChatSessionSummary } from '../lib/types';
+import { workspaceTree } from '../components/workspace/workspaceTreeStore';
 
 /** Callbacks for streaming chat responses. */
 export interface StreamCallbacks {
@@ -78,7 +79,37 @@ export class ChatService {
       ...(allowPlan === false ? { allow_plan: false } : {}),
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
     };
-    await apiService.sendChatMessageStream(request, callbacks, signal);
+
+    // Reconciliación explícita del árbol de workspace al cierre del turno:
+    // el agente puede haber mutado el share vía tools (paths desconocidos aquí),
+    // así que si hubo actividad de tools se revalidan los niveles ya cargados.
+    const activeWs =
+      workspaceId ??
+      (typeof window !== 'undefined'
+        ? window.localStorage.getItem('macae_active_workspace_id')
+        : null);
+    let sawToolActivity = false;
+    const reconcileTree = () => {
+      if (activeWs && sawToolActivity) {
+        void workspaceTree.invalidateAll(activeWs);
+      }
+    };
+    const wrapped: StreamCallbacks = {
+      ...callbacks,
+      onToolActivity: (data) => {
+        sawToolActivity = true;
+        callbacks.onToolActivity?.(data);
+      },
+      onDone: (data) => {
+        reconcileTree();
+        callbacks.onDone(data);
+      },
+      onError: (err) => {
+        reconcileTree();
+        callbacks.onError(err);
+      },
+    };
+    await apiService.sendChatMessageStream(request, wrapped, signal);
   }
 
   /**
