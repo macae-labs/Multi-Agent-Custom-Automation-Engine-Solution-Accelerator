@@ -7,6 +7,12 @@
  * carry an aggregate git marker (M/?) when anything beneath them changed;
  * files carry their own. Clicking a file hands its full path to the viewer
  * (Monaco); clicking a directory toggles and lazily loads its children.
+ *
+ * State (loaded levels + expansion) lives in `workspaceTreeStore`, NOT here:
+ * this component is unmounted whenever a file is open in the panel, and
+ * remounting must not mean re-reading the workspace. Coherence with the real
+ * filesystem is obtained by explicit invalidation (see the store), never by
+ * component lifecycle.
  */
 import { Button, Input, Spinner, Tooltip } from '@fluentui/react-components';
 import {
@@ -17,15 +23,9 @@ import {
   Folder16Regular,
   Search16Regular,
 } from '@fluentui/react-icons';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '../../api/apiClient';
-
-interface DirEntry {
-  name: string;
-  type: 'directory' | 'file';
-  size?: number | null;
-  status?: string | null; // "M" | "?" | null
-}
+import { useWorkspaceTree, workspaceTree } from './workspaceTreeStore';
 
 interface WorkspaceTreeProps {
   workspaceId: string;
@@ -41,50 +41,30 @@ export const WorkspaceTree: React.FC<WorkspaceTreeProps> = ({
   workspaceId,
   onOpenFile,
 }) => {
-  // childrenMap key = workspace-relative dir path ('' = root).
-  const [childrenMap, setChildrenMap] = useState<
-    Record<string, DirEntry[] | 'loading'>
-  >({});
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const { levels: childrenMap, expanded } = useWorkspaceTree(workspaceId);
 
-  const load = useCallback(
-    async (path: string) => {
-      setChildrenMap((prev) => ({ ...prev, [path]: 'loading' }));
-      try {
-        const r: { entries?: DirEntry[] } = await apiClient.get(
-          `/v4/workspace/${encodeURIComponent(workspaceId)}/entries`,
-          { params: path ? { path } : undefined }
-        );
-        setChildrenMap((prev) => ({ ...prev, [path]: r.entries ?? [] }));
-      } catch {
-        setChildrenMap((prev) => ({ ...prev, [path]: [] }));
-      }
-    },
-    [workspaceId]
-  );
-
-  // Workspace switch: reset and load the root level only.
+  // Mount: only make sure the root is loaded. No reset, no refetch — the
+  // store already holds what the user had open before this remount.
   useEffect(() => {
-    setChildrenMap({});
-    setExpanded(new Set());
-    load('');
-  }, [load]);
+    workspaceTree.ensure(workspaceId, '');
+  }, [workspaceId]);
 
-  const toggleDir = (path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-    if (childrenMap[path] === undefined) load(path);
-  };
+  // External changes (other tab, SMB mount, agent runs outside a chat turn)
+  // are reconciled when the tab regains visibility — not on every remount.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void workspaceTree.invalidateAll(workspaceId);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [workspaceId]);
 
-  const refresh = () => {
-    setChildrenMap({});
-    setExpanded(new Set());
-    load('');
-  };
+  const toggleDir = (path: string) => workspaceTree.toggle(workspaceId, path);
+
+  // Explicit reconciliation against the real filesystem; keeps expansion.
+  const refresh = () => workspaceTree.invalidateAll(workspaceId);
 
   // ── search: whole-workspace filename filter (git ls-files server-side) ──
   const [q, setQ] = useState('');

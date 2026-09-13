@@ -28,6 +28,7 @@ import {
 } from '@fluentui/react-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../api/apiClient';
+import { workspaceTree } from '../workspace/workspaceTreeStore';
 import {
   isMonacoLanguage,
   monaco,
@@ -213,13 +214,15 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
       lastSaved.current = editorValue;
       setDirty(false);
       setSaveMsg('Saved ✓');
+      // Mutación conocida: sólo el nivel de este path (y marcas ancestrales).
+      if (workspaceId) workspaceTree.invalidate(workspaceId, path);
       setTimeout(() => setSaveMsg(null), 2000);
     } catch (e) {
       setSaveMsg(`Error: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
-  }, [base, editorValue, path]);
+  }, [base, editorValue, path, workspaceId]);
 
   const handleCommit = useCallback(async () => {
     if (!base) return;
@@ -233,13 +236,15 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
       setSaveMsg(
         r.committed ? `Committed ${r.sha.slice(0, 7)} ✓` : 'Nothing to commit'
       );
+      // Un commit limpia marcas M/? en cualquier nivel cargado.
+      if (r.committed && workspaceId) workspaceTree.invalidateAll(workspaceId);
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
       setSaveMsg(`Error: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
-  }, [base, path]);
+  }, [base, path, workspaceId]);
 
   const handleRevert = useCallback(() => {
     setEditorValue(lastSaved.current);
