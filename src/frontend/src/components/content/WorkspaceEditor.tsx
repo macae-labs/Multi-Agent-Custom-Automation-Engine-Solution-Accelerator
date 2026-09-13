@@ -197,7 +197,10 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setEditorValue(v);
     setDirty(v !== lastSaved.current);
     setSaveMsg(null);
+    scheduleDiagnosticsRef.current(v);
   }, []);
+  // ref para no re-crear el handler cuando cambie scheduleDiagnostics
+  const scheduleDiagnosticsRef = useRef<(s: string) => void>(() => {});
 
   const handleSave = useCallback(async () => {
     if (!base) return;
