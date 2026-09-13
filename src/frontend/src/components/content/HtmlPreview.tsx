@@ -698,7 +698,7 @@ export const PreviewRightSlot: React.FC<{ fallback?: React.ReactNode }> = ({
       )}
 
       {(activeTab === 'code' || activeTab === 'diff') && isEditable && (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
           <WorkspaceEditor
             title={active.title}
             content={content}

@@ -19,7 +19,7 @@
  *   tab navigation, the editor owns file actions.
  */
 
-import Editor, { DiffEditor } from '@monaco-editor/react';
+import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react';
 import { Button, Spinner, Tooltip } from '@fluentui/react-components';
 import {
   Save20Regular,
@@ -28,6 +28,15 @@ import {
 } from '@fluentui/react-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../api/apiClient';
+import {
+  isMonacoLanguage,
+  monaco,
+  monacoThemeName,
+  setupMonaco,
+} from './monacoSetup';
+
+// Monaco bundleado + workers + temas: una vez por proceso, antes del 1er render.
+setupMonaco();
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -111,7 +120,13 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   onTabChange,
 }) => {
   const path = workspacePath(title);
-  const language = lang ?? langFromFilename(title);
+  // `lang` puede llegar como extensión cruda ("py") desde el explorador de
+  // archivos: eso NO es un language id de Monaco → plaintext (sin tokens ni
+  // colores). Sólo se respeta si Monaco lo reconoce; si no, se deriva del nombre.
+  const language = isMonacoLanguage(lang)
+    ? (lang as string)
+    : langFromFilename(title);
+  const theme = monacoThemeName();
   // apiClient prepends the API root, so paths start at /v4 (never '/api/v4').
   // ONE http client for the whole app: apiClient carries the principal headers
   // and refreshes the token. A private fetch here used credentials:'include',
@@ -167,7 +182,10 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setEditorValue(v);
     setDirty(v !== lastSaved.current);
     setSaveMsg(null);
+    scheduleDiagnosticsRef.current(v);
   }, []);
+  // ref para no re-crear el handler cuando cambie scheduleDiagnostics
+  const scheduleDiagnosticsRef = useRef<(s: string) => void>(() => {});
 
   const handleSave = useCallback(async () => {
     if (!base) return;
@@ -214,6 +232,88 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setSaveMsg(null);
   }, []);
 
+  // ── Diagnósticos ──
+  // Monaco trae language services (worker) para TS/JS/JSON/CSS/HTML. Para
+  // Python NO analiza nada por sí solo: los diagnósticos (sintaxis, indentación,
+  // nombres no definidos, imports) vienen del backend
+  // (POST /workspace/{id}/diagnostics) y se materializan como markers → red
+  // squiggles + hover con el mensaje, igual que Problems en VS Code.
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const diagTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runDiagnostics = useCallback(
+    async (source: string) => {
+      const model = editorRef.current?.getModel();
+      if (!model || !base || language !== 'python') return;
+      try {
+        const r: {
+          diagnostics: Array<{
+            line: number;
+            column: number;
+            end_line?: number;
+            end_column?: number;
+            severity: 'error' | 'warning' | 'info' | 'hint';
+            message: string;
+            code?: string;
+            source?: string;
+          }>;
+        } = await apiClient.post(`${base}/diagnostics`, {
+          path,
+          content: source,
+          language,
+        });
+        if (editorRef.current?.getModel() !== model || model.getValue() !== source) return; // modelo cambió o la respuesta quedó obsoleta
+        const sev: Record<string, monaco.MarkerSeverity> = {
+          error: monaco.MarkerSeverity.Error,
+          warning: monaco.MarkerSeverity.Warning,
+          info: monaco.MarkerSeverity.Info,
+          hint: monaco.MarkerSeverity.Hint,
+        };
+        monaco.editor.setModelMarkers(
+          model,
+          'macae-diagnostics',
+          (r.diagnostics || []).map((d) => ({
+            startLineNumber: d.line,
+            startColumn: d.column,
+            endLineNumber: d.end_line ?? d.line,
+            endColumn: d.end_column ?? d.column + 1,
+            severity: sev[d.severity] ?? monaco.MarkerSeverity.Warning,
+            message: d.message,
+            code: d.code,
+            source: d.source ?? 'macae',
+          }))
+        );
+      } catch {
+        /* diagnósticos son best-effort: no romper la edición */
+      }
+    },
+    [base, path, language]
+  );
+
+  const scheduleDiagnostics = useCallback(
+    (source: string) => {
+      if (diagTimer.current) clearTimeout(diagTimer.current);
+      diagTimer.current = setTimeout(() => runDiagnostics(source), 600);
+    },
+    [runDiagnostics]
+  );
+
+  const handleMount: OnMount = useCallback(
+    (editor) => {
+      editorRef.current = editor;
+      scheduleDiagnostics(editor.getValue());
+    },
+    [scheduleDiagnostics]
+  );
+  scheduleDiagnosticsRef.current = scheduleDiagnostics;
+
+  useEffect(
+    () => () => {
+      if (diagTimer.current) clearTimeout(diagTimer.current);
+    },
+    []
+  );
+
   // ── Diff tab state ──
   const [diffData, setDiffData] = useState<{
     original: string;
@@ -257,7 +357,15 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        width: '100%',
+        minWidth: 0,
+      }}
+    >
       {/* Action bar: tab buttons only when uncontrolled; actions always. */}
       <div
         style={{
@@ -365,24 +473,55 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
         )}
       </div>
 
-      {/* Editor area */}
-      <div style={{ flex: 1, minHeight: 0 }}>
+      {/* Editor area. minWidth/minHeight 0: un flex item por defecto no encoge
+          por debajo de su contenido, y Monaco mide su contenedor una sola vez al
+          montar — sin esto el panel original del DiffEditor queda colapsado
+          cuando el panel lateral se redimensiona. automaticLayout (abajo) hace
+          que Monaco observe el contenedor y se ajuste al ancho real. */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
         {tab === 'code' && (
           <Editor
             height="100%"
+            theme={theme}
             language={language}
+            path={path}
             value={editorValue}
             onChange={handleEditorChange}
+            onMount={handleMount}
             options={{
+              automaticLayout: true,
               readOnly: !base,
-              minimap: { enabled: false },
+              minimap: { enabled: true, renderCharacters: false },
               fontSize: 13,
+              fontFamily:
+                "'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace",
+              fontLigatures: true,
               lineNumbers: 'on',
               wordWrap: 'on',
               scrollBeyondLastLine: false,
               renderWhitespace: 'boundary',
+              renderLineHighlight: 'all',
+              guides: { indentation: true, bracketPairs: true },
               bracketPairColorization: { enabled: true },
+              folding: true,
+              showFoldingControls: 'mouseover',
+              smoothScrolling: true,
+              cursorBlinking: 'smooth',
+              cursorSmoothCaretAnimation: 'on',
+              formatOnPaste: true,
+              suggestOnTriggerCharacters: true,
+              quickSuggestions: true,
               tabSize: language === 'python' ? 4 : 2,
+              detectIndentation: true,
+              stickyScroll: { enabled: true },
             }}
           />
         )}
@@ -425,16 +564,36 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
             {diffData && !diffLoading && (
               <DiffEditor
                 height="100%"
+                theme={theme}
                 language={language}
+                originalModelPath={`git:HEAD/${path}`}
+                modifiedModelPath={`disk/${path}`}
                 original={diffData.original}
                 modified={diffData.modified}
                 options={{
+                  automaticLayout: true,
                   readOnly: true,
                   minimap: { enabled: false },
                   fontSize: 13,
+                  fontFamily:
+                    "'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace",
                   wordWrap: 'on',
+                  // Side-by-side (ORIGINAL | MODIFIED) como VS Code mientras
+                  // haya ancho; inline sólo por debajo del breakpoint. El
+                  // panel lateral suele medir 500–900px: con 700 casi siempre
+                  // caía a inline, que es lo que se veía.
                   renderSideBySide: true,
+                  useInlineViewWhenSpaceIsLimited: true,
+                  renderSideBySideInlineBreakpoint: 480,
+                  renderIndicators: true,
+                  renderMarginRevertIcon: false,
+                  renderOverviewRuler: true,
+                  ignoreTrimWhitespace: false,
                   scrollBeyondLastLine: false,
+                  diffWordWrap: 'on',
+                  guides: { indentation: true },
+                  glyphMargin: true,
+                  hideUnchangedRegions: { enabled: true },
                 }}
               />
             )}

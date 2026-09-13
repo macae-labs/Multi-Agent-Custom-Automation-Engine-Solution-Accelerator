@@ -356,6 +356,149 @@ def get_diff(request: Request, workspace_id: str, path: str) -> DiffResponse:
     )
 
 
+# ── diagnostics (Python) ─────────────────────────────────────────────────────
+#
+# Monaco ships language workers for TS/JS/JSON/CSS/HTML but has NO Python
+# analysis. The editor posts the in-memory buffer here (debounced) and gets
+# back LSP-shaped diagnostics it turns into markers (red squiggles + hover,
+# Problems-style). Deterministic cascade, best available first:
+#   1. ruff  — syntax + pyflakes rules (F821 undefined name, F401 unused
+#              import, E1xx indentation, …), JSON output, ~50 ms.
+#   2. compile() in-process — syntax / IndentationError only, always available.
+# The file on disk is never touched: the buffer is passed via stdin so
+# unsaved edits are diagnosed live, like VS Code.
+
+
+class DiagnosticsRequest(BaseModel):
+    path: str
+    content: str
+    language: str = "python"
+
+
+class Diagnostic(BaseModel):
+    line: int  # 1-based
+    column: int  # 1-based
+    end_line: int | None = None
+    end_column: int | None = None
+    severity: str  # error | warning | info | hint
+    message: str
+    code: str | None = None
+    source: str | None = None
+
+
+class DiagnosticsResponse(BaseModel):
+    path: str
+    engine: str  # ruff | compile | none
+    diagnostics: list[Diagnostic]
+
+
+_RUFF_BIN = shutil.which("ruff")
+# Rules Monaco can show as markers meaningfully. Pyflakes (F) + pycodestyle
+# errors (E) + warnings (W) + bugbear-ish pyupgrade left out on purpose: this is
+# a live editor, not CI — noise kills the signal.
+_RUFF_SELECT = "F,E1,E9,W6"
+
+
+def _ruff_diagnostics(path: str, content: str) -> list[Diagnostic] | None:
+    if not _RUFF_BIN:
+        return None
+    import json
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                _RUFF_BIN,
+                "check",
+                "--select",
+                _RUFF_SELECT,
+                "--output-format",
+                "json",
+                "--no-cache",
+                "--isolated",
+                "--stdin-filename",
+                path,
+                "-",
+            ],
+            input=content.encode("utf-8"),
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    try:
+        items = json.loads(proc.stdout.decode("utf-8", errors="replace") or "[]")
+    except ValueError:
+        return None
+    out: list[Diagnostic] = []
+    for it in items:
+        loc = it.get("location") or {}
+        end = it.get("end_location") or {}
+        code = it.get("code") or ""
+        # Syntax errors (ruff ≥0.15 reports code="invalid-syntax"; older: null)
+        # and undefined names are errors; the rest are warnings.
+        is_error = code in ("", "invalid-syntax") or code.startswith(
+            ("E9", "F821", "F822", "F823")
+        )
+        out.append(
+            Diagnostic(
+                line=int(loc.get("row", 1)),
+                column=int(loc.get("column", 1)),
+                end_line=int(end.get("row", loc.get("row", 1))),
+                end_column=int(end.get("column", loc.get("column", 1))),
+                severity="error" if is_error else "warning",
+                message=str(it.get("message", "")),
+                code=code or None,
+                source="ruff",
+            )
+        )
+    return out
+
+
+def _compile_diagnostics(path: str, content: str) -> list[Diagnostic]:
+    try:
+        compile(content, path, "exec")
+    except SyntaxError as exc:  # includes IndentationError / TabError
+        line = exc.lineno or 1
+        col = exc.offset or 1
+        end_line = getattr(exc, "end_lineno", None) or line
+        # IndentationError may report end_offset=-1; clamp to a 1-char range.
+        end_col = max(getattr(exc, "end_offset", None) or 0, col + 1)
+        return [
+            Diagnostic(
+                line=line,
+                column=col,
+                end_line=end_line,
+                end_column=end_col,
+                severity="error",
+                message=f"{type(exc).__name__}: {exc.msg}",
+                code=type(exc).__name__,
+                source="python",
+            )
+        ]
+    return []
+
+
+@workspace_router.post("/diagnostics", response_model=DiagnosticsResponse)
+def diagnostics(
+    request: Request, workspace_id: str, body: DiagnosticsRequest
+) -> DiagnosticsResponse:
+    """Live diagnostics for the editor buffer (unsaved content, never disk)."""
+    _workspace_for(request, workspace_id)  # auth + containment, same as the rest
+    if body.language != "python":
+        return DiagnosticsResponse(path=body.path, engine="none", diagnostics=[])
+    if len(body.content.encode("utf-8")) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="Content too large.")
+    result = _ruff_diagnostics(body.path, body.content)
+    if result is not None:
+        return DiagnosticsResponse(path=body.path, engine="ruff", diagnostics=result)
+    return DiagnosticsResponse(
+        path=body.path,
+        engine="compile",
+        diagnostics=_compile_diagnostics(body.path, body.content),
+    )
+
+
 @workspace_router.post("/commit", response_model=CommitResponse)
 def commit(request: Request, workspace_id: str, body: CommitRequest) -> CommitResponse:
     """Stage everything and commit; no-op (committed=false) when clean."""
