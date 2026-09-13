@@ -329,6 +329,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
       };
 
       const schedule = () => {
+        monaco.editor.setModelMarkers(model, DIAG_OWNER, []);
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => void run(), 600);
       };
