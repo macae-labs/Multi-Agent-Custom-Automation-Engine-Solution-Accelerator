@@ -262,7 +262,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
           content: source,
           language,
         });
-        if (editorRef.current?.getModel() !== model) return; // modelo cambió
+        if (editorRef.current?.getModel() !== model || model.getValue() !== source) return; // modelo cambió o la respuesta quedó obsoleta
         const sev: Record<string, monaco.MarkerSeverity> = {
           error: monaco.MarkerSeverity.Error,
           warning: monaco.MarkerSeverity.Warning,
