@@ -38,6 +38,21 @@ import {
 // Monaco bundleado + workers + temas: una vez por proceso, antes del 1er render.
 setupMonaco();
 
+// Owner de markers: Monaco reemplaza atómicamente todos los markers de un owner
+// en setModelMarkers(model, owner, [...]); es lo que evita mezclar/duplicar.
+const DIAG_OWNER = 'macae-diagnostics';
+
+type DiagnosticDTO = {
+  line: number;
+  column: number;
+  end_line?: number;
+  end_column?: number;
+  severity: 'error' | 'warning' | 'info' | 'hint';
+  message: string;
+  code?: string;
+  source?: string;
+};
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 /** Map common extensions to Monaco language IDs. */
@@ -182,10 +197,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setEditorValue(v);
     setDirty(v !== lastSaved.current);
     setSaveMsg(null);
-    scheduleDiagnosticsRef.current(v);
   }, []);
-  // ref para no re-crear el handler cuando cambie scheduleDiagnostics
-  const scheduleDiagnosticsRef = useRef<(s: string) => void>(() => {});
 
   const handleSave = useCallback(async () => {
     if (!base) return;
@@ -234,85 +246,126 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
 
   // ── Diagnósticos ──
   // Monaco trae language services (worker) para TS/JS/JSON/CSS/HTML. Para
-  // Python NO analiza nada por sí solo: los diagnósticos (sintaxis, indentación,
-  // nombres no definidos, imports) vienen del backend
+  // Python NO analiza nada por sí solo: los diagnósticos vienen del backend
   // (POST /workspace/{id}/diagnostics) y se materializan como markers → red
-  // squiggles + hover con el mensaje, igual que Problems en VS Code.
+  // squiggles + hover, igual que Problems en VS Code.
+  //
+  // Patrón nativo de Monaco (el mismo de sus language workers): un provider
+  // atado al MODELO, no a strings. Se suscribe a model.onDidChangeContent y
+  // usa model.getVersionId() —el reloj monotónico que Monaco ya mantiene— como
+  // única fuente de verdad. Al volver una respuesta: si el versionId coincide
+  // se publican los markers; si no, NO se descarta en silencio (eso deja un
+  // marker huérfano cuando la respuesta buena llega "tarde"): se re-lanza para
+  // la versión actual. Invariante: siempre existe un request para la última
+  // versión, y los markers publicados siempre corresponden al texto visible.
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const diagTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const diagDisposer = useRef<monaco.IDisposable | null>(null);
 
-  const runDiagnostics = useCallback(
-    async (source: string) => {
-      const model = editorRef.current?.getModel();
-      if (!model || !base || language !== 'python') return;
-      try {
-        const r: {
-          diagnostics: Array<{
-            line: number;
-            column: number;
-            end_line?: number;
-            end_column?: number;
-            severity: 'error' | 'warning' | 'info' | 'hint';
-            message: string;
-            code?: string;
-            source?: string;
-          }>;
-        } = await apiClient.post(`${base}/diagnostics`, {
-          path,
-          content: source,
-          language,
-        });
-        if (editorRef.current?.getModel() !== model || model.getValue() !== source) return; // modelo cambió o la respuesta quedó obsoleta
-        const sev: Record<string, monaco.MarkerSeverity> = {
-          error: monaco.MarkerSeverity.Error,
-          warning: monaco.MarkerSeverity.Warning,
-          info: monaco.MarkerSeverity.Info,
-          hint: monaco.MarkerSeverity.Hint,
-        };
-        monaco.editor.setModelMarkers(
-          model,
-          'macae-diagnostics',
-          (r.diagnostics || []).map((d) => ({
-            startLineNumber: d.line,
-            startColumn: d.column,
-            endLineNumber: d.end_line ?? d.line,
-            endColumn: d.end_column ?? d.column + 1,
-            severity: sev[d.severity] ?? monaco.MarkerSeverity.Warning,
-            message: d.message,
-            code: d.code,
-            source: d.source ?? 'macae',
-          }))
-        );
-      } catch {
-        /* diagnósticos son best-effort: no romper la edición */
+  const attachDiagnostics = useCallback(
+    (model: monaco.editor.ITextModel) => {
+      diagDisposer.current?.dispose();
+      diagDisposer.current = null;
+      if (!base || language !== 'python') {
+        monaco.editor.setModelMarkers(model, DIAG_OWNER, []);
+        return;
       }
+
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let inFlight = false;
+      let dirtyWhileInFlight = false;
+      let disposed = false;
+
+      const sev: Record<string, monaco.MarkerSeverity> = {
+        error: monaco.MarkerSeverity.Error,
+        warning: monaco.MarkerSeverity.Warning,
+        info: monaco.MarkerSeverity.Info,
+        hint: monaco.MarkerSeverity.Hint,
+      };
+
+      const run = async () => {
+        if (disposed || model.isDisposed()) return;
+        if (inFlight) {
+          dirtyWhileInFlight = true;
+          return;
+        }
+        inFlight = true;
+        const version = model.getVersionId();
+        try {
+          const r: { diagnostics: DiagnosticDTO[] } = await apiClient.post(
+            `${base}/diagnostics`,
+            { path, content: model.getValue(), language }
+          );
+          if (disposed || model.isDisposed()) return;
+          if (model.getVersionId() === version) {
+            monaco.editor.setModelMarkers(
+              model,
+              DIAG_OWNER,
+              (r.diagnostics || []).map((d) => ({
+                startLineNumber: d.line,
+                startColumn: d.column,
+                endLineNumber: d.end_line ?? d.line,
+                endColumn: d.end_column ?? d.column + 1,
+                severity: sev[d.severity] ?? monaco.MarkerSeverity.Warning,
+                message: d.message,
+                code: d.code,
+                source: d.source ?? 'macae',
+              }))
+            );
+          } else {
+            dirtyWhileInFlight = true; // respuesta de una versión vieja → re-lanzar
+          }
+        } catch {
+          /* best-effort: no romper la edición; el próximo cambio reintenta */
+        } finally {
+          inFlight = false;
+          if (dirtyWhileInFlight && !disposed) {
+            dirtyWhileInFlight = false;
+            void run();
+          }
+        }
+      };
+
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => void run(), 600);
+      };
+
+      const sub = model.onDidChangeContent(schedule);
+      void run(); // estado inicial
+      diagDisposer.current = {
+        dispose: () => {
+          disposed = true;
+          if (timer) clearTimeout(timer);
+          sub.dispose();
+          if (!model.isDisposed())
+            monaco.editor.setModelMarkers(model, DIAG_OWNER, []);
+        },
+      };
     },
     [base, path, language]
-  );
-
-  const scheduleDiagnostics = useCallback(
-    (source: string) => {
-      if (diagTimer.current) clearTimeout(diagTimer.current);
-      diagTimer.current = setTimeout(() => runDiagnostics(source), 600);
-    },
-    [runDiagnostics]
   );
 
   const handleMount: OnMount = useCallback(
     (editor) => {
       editorRef.current = editor;
-      scheduleDiagnostics(editor.getValue());
+      const m = editor.getModel();
+      if (m) attachDiagnostics(m);
+      // El modelo cambia al abrir otro archivo: re-atar al nuevo.
+      editor.onDidChangeModel(() => {
+        const nm = editor.getModel();
+        if (nm) attachDiagnostics(nm);
+      });
     },
-    [scheduleDiagnostics]
+    [attachDiagnostics]
   );
-  scheduleDiagnosticsRef.current = scheduleDiagnostics;
 
-  useEffect(
-    () => () => {
-      if (diagTimer.current) clearTimeout(diagTimer.current);
-    },
-    []
-  );
+  // path/language/base cambian → re-atar al modelo vigente
+  useEffect(() => {
+    const m = editorRef.current?.getModel();
+    if (m) attachDiagnostics(m);
+  }, [attachDiagnostics]);
+
+  useEffect(() => () => diagDisposer.current?.dispose(), []);
 
   // ── Diff tab state ──
   const [diffData, setDiffData] = useState<{
