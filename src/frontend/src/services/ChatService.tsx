@@ -89,8 +89,10 @@ export class ChatService {
         ? window.localStorage.getItem('macae_active_workspace_id')
         : null);
     let sawToolActivity = false;
+    let reconciled = false;
     const reconcileTree = () => {
-      if (activeWs && sawToolActivity) {
+      if (activeWs && sawToolActivity && !reconciled) {
+        reconciled = true;
         void workspaceTree.invalidateAll(activeWs);
       }
     };
@@ -109,7 +111,11 @@ export class ChatService {
         callbacks.onError(err);
       },
     };
-    await apiService.sendChatMessageStream(request, wrapped, signal);
+    try {
+      await apiService.sendChatMessageStream(request, wrapped, signal);
+    } finally {
+      reconcileTree();
+    }
   }
 
   /**
