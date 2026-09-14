@@ -223,10 +223,17 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
   // Un solo stream en vuelo por composer. Un nuevo envío (tecleado o por voz) o
   // un barge-in abortan el anterior ANTES de abrir otra burbuja: así los tokens
   // del turno viejo nunca caen en el mensaje assistant del turno nuevo.
-  const streamAbortRef = useRef<AbortController | null>(null);
+  const streamAbortRef = useRef<{
+    controller: AbortController;
+    turnId: string;
+  } | null>(null);
   const abortInFlightStream = () => {
-    if (streamAbortRef.current) {
-      streamAbortRef.current.abort();
+    const inflight = streamAbortRef.current;
+    if (inflight) {
+      inflight.controller.abort();
+      // El cierre del fetch NO llega al backend (ingress): declararlo por
+      // identidad para que deje de generar y no persista este turno.
+      ChatService.abortTurn(inflight.turnId);
       streamAbortRef.current = null;
     }
   };
@@ -259,7 +266,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
         // antes de crear la burbuja nueva.
         abortInFlightStream();
         const abort = new AbortController();
-        streamAbortRef.current = abort;
+        const turnId = crypto.randomUUID();
+        streamAbortRef.current = { controller: abort, turnId };
         // Turno de voz que originó ESTE stream (0 = tecleado / sin voz). Se pasa
         // a los 3 carriles: si el turno cambia mientras el SSE sigue vivo, los
         // carriles de este stream dejan de hablar (no cruzan al turno nuevo).
@@ -350,11 +358,13 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           typeof window !== 'undefined'
             ? window.localStorage.getItem('macae_active_workspace_id')
             : undefined,
-          abort.signal
+          abort.signal,
+          turnId
         );
 
         const aborted = abort.signal.aborted;
-        if (streamAbortRef.current === abort) streamAbortRef.current = null;
+        if (streamAbortRef.current?.controller === abort)
+          streamAbortRef.current = null;
 
         if (collectedFiles.length > 0) {
           setGeneratedFiles(collectedFiles);

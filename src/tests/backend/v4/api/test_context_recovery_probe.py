@@ -33,8 +33,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.requests import Request
 
 from v4.api.router import (
+    _ACTIVE_TURNS,
     _DEED_REPLAY_RESULT_CHARS,
     _DEED_RESULT_CAP,
     _HostedTextContent,
@@ -44,6 +46,7 @@ from v4.api.router import (
     _RouterChatClient,
     _strip_turn_log_block,
     _tool_deeds_note,
+    abort_chat_turn,
 )
 
 PROSE = "Respuesta basada en la ejecución real."
@@ -320,3 +323,41 @@ async def test_router_answer_that_is_only_a_turn_log_falls_back_to_execution(cap
     assert "fabricado" not in text
     assert executed == [("¿último commit?", [])]
     assert any("Router produced nothing" in r.getMessage() for r in caplog.records)
+
+
+# ── abort de turno por identidad ─────────────────────────────────────────────
+# El ingress de Container Apps no propaga el cierre del cliente al contenedor
+# (medido contra rev 118): el abort viaja por identidad (user_id, turn_id).
+
+
+def _req(user_id: str) -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/",
+        "query_string": b"",
+        "headers": [
+            (b"x-ms-client-principal-id", user_id.encode()),
+            (b"x-ms-client-principal-name", b"probe"),
+        ],
+    }
+    return Request(scope)
+
+
+@pytest.mark.asyncio
+async def test_abort_marks_only_the_active_turn_of_the_same_user():
+    _ACTIVE_TURNS.clear()
+    _ACTIVE_TURNS[("u1", "t1")] = False
+    try:
+        assert await abort_chat_turn("t1", _req("u1")) == {
+            "turn_id": "t1",
+            "aborted": True,
+        }
+        assert _ACTIVE_TURNS[("u1", "t1")] is True
+        # Otro usuario no puede abortar un turno ajeno; un turno inexistente
+        # (ya cerrado o nunca abierto) no deja marca alguna.
+        assert (await abort_chat_turn("t1", _req("u2")))["aborted"] is False
+        assert (await abort_chat_turn("nope", _req("u1")))["aborted"] is False
+        assert set(_ACTIVE_TURNS) == {("u1", "t1")}
+    finally:
+        _ACTIVE_TURNS.clear()
