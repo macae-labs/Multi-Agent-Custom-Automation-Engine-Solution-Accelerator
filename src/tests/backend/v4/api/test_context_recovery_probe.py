@@ -16,6 +16,14 @@ Contrato vigente (router.py, b9817edd):
     construcción sólo el backend escribe "[turn-log]", así que su aparición en
     texto del modelo es fabricación y se trunca en ese punto, incluso si el
     marcador llega partido entre deltas.
+  * Los deeds son registros ESTRUCTURADOS (_make_deed: server, tool, status,
+    args/result con longitud real y flag `truncated`), nunca strings
+    recortados en silencio; más de _LEDGER_MAX_DEEDS por turno se declara en
+    metadata.turn_log_dropped.
+  * recover reinyecta la evidencia de ejecución como mensaje `system`
+    (_tool_deeds_note), pegado al turno del asistente que la produjo, sin
+    marcador, nunca persistido ni indexado. Sin ella el modelo se retracta de
+    resultados correctos (en vivo: "ese SHA fue inventado por mí").
 
 Este archivo corre AISLADO en test.yml (importa v4.api.router real).
 """
@@ -27,11 +35,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from v4.api.router import (
+    _DEED_REPLAY_RESULT_CHARS,
+    _DEED_RESULT_CAP,
     _HostedTextContent,
     _HostedUpdate,
+    _make_deed,
     _recover_session_context,
     _RouterChatClient,
     _strip_turn_log_block,
+    _tool_deeds_note,
 )
 
 PROSE = "Respuesta basada en la ejecución real."
@@ -122,6 +134,83 @@ async def test_recovered_search_hits_are_sanitized_too():
     assert PROSE in joined
     assert "[turn-log]" not in joined
     assert "workspace_list_entries" not in joined
+
+
+@pytest.mark.asyncio
+async def test_recovered_history_replays_tool_deeds_as_system_evidence():
+    """El ledger vive en metadata.turn_log. recover lo reinyecta como mensaje
+    `system` pegado al turno del asistente que lo produjo: evidencia de que
+    hubo ejecución real. Sin ella el modelo se retracta de resultados
+    correctos (en vivo: devolvió el SHA real y dijo "ese SHA lo inventé").
+    Nunca con el marcador ni en la voz del asistente."""
+    deeds = [
+        # Registro estructurado (persist actual).
+        _make_deed(
+            "MacaeMcpServer",
+            "GitHub___list_commits",
+            '{"sha":"stable/v4-baseline","per_page":1}',
+            "success",
+            '[{"sha":"01d5ccdb","message":"feat: estado persistente"}]',
+        ),
+        # Legado: string ya acotado, persistido antes del registro estructurado.
+        'MacaeMcpServer.connect_from_registry({"server_name":"tool-box"}) -> connected',
+    ]
+    with patch(
+        "common.services.search_index_service.get_search_index_service",
+        AsyncMock(return_value=_search_stub([])),
+    ):
+        history = await _recover_session_context(
+            _chat_svc(
+                [
+                    {"role": "user", "content": "último commit de stable"},
+                    {
+                        "role": "assistant",
+                        "content": "SHA corto: 01d5ccd",
+                        "metadata": {"turn_log": deeds},
+                    },
+                ]
+            ),
+            "sess-probe",
+            "user-probe",
+            current_message="¿qué SHA me diste?",
+        )
+
+    assert [m["role"] for m in history] == ["user", "assistant", "system"]
+    assert history[1]["content"] == "SHA corto: 01d5ccd"
+    note = history[2]["content"]
+    assert "GitHub___list_commits @ MacaeMcpServer — estado: success" in note
+    assert "01d5ccdb" in note and "feat: estado persistente" in note
+    assert "connect_from_registry" in note  # legado se muestra tal cual
+    assert "[turn-log]" not in note
+
+
+def test_make_deed_never_truncates_silently():
+    big = "x" * (_DEED_RESULT_CAP + 5)
+    deed = _make_deed("S", "t", "{}", "success", big)
+    assert deed["result"]["chars"] == _DEED_RESULT_CAP + 5
+    assert deed["result"]["truncated"] is True
+    assert len(deed["result"]["text"]) == _DEED_RESULT_CAP
+    small = _make_deed("S", "t", "{}", "error", "boom")
+    assert small["result"] == {"text": "boom", "chars": 4, "truncated": False}
+    assert small["status"] == "error"
+
+
+def test_tool_deeds_note_contract():
+    assert _tool_deeds_note(None) == ""
+    assert _tool_deeds_note([]) == ""
+    assert _tool_deeds_note("not a list") == ""
+    # Legado (strings) intacto y sin marcador.
+    note = _tool_deeds_note(["a -> 1", "", "b -> 2"])
+    assert note.endswith("- a -> 1\n- b -> 2")
+    assert "[turn-log]" not in note
+    # Replay acotado con el resto DECLARADO, nunca cortado en silencio.
+    long_result = "r" * (_DEED_REPLAY_RESULT_CHARS + 250)
+    note = _tool_deeds_note([_make_deed("S", "t", "{}", "success", long_result)])
+    assert "r" * _DEED_REPLAY_RESULT_CHARS in note
+    assert "(… 250 caracteres más en el registro)" in note
+    # Ejecuciones más allá del máximo por turno quedan declaradas.
+    note = _tool_deeds_note([_make_deed("S", "t", "{}", "success", "ok")], dropped=3)
+    assert note.endswith("- (+3 ejecuciones más de este turno sin registro)")
 
 
 # ── compuerta en el stream del router (turno sin tool) ──────────────────────

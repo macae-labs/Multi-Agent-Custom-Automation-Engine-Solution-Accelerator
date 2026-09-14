@@ -86,6 +86,98 @@ def _strip_turn_log_block(text: Any) -> str:
     return _TURN_LOG_BLOCK_RE.sub("", value).strip()
 
 
+# ── Deeds de herramientas: registro estructurado del turno ─────────────────
+# Un deed es un registro con campos (server, tool, status, args, result), no
+# un string. Nada se recorta en silencio: los campos largos llevan su longitud
+# real y un flag explícito si se acotaron. Las cotas existen porque el doc de
+# sesión en Cosmos acumula TODOS los turnos (límite 2 MB por ítem).
+_LEDGER_MAX_DEEDS = 16
+_DEED_ARGS_CAP = 4000
+_DEED_RESULT_CAP = 20000
+# Presupuesto de contexto al REPLAY (recover): el registro completo queda en
+# metadata; al modelo se le muestra la cabeza y cuántos caracteres quedan.
+_DEED_REPLAY_ARGS_CHARS = 600
+_DEED_REPLAY_RESULT_CHARS = 1500
+
+_TOOL_DEEDS_HEADER = (
+    "Registro del backend (evidencia de ejecución, no texto del asistente): "
+    "en el turno anterior del asistente el sistema ejecutó estas herramientas "
+    "reales y obtuvo estos resultados. Úsalo como hecho verificado; no lo "
+    "reproduzcas literalmente ni lo presentes como un registro propio."
+)
+
+
+def _bounded_field(text: Any, cap: int) -> dict:
+    value = str(text or "")
+    return {"text": value[:cap], "chars": len(value), "truncated": len(value) > cap}
+
+
+def _make_deed(server: str, tool: str, args: Any, status: str, result: Any) -> dict:
+    """Registro estructurado de UNA ejecución de herramienta (metadata.turn_log)."""
+    return {
+        "server": server,
+        "tool": tool,
+        "status": status,
+        "args": _bounded_field(args, _DEED_ARGS_CAP),
+        "result": _bounded_field(result, _DEED_RESULT_CAP),
+    }
+
+
+def _replay_head(field: Any, cap: int) -> str:
+    """Cabeza de un campo para el contexto del modelo, con el resto declarado."""
+    if isinstance(field, dict):
+        text = str(field.get("text") or "")
+        chars = int(field.get("chars") or len(text))
+    else:
+        text = str(field or "")
+        chars = len(text)
+    shown = text[:cap]
+    rest = chars - len(shown)
+    return shown + (f" (… {rest} caracteres más en el registro)" if rest > 0 else "")
+
+
+def _render_deed(deed: Any) -> str:
+    if isinstance(deed, dict):
+        return (
+            f"{deed.get('tool') or '?'} @ {deed.get('server') or '?'}"
+            f" — estado: {deed.get('status') or '?'}"
+            f" — args: {_replay_head(deed.get('args'), _DEED_REPLAY_ARGS_CHARS)}"
+            f" — resultado: {_replay_head(deed.get('result'), _DEED_REPLAY_RESULT_CHARS)}"
+        )
+    # Legado: sesiones persistidas antes del registro estructurado guardaban
+    # "server.tool(args) -> resultado" ya acotado; se muestra tal cual.
+    return str(deed or "").strip()
+
+
+def _tool_deeds_note(deeds: Any, dropped: Any = 0) -> str:
+    """Render persisted ``metadata.turn_log`` as SYSTEM-attributed evidence.
+
+    Los deeds salieron del ``content`` para que el modelo no los imite como
+    prosa propia. Pero sin ellos el modelo tampoco puede saber que una
+    respuesta previa fue producto de una tool real, y se "retracta" de
+    resultados correctos (observado en vivo: devolvió el SHA real y añadió
+    "ese SHA fue inventado por mí"). Se reinyectan con rol ``system``: el
+    modelo no puede autorar ese rol, así que la evidencia nunca se confunde
+    con su propia voz. Sin el marcador ``[turn-log]``: ese marcador es
+    exclusivo del backend y su aparición en salida del modelo es fabricación
+    (compuerta en ``_RouterChatClient``). Nunca se persiste ni se indexa: se
+    construye en cada recover a partir de metadata.
+    """
+    if not isinstance(deeds, list):
+        return ""
+    lines = [line for line in (_render_deed(d) for d in deeds) if line]
+    if not lines:
+        return ""
+    body = "\n".join(f"- {line}" for line in lines)
+    try:
+        extra = int(dropped or 0)
+    except (TypeError, ValueError):
+        extra = 0
+    if extra > 0:
+        body += f"\n- (+{extra} ejecuciones más de este turno sin registro)"
+    return _TOOL_DEEDS_HEADER + "\n" + body
+
+
 def _extract_auth(request: Request) -> tuple:
     """Extract (user_id, tenant_id) from request headers.
 
@@ -820,8 +912,12 @@ async def _recover_session_context(
     one context, not two parallel loaders. Two layers, deduped, oldest→newest:
       long memory  → hybrid keyword+vector+semantic retrieval across ALL of the
                      user's history (search_chat_history);
-      short memory → this session's turns in order (conversational continuity).
+      short memory → this session's turns in order (conversational continuity);
+                     an assistant turn that ran tools is followed by a
+                     system-attributed evidence note (metadata.turn_log).
     The current user message is skipped (already persisted by the caller).
+    Any legacy ``[turn-log]`` trailer inside content is stripped: tool deeds
+    never re-enter the model's context as the assistant's own prose.
     """
     history: list = []
     try:
@@ -846,6 +942,16 @@ async def _recover_session_context(
             if c and c != cur and c not in seen:
                 seen.add(c)
                 history.append({"role": m.get("role", "user"), "content": c})
+            # Evidencia de ejecución del turno (metadata.turn_log), atribuida
+            # al sistema y pegada al turno del asistente que la produjo. Sólo
+            # el doc de sesión la tiene (Search indexa role/content/timestamp).
+            if m.get("role") == "assistant":
+                _meta = m.get("metadata") or {}
+                note = _tool_deeds_note(
+                    _meta.get("turn_log"), _meta.get("turn_log_dropped")
+                )
+                if note:
+                    history.append({"role": "system", "content": note})
     except Exception as _hist_err:
         logger.warning("Could not rebuild chat history: %s", _hist_err)
     return history
@@ -3905,6 +4011,7 @@ async def chat_message_stream(
             # assistant metadata.turn_log at close (NOT in content) so the deeds
             # of this turn are auditable without contaminating router memory.
             _turn_ledger: list = []
+            _turn_ledger_dropped: int = 0
             _ledger_pending_args: str = ""
 
             # Rebuild conversation memory from the REAL plumbing (Cosmos + Azure AI
@@ -4080,7 +4187,8 @@ async def chat_message_stream(
                         tool_name = getattr(content, "tool_name", None) or "unknown"
                         server_name = getattr(content, "server_name", None) or "unknown"
                         last_mcp_tool_call = (tool_name, server_name)
-                        _ledger_pending_args = str(content.arguments or "")[:300]
+                        # Completo: la cota (con flag) la pone _make_deed.
+                        _ledger_pending_args = str(content.arguments or "")
                         # La UI y la voz narran la tool REAL (dentro de los
                         # argumentos del envoltorio), no "call external tool".
                         _tool_lbl, _server_lbl = describe_tool_call(
@@ -4109,11 +4217,20 @@ async def chat_message_stream(
                         tool_name = tool_name or "unknown"
                         server_name = server_name or "unknown"
                         last_mcp_tool_call = None
-                        if len(_turn_ledger) < 8:
+                        if len(_turn_ledger) < _LEDGER_MAX_DEEDS:
                             _turn_ledger.append(
-                                f"{server_name}.{tool_name}({_ledger_pending_args})"
-                                f" -> {str(content_preview)[:1000]}"
+                                _make_deed(
+                                    server_name,
+                                    tool_name,
+                                    _ledger_pending_args,
+                                    "error"
+                                    if getattr(content, "status", None) == "error"
+                                    else "success",
+                                    content_preview,
+                                )
                             )
+                        else:
+                            _turn_ledger_dropped += 1
                         _ledger_pending_args = ""
                         _mcp_result_key = ("result", tool_name, server_name)
                         if _mcp_result_key != _last_tool_activity_key:
@@ -4414,6 +4531,8 @@ async def chat_message_stream(
                 ]
             if _turn_ledger:
                 _persist_meta["turn_log"] = list(_turn_ledger)
+            if _turn_ledger_dropped:
+                _persist_meta["turn_log_dropped"] = _turn_ledger_dropped
             _persist_content = _strip_turn_log_block(full_text)
             if _persist_content != full_text:
                 logger.warning(
