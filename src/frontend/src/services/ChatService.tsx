@@ -83,6 +83,9 @@ export class ChatService {
     // Reconciliación explícita del árbol de workspace al cierre del turno:
     // el agente puede haber mutado el share vía tools (paths desconocidos aquí),
     // así que si hubo actividad de tools se revalidan los niveles ya cargados.
+    // El backend emite tool_activity también para `text_reasoning`
+    // (tool="reasoning"); eso no es una tool y no toca el filesystem, así que
+    // no cuenta como actividad.
     const activeWs =
       workspaceId ??
       (typeof window !== 'undefined'
@@ -99,7 +102,7 @@ export class ChatService {
     const wrapped: StreamCallbacks = {
       ...callbacks,
       onToolActivity: (data) => {
-        sawToolActivity = true;
+        if (data.tool !== 'reasoning') sawToolActivity = true;
         callbacks.onToolActivity?.(data);
       },
       onDone: (data) => {

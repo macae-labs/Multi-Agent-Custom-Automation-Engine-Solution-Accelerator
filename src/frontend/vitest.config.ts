@@ -13,8 +13,18 @@ export default defineConfig({
         css: true,
     },
     resolve: {
-        alias: {
-            '@': resolve(__dirname, 'src'),
-        },
+        alias: [
+            // monaco-editor (y sus subpaths `…worker?worker`) no cargan en
+            // jsdom; ver src/test/stubs. El editor real se prueba en Chrome.
+            {
+                find: /^monaco-editor(\/.*)?$/,
+                replacement: resolve(__dirname, 'src/test/stubs/monaco-editor.ts'),
+            },
+            {
+                find: /^@monaco-editor\/react$/,
+                replacement: resolve(__dirname, 'src/test/stubs/monaco-react.tsx'),
+            },
+            { find: '@', replacement: resolve(__dirname, 'src') },
+        ],
     },
 })

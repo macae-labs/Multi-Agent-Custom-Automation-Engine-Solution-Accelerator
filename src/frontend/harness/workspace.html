@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Workspace explorer harness</title>
+    <script>
+      // apiClient prefija getApiUrl(); el harness habla con /api y Playwright
+      // intercepta **/api/v4/workspace/** con un backend falso.
+      window.appConfig = { API_URL: '/api' };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./workspace.tsx"></script>
+  </body>
+</html>
