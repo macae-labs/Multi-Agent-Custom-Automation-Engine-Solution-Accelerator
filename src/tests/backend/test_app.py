@@ -16,7 +16,8 @@ import os
 from unittest.mock import Mock, AsyncMock, patch, NonCallableMock
 
 # Environment variables are set by conftest.py, but ensure they're available
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=test-key-12345")
+# APPLICATIONINSIGHTS_CONNECTION_STRING la fija conftest.py: apunta al stub HTTP
+# local (TelemetryStub); Azure Monitor real, sin servicios remotos.
 os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-key")
 os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
 os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT_NAME", "test-deployment")
@@ -326,4 +327,65 @@ def test_health_check_middleware_configured():
     assert len(app.user_middleware) >= 2  # CORS + HealthCheck minimum
 
 
+# ── Telemetría: SDK real sobre el stub local (conftest.TelemetryStub) ────────
+# Estos dos tests van al FINAL del archivo: el segundo cierra los proveedores
+# OTel del proceso y después de él no debe emitirse más telemetría aquí.
+
+
+def _flush_all_span_processors(provider) -> None:
+    """TracerProvider.force_flush() NO sirve con Azure Monitor: los
+    procesadores _QuickpulseSpanProcessor y _PerformanceCountersSpanProcessor
+    devuelven None en force_flush y el multiprocesador del SDK corta en el
+    primer falsy, así que el BatchSpanProcessor (el que exporta) nunca se
+    vacía. Se vacía cada procesador por separado."""
+    for sp in provider._active_span_processor._span_processors:
+        sp.force_flush()
+
+
+def test_telemetry_pipeline_exports_requests_to_local_stub(telemetry_stub):
+    """configure_azure_monitor + FastAPIInstrumentor reales: una petición al app
+    produce un envelope Request que LLEGA al endpoint local. Identidad de lo
+    emitido contra lo recibido, sin ningún servicio remoto."""
+    import json as _json
+
+    from fastapi.testclient import TestClient
+    from opentelemetry import trace
+
+    client = TestClient(app)  # sin context manager: no dispara el lifespan
+    try:
+        response = client.get("/config")
+    finally:
+        client.close()
+    assert response.status_code == 200
+    _flush_all_span_processors(trace.get_tracer_provider())
+    envelopes = telemetry_stub.envelopes()
+    requests = [e for e in envelopes if str(e.get("name", "")).endswith(".Request")]
+    assert requests, [(r["path"], len(r["envelopes"])) for r in telemetry_stub.received]
+    assert any("/config" in _json.dumps(e) for e in requests)
+
+
+def test_telemetry_shutdown_completes_and_flushes_to_local_stub(telemetry_stub):
+    """Cierre comprobable: el shutdown de los proveedores OTel TERMINA sin
+    esperar a ningún servicio remoto y lo pendiente llega al stub. Es el
+    cuelgue exacto de CI (2026-09-14): con clave falsa contra endpoints reales
+    el cierre del intérprete quedó 33 min esperando tras "29 passed"."""
+    import json as _json
+    import threading
+
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import get_logger_provider
+
+    with trace.get_tracer("macae.tests").start_as_current_span("shutdown-probe"):
+        pass
+    trace.get_tracer_provider().shutdown()
+    metrics.get_meter_provider().shutdown()
+    get_logger_provider().shutdown()
+
+    assert any("shutdown-probe" in _json.dumps(e) for e in telemetry_stub.envelopes())
+    lingering = [
+        t.name
+        for t in threading.enumerate()
+        if not t.daemon and t is not threading.main_thread()
+    ]
+    assert lingering == [], lingering
 

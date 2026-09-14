@@ -15,6 +15,8 @@ export interface ChatMessageRequest {
   // Chat|Plan selector: false = this message may never create a plan.
   // Plan position never uses this flag — it calls /process_request directly.
   allow_plan?: boolean;
+  /** Identidad del turno (uuid acuñado por el cliente). Con ella el cliente puede abortarlo: POST /v4/chat/turns/{turn_id}/abort. */
+  turn_id?: string;
 }
 
 /** Response from POST /v4/chat/message */

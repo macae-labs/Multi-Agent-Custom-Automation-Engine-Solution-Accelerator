@@ -342,6 +342,10 @@ class ChatMessageRequest(BaseModel):
     # whether a plan could be created. The frontend already sends a real
     # boolean (ChatService.tsx:60) or omits the field.
     allow_plan: StrictBool = True
+    # Identidad del turno, acuñada por el cliente (uuid). Permite abortarlo por
+    # identidad (POST /chat/turns/{turn_id}/abort): el ingress no propaga el
+    # cierre del cliente al contenedor, así que el transporte no sirve de señal.
+    turn_id: Optional[str] = None
 
 
 class ResumePlanRequest(BaseModel):

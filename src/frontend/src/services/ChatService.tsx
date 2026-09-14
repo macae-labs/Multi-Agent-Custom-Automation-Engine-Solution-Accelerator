@@ -9,6 +9,7 @@
  * Extracted patterns from: microsoft/customer-chatbot-solution-accelerator
  *   (src/App/src/lib/api.ts — session management)
  */
+import { apiClient } from '../api/apiClient';
 import { apiService } from '../api/apiService';
 import { ChatMessageRequest, ChatMessageResponse } from '../models/chatMessage';
 import type { ChatMessage, ChatSessionSummary } from '../lib/types';
@@ -58,6 +59,19 @@ const chatSessions = new Map<string, ChatMessage[]>();
 
 export class ChatService {
   /**
+   * Declara al backend que el turno `turnId` fue abortado por el cliente
+   * (barge-in, continuación de voz, nuevo envío). Es la señal REAL de abort:
+   * el ingress de Container Apps no propaga el cierre del fetch al contenedor,
+   * así que sin esto el backend sigue generando y persiste un turno que la UI
+   * ya retiró. Fire-and-forget: un fallo aquí no frena el turno nuevo.
+   */
+  static abortTurn(turnId: string): void {
+    void apiClient
+      .post(`/v4/chat/turns/${encodeURIComponent(turnId)}/abort`)
+      .catch((e: unknown) => console.warn('[chat] abortTurn failed', e));
+  }
+
+  /**
    * Send a message and stream the response via SSE.
    * The LLM tokens arrive one-by-one via callbacks.
    */
@@ -69,7 +83,8 @@ export class ChatService {
     planId?: string,
     allowPlan?: boolean,
     workspaceId?: string | null,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    turnId?: string
   ): Promise<void> {
     const request: ChatMessageRequest = {
       session_id: sessionId || '',
@@ -78,6 +93,7 @@ export class ChatService {
       ...(planId ? { plan_id: planId } : {}),
       ...(allowPlan === false ? { allow_plan: false } : {}),
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     };
 
     // Reconciliación explícita del árbol de workspace al cierre del turno:
@@ -212,6 +228,8 @@ export class ChatService {
       signal?: AbortSignal;
       /** Actividad de tools en tiempo real (carril 2 de voz, spinner, etc.). */
       onToolActivity?: StreamCallbacks['onToolActivity'];
+      /** Identidad del turno acuñada por el composer (ver abortTurn). */
+      turnId?: string;
     } = {}
   ): AsyncIterable<string> {
     const {
@@ -225,6 +243,7 @@ export class ChatService {
       allowPlan,
       signal,
       onToolActivity,
+      turnId,
     } = options;
     return {
       [Symbol.asyncIterator](): AsyncIterator<string> {
@@ -288,7 +307,8 @@ export class ChatService {
           typeof window !== 'undefined'
             ? window.localStorage.getItem('macae_active_workspace_id')
             : null,
-          signal
+          signal,
+          turnId
           // Si el stream termina sin `done` (abort por barge-in), cerrar igual:
           // el `for await` del consumidor no puede quedar colgado.
         ).then(finish, fail);

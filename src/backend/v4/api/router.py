@@ -77,6 +77,15 @@ logger = logging.getLogger(__name__)
 _TURN_LOG_MARKER = "[turn-log]"
 _TURN_LOG_BLOCK_RE = re.compile(r"(?is)\n*\[turn-log\][\s\S]*$")
 
+# Turnos de chat en vuelo, por identidad (user_id, turn_id) → ¿abortado?
+# El ingress de Container Apps NO propaga el cierre del cliente al contenedor
+# (medido 2026-09-14 contra rev 118: socket cortado a 0 ms de las cabeceras y
+# el turno igual se generó y persistió; en uvicorn directo sí cancela). Por eso
+# la cancelación no puede depender del transporte: el cliente que aborta lo
+# declara por identidad (POST /chat/turns/{turn_id}/abort) y el generador la
+# consulta antes de seguir generando y antes de persistir.
+_ACTIVE_TURNS: dict[tuple[str, str], bool] = {}
+
 
 def _strip_turn_log_block(text: Any) -> str:
     """Remove persisted turn-log trailer from assistant text content."""
@@ -915,7 +924,7 @@ async def _recover_session_context(
       short memory → this session's turns in order (conversational continuity);
                      an assistant turn that ran tools is followed by a
                      system-attributed evidence note (metadata.turn_log).
-    The current user message is skipped (already persisted by the caller).
+    The current user message is not in the doc yet (persisted at turn close).
     Any legacy ``[turn-log]`` trailer inside content is stripped: tool deeds
     never re-enter the model's context as the assistant's own prose.
     """
@@ -3715,6 +3724,12 @@ async def chat_message_stream(
         # workspace_router already uses for its endpoints.
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     user_id = authenticated_user["user_principal_id"]
+    # Identidad del turno (la acuña el cliente): permite abortarlo por identidad.
+    _turn_key = (user_id, chat_request.turn_id) if chat_request.turn_id else None
+
+    def _turn_aborted() -> bool:
+        return _turn_key is not None and _ACTIVE_TURNS.get(_turn_key, False)
+
     tenant_id = authenticated_user.get("tenant_id", "")
     # End-user token for on-behalf-of invocation of the hosted agent, so its
     # Toolbox sees a real delegated user context (not the app Managed Identity).
@@ -3752,21 +3767,24 @@ async def chat_message_stream(
         if getattr(active_plan, "session_id", None):
             chat_request.session_id = active_plan.session_id
 
-    try:
-        await chat_svc.add_message(
-            session_id=chat_request.session_id,
-            user_id=user_id,
-            content=chat_request.message,
-            role="user",
-            metadata={
-                "plan_id": chat_request.plan_id,
-                "m_plan_id": active_m_plan_id,
-            }
-            if chat_request.plan_id
-            else None,
-        )
-    except Exception as e:
-        logger.warning("Could not persist user chat message: %s", e)
+    async def _persist_user_message() -> None:
+        # Se persiste al CERRAR el turno (junto a la respuesta), no al abrirlo:
+        # un turno abortado por el cliente no deja rastro, igual que en la UI.
+        try:
+            await chat_svc.add_message(
+                session_id=chat_request.session_id,
+                user_id=user_id,
+                content=chat_request.message,
+                role="user",
+                metadata={
+                    "plan_id": chat_request.plan_id,
+                    "m_plan_id": active_m_plan_id,
+                }
+                if chat_request.plan_id
+                else None,
+            )
+        except Exception as e:
+            logger.warning("Could not persist user chat message: %s", e)
 
     previous_intent = await _get_previous_intent(
         chat_svc, chat_request.session_id, user_id
@@ -3793,6 +3811,7 @@ async def chat_message_stream(
         orchestration_config.set_clarification_result(
             pending_request_id, chat_request.message
         )
+        await _persist_user_message()
         # Persist the exchange to the single chat history.
         try:
             await chat_svc.add_message(
@@ -3867,6 +3886,9 @@ async def chat_message_stream(
 
     # ── SSE async generator ──────────────────────────────────────
     async def event_stream():
+        _aborted_flag = False
+        if _turn_key:
+            _ACTIVE_TURNS[_turn_key] = False
         # 1. Intent event
         yield _sse_event(
             {
@@ -4047,6 +4069,12 @@ async def chat_message_stream(
                 direct_chat_prompt,
                 **_invoke_kwargs,
             ):
+                if _turn_aborted():
+                    logger.info(
+                        "Chat turn %s aborted by client: stopping generation",
+                        chat_request.turn_id,
+                    )
+                    break
                 # Process ALL content types from the agent framework
                 for content in update.contents or []:
                     ct = content.type
@@ -4506,48 +4534,58 @@ async def chat_message_stream(
                 )
         finally:
             await _cleanup.aclose()
+            if _turn_key:
+                _aborted_flag = _ACTIVE_TURNS.pop(_turn_key, False)
 
-        # 4. Persist full assistant response to Cosmos
-        try:
-            _persist_meta: dict = {
-                "intent": intent_result.intent.value,
-                "selected_agent": selected_agent_name,
-                "merged_team": direct_team_name,
-            }
-            if active_plan:
-                _persist_meta["plan_id"] = chat_request.plan_id
-                _persist_meta["m_plan_id"] = active_m_plan_id
-                _persist_meta["team_id"] = getattr(active_plan, "team_id", None)
-            if collected_generated_files:
-                # Strip internal 'type' key — only store the file descriptors
-                _persist_meta["generated_files"] = [
-                    {
-                        "file_id": gf["file_id"],
-                        "filename": gf["filename"],
-                        "container_id": gf.get("container_id"),
-                        "download_url": gf["download_url"],
-                    }
-                    for gf in collected_generated_files
-                ]
-            if _turn_ledger:
-                _persist_meta["turn_log"] = list(_turn_ledger)
-            if _turn_ledger_dropped:
-                _persist_meta["turn_log_dropped"] = _turn_ledger_dropped
-            _persist_content = _strip_turn_log_block(full_text)
-            if _persist_content != full_text:
-                logger.warning(
-                    "Sanitized assistant content containing %s before persistence.",
-                    _TURN_LOG_MARKER,
-                )
-            await chat_svc.add_message(
-                session_id=chat_request.session_id,
-                user_id=user_id,
-                content=_persist_content,
-                role="assistant",
-                metadata=_persist_meta,
+        # 4. Persist the turn (user + assistant) to Cosmos — unless the client
+        # aborted it: then NOTHING of this turn is persisted, matching the UI.
+        if _aborted_flag:
+            logger.info(
+                "Chat turn %s aborted by client: nothing persisted",
+                chat_request.turn_id,
             )
-        except Exception as e:
-            logger.warning("Could not persist streamed response: %s", e)
+        else:
+            try:
+                await _persist_user_message()
+                _persist_meta: dict = {
+                    "intent": intent_result.intent.value,
+                    "selected_agent": selected_agent_name,
+                    "merged_team": direct_team_name,
+                }
+                if active_plan:
+                    _persist_meta["plan_id"] = chat_request.plan_id
+                    _persist_meta["m_plan_id"] = active_m_plan_id
+                    _persist_meta["team_id"] = getattr(active_plan, "team_id", None)
+                if collected_generated_files:
+                    # Strip internal 'type' key — only store the file descriptors
+                    _persist_meta["generated_files"] = [
+                        {
+                            "file_id": gf["file_id"],
+                            "filename": gf["filename"],
+                            "container_id": gf.get("container_id"),
+                            "download_url": gf["download_url"],
+                        }
+                        for gf in collected_generated_files
+                    ]
+                if _turn_ledger:
+                    _persist_meta["turn_log"] = list(_turn_ledger)
+                if _turn_ledger_dropped:
+                    _persist_meta["turn_log_dropped"] = _turn_ledger_dropped
+                _persist_content = _strip_turn_log_block(full_text)
+                if _persist_content != full_text:
+                    logger.warning(
+                        "Sanitized assistant content containing %s before persistence.",
+                        _TURN_LOG_MARKER,
+                    )
+                await chat_svc.add_message(
+                    session_id=chat_request.session_id,
+                    user_id=user_id,
+                    content=_persist_content,
+                    role="assistant",
+                    metadata=_persist_meta,
+                )
+            except Exception as e:
+                logger.warning("Could not persist streamed response: %s", e)
 
         # No conversation_id to persist: memory rides on Cosmos + AI Search, which
         # add_message already wrote+indexed above (user + assistant turns). The next
@@ -4825,6 +4863,23 @@ def _classified_error_text(exc: BaseException, op: str) -> str:
 
 
 # ── Chat Session CRUD Endpoints ──────────────────────────────────
+
+
+@app_v4.post("/chat/turns/{turn_id}/abort")
+async def abort_chat_turn(turn_id: str, request: Request):
+    """El cliente abortó un turno de chat en vuelo (barge-in, continuación de
+    voz o nuevo envío). Marca el turno por identidad para que el generador deje
+    de producir y NO persista nada de ese turno: el composer ya retiró ese
+    intercambio (dropLastExchange) y persistirlo dejaba un fragmento más una
+    respuesta que el usuario nunca vio (29 de 145 turnos en una sesión real).
+    """
+    user_id, _tenant_id = _extract_auth(request)
+    key = (user_id, turn_id)
+    active = key in _ACTIVE_TURNS
+    if active:
+        _ACTIVE_TURNS[key] = True
+        logger.info("Chat turn %s marked aborted by client", turn_id)
+    return {"turn_id": turn_id, "aborted": active}
 
 
 @app_v4.get("/chat/sessions")

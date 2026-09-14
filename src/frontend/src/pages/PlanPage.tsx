@@ -346,10 +346,17 @@ const PlanPage: React.FC = () => {
   // Un solo stream de chat en vuelo. Barge-in de voz o un nuevo envío abortan
   // el anterior antes de abrir otra burbuja (los tokens viejos no caen en la
   // burbuja nueva).
-  const chatAbortRef = useRef<AbortController | null>(null);
+  const chatAbortRef = useRef<{
+    controller: AbortController;
+    turnId: string;
+  } | null>(null);
   const abortInFlightChat = useCallback(() => {
-    if (chatAbortRef.current) {
-      chatAbortRef.current.abort();
+    const inflight = chatAbortRef.current;
+    if (inflight) {
+      inflight.controller.abort();
+      // El cierre del fetch NO llega al backend (ingress): declararlo por
+      // identidad para que deje de generar y no persista este turno.
+      ChatService.abortTurn(inflight.turnId);
       chatAbortRef.current = null;
     }
   }, []);
@@ -1061,7 +1068,8 @@ const PlanPage: React.FC = () => {
       // Transición explícita de turno + carril 1 (acuse hablado inmediato).
       abortInFlightChat();
       const abort = new AbortController();
-      chatAbortRef.current = abort;
+      const turnId = crypto.randomUUID();
+      chatAbortRef.current = { controller: abort, turnId };
       const voiceTurnId = currentVoiceTurnId();
       const voiceTurn = voiceTurnId > 0;
       if (voiceTurn) voiceLiveAck(voiceTurnId);
@@ -1108,6 +1116,7 @@ const PlanPage: React.FC = () => {
             },
             planId: activePlanId,
             signal: abort.signal,
+            turnId,
             // Carril 2 — narración de la tool en el momento.
             onToolActivity: (data) => {
               if (voiceTurn && data.activity === 'calling')
@@ -1163,7 +1172,8 @@ const PlanPage: React.FC = () => {
           }
           scrollToBottom();
         }
-        if (chatAbortRef.current === abort) chatAbortRef.current = null;
+        if (chatAbortRef.current?.controller === abort)
+          chatAbortRef.current = null;
         // Carril 3 — contenido final del router (parafraseo). Un barge-in ya
         // canceló el turno: esa respuesta no debe hablar.
         if (!abort.signal.aborted && accumulated && voiceTurn)
@@ -1171,7 +1181,8 @@ const PlanPage: React.FC = () => {
       } catch (e: any) {
         if (abort.signal.aborted) {
           // Interrumpido por el usuario: dejar la burbuja con lo recibido.
-          if (chatAbortRef.current === abort) chatAbortRef.current = null;
+          if (chatAbortRef.current?.controller === abort)
+          chatAbortRef.current = null;
         } else {
           showToast(e?.message || 'Failed to send message', 'error');
           // Solo eliminar el último mensaje si se agregó el placeholder
