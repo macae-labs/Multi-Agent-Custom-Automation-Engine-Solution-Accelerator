@@ -339,6 +339,11 @@ def _req(user_id: str) -> Request:
         "headers": [
             (b"x-ms-client-principal-id", user_id.encode()),
             (b"x-ms-client-principal-name", b"probe"),
+            # EasyAuth siempre inyecta el access token. Sin él, en APP_ENV=dev
+            # get_authenticated_user_details lanza DeviceCodeCredential (login
+            # interactivo) y espera a un humano: CI quedó 33 min colgado aquí
+            # (2026-09-14). Local no lo veía por MACAE_DEV_OBO_TOKEN en .env.
+            (b"x-ms-token-aad-access-token", b"test-access-token"),
         ],
     }
     return Request(scope)

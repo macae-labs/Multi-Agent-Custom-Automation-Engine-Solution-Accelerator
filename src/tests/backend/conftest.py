@@ -4,8 +4,12 @@ Pytest configuration for backend tests.
 This module handles proper test isolation and minimal external module mocking.
 """
 
+import atexit
+import json
 import os
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import ModuleType
 from typing import Any, cast
 from unittest.mock import Mock, MagicMock
@@ -21,10 +25,109 @@ def _stub_module(name: str) -> Any:
     return cast(Any, ModuleType(name))
 
 
+class TelemetryStub:
+    """Endpoint local de Azure Monitor para los tests.
+
+    Acepta la ingestión (POST …/v2.1/track, lista JSON de envelopes) y live
+    metrics (POST /QuickPulseService.svc/ping|post, responde no-suscrito) y
+    registra cada envelope recibido. Permite afirmar identidad: lo que el SDK
+    emitió es lo que llegó. Puerto efímero; se cierra en atexit.
+    """
+
+    def __init__(self) -> None:
+        self.received: list = []
+        self._lock = threading.Lock()
+        stub = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):  # silencio: no es salida de test
+                return
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else b""
+                envelopes: list = []
+                try:
+                    parsed = json.loads(body.decode("utf-8")) if body else []
+                    envelopes = parsed if isinstance(parsed, list) else [parsed]
+                except ValueError:
+                    for line in body.decode("utf-8", "replace").splitlines():
+                        try:
+                            envelopes.append(json.loads(line))
+                        except ValueError:
+                            pass
+                with stub._lock:
+                    stub.received.append(
+                        {
+                            "path": self.path,
+                            "content_type": self.headers.get("Content-Type"),
+                            "content_encoding": self.headers.get("Content-Encoding"),
+                            "raw_len": len(body),
+                            "envelopes": envelopes,
+                        }
+                    )
+                if "QuickPulseService.svc" in self.path:
+                    payload = b"{}"
+                    self.send_response(200)
+                    self.send_header("x-ms-qps-subscribed", "false")
+                else:
+                    payload = json.dumps(
+                        {
+                            "itemsReceived": len(envelopes),
+                            "itemsAccepted": len(envelopes),
+                            "errors": [],
+                        }
+                    ).encode()
+                    self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._server.daemon_threads = True
+        self.port = self._server.server_address[1]
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="telemetry-stub", daemon=True
+        )
+        self._thread.start()
+        atexit.register(self.close)
+
+    @property
+    def connection_string(self) -> str:
+        return (
+            "InstrumentationKey=00000000-0000-0000-0000-000000000000;"
+            f"IngestionEndpoint=http://127.0.0.1:{self.port}/;"
+            f"LiveEndpoint=http://127.0.0.1:{self.port}/"
+        )
+
+    def envelopes(self, path_part: str = "track") -> list:
+        with self._lock:
+            return [e for r in self.received if path_part in r["path"] for e in r["envelopes"]]
+
+    def clear(self) -> None:
+        with self._lock:
+            self.received.clear()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+TELEMETRY_STUB: "TelemetryStub | None" = None
+
+
+@pytest.fixture
+def telemetry_stub() -> TelemetryStub:
+    """El stub local de Azure Monitor, vaciado al inicio de cada test."""
+    assert TELEMETRY_STUB is not None
+    TELEMETRY_STUB.clear()
+    return TELEMETRY_STUB
+
+
 def _setup_environment_variables():
     """Set up required environment variables for testing."""
     env_vars = {
-        'APPLICATIONINSIGHTS_CONNECTION_STRING': 'InstrumentationKey=test-key',
         'AZURE_AI_SUBSCRIPTION_ID': 'test-subscription',
         'AZURE_AI_RESOURCE_GROUP': 'test-rg',
         'AZURE_AI_PROJECT_NAME': 'test-project',
@@ -45,6 +148,22 @@ def _setup_environment_variables():
     }
     for key, value in env_vars.items():
         os.environ.setdefault(key, value)
+    # Azure Monitor REAL sobre un stub HTTP local: configure_azure_monitor,
+    # live metrics y la instrumentación corren de verdad y exportan a un
+    # endpoint que responde, sin ningún servicio remoto. Con la clave falsa
+    # contra los endpoints reales, exportador y QuickPulse esperaban al
+    # servicio al cerrar el intérprete y CI quedó 33 min colgado tras
+    # "29 passed" (2026-09-14). Asignación explícita, no setdefault: el .env
+    # local traía la cadena REAL y los tests enviaban telemetría a producción.
+    global TELEMETRY_STUB
+    if TELEMETRY_STUB is None:
+        TELEMETRY_STUB = TelemetryStub()
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = TELEMETRY_STUB.connection_string
+    # Los otros dos canales remotos del exportador, apagados con sus switches:
+    # statsbeat (westus-0.in.applicationinsights.azure.com) y el control plane
+    # OneSettings (settings.sdk.monitor.azure.com).
+    os.environ["APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"] = "true"
+    os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] = "true"
 
 
 def _setup_agent_framework_mock():
@@ -155,11 +274,11 @@ def _setup_agent_framework_mock():
 
 
 def _setup_azure_monitor_mock():
-    """Mock azure.monitor.opentelemetry which may not be installed."""
-    if 'azure.monitor.opentelemetry' not in sys.modules:
-        mock_module = _stub_module('azure.monitor.opentelemetry')
-        mock_module.configure_azure_monitor = lambda *args, **kwargs: None
-        sys.modules['azure.monitor.opentelemetry'] = mock_module
+    """Azure Monitor NO se neutraliza: azure-monitor-opentelemetry está en
+    uv.lock y configure_azure_monitor corre de verdad contra TelemetryStub
+    (ver _setup_environment_variables). Un no-op aquí convertía la telemetría
+    en adorno y dejaba sin cubrir la inicialización real."""
+    return None
 
 
 def _patch_azure_ai_projects_models():
