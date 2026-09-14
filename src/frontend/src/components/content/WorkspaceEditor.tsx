@@ -198,10 +198,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     setEditorValue(v);
     setDirty(v !== lastSaved.current);
     setSaveMsg(null);
-    scheduleDiagnosticsRef.current(v);
   }, []);
-  // ref para no re-crear el handler cuando cambie scheduleDiagnostics
-  const scheduleDiagnosticsRef = useRef<(s: string) => void>(() => {});
 
   const handleSave = useCallback(async () => {
     if (!base) return;
@@ -268,11 +265,20 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   // versión, y los markers publicados siempre corresponden al texto visible.
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const diagDisposer = useRef<monaco.IDisposable | null>(null);
+  // Identidad del provider vigente: (modelo, base, path, language). Atar es
+  // idempotente por esa clave: al cambiar de archivo con el editor montado,
+  // onDidChangeModel y el efecto de identidad piden el MISMO provider para el
+  // MISMO modelo en un mismo commit; sin esta guarda el segundo attach
+  // descartaba al primero y salían dos POST /diagnostics por apertura.
+  const diagKey = useRef<string>('');
 
   const attachDiagnostics = useCallback(
     (model: monaco.editor.ITextModel) => {
+      const key = `${model.id}|${base ?? ''}|${path}|${language}`;
+      if (diagDisposer.current && diagKey.current === key) return;
       diagDisposer.current?.dispose();
       diagDisposer.current = null;
+      diagKey.current = key;
       if (!base || language !== 'python') {
         monaco.editor.setModelMarkers(model, DIAG_OWNER, []);
         return;
@@ -354,19 +360,23 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     [base, path, language]
   );
 
-  const handleMount: OnMount = useCallback(
-    (editor) => {
-      editorRef.current = editor;
-      const m = editor.getModel();
-      if (m) attachDiagnostics(m);
-      // El modelo cambia al abrir otro archivo: re-atar al nuevo.
-      editor.onDidChangeModel(() => {
-        const nm = editor.getModel();
-        if (nm) attachDiagnostics(nm);
-      });
-    },
-    [attachDiagnostics]
-  );
+  // Siempre la versión vigente de attachDiagnostics: el handler de
+  // onDidChangeModel se registra una vez al montar y, sin esto, quedaría
+  // atado al path/language del PRIMER archivo (closure obsoleto) y pediría
+  // diagnósticos del archivo anterior para el modelo nuevo.
+  const attachRef = useRef(attachDiagnostics);
+  attachRef.current = attachDiagnostics;
+
+  const handleMount: OnMount = useCallback((editor) => {
+    editorRef.current = editor;
+    const m = editor.getModel();
+    if (m) attachRef.current(m);
+    // El modelo cambia al abrir otro archivo: re-atar al nuevo.
+    editor.onDidChangeModel(() => {
+      const nm = editor.getModel();
+      if (nm) attachRef.current(nm);
+    });
+  }, []);
 
   // path/language/base cambian → re-atar al modelo vigente
   useEffect(() => {

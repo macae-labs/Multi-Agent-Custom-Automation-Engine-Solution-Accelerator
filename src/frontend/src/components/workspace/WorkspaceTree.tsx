@@ -50,16 +50,9 @@ export const WorkspaceTree: React.FC<WorkspaceTreeProps> = ({
   }, [workspaceId]);
 
   // External changes (other tab, SMB mount, agent runs outside a chat turn)
-  // are reconciled when the tab regains visibility — not on every remount.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void workspaceTree.invalidateAll(workspaceId);
-      }
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [workspaceId]);
+  // are reconciled on visibility by the STORE, not here: this component is
+  // unmounted while a file is open, so a listener bound to it would miss the
+  // exact moment the user comes back with a file open.
 
   const toggleDir = (path: string) => workspaceTree.toggle(workspaceId, path);
 

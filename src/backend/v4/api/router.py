@@ -74,6 +74,17 @@ from .tool_activity import describe_tool_call
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_TURN_LOG_MARKER = "[turn-log]"
+_TURN_LOG_BLOCK_RE = re.compile(r"(?is)\n*\[turn-log\][\s\S]*$")
+
+
+def _strip_turn_log_block(text: Any) -> str:
+    """Remove persisted turn-log trailer from assistant text content."""
+    value = str(text or "")
+    if not value:
+        return ""
+    return _TURN_LOG_BLOCK_RE.sub("", value).strip()
+
 
 def _extract_auth(request: Request) -> tuple:
     """Extract (user_id, tenant_id) from request headers.
@@ -825,13 +836,13 @@ async def _recover_session_context(
             top_k=15,
         )
         for h in sorted(hits, key=lambda x: x.get("timestamp", "")):
-            c = (h.get("content") or "").strip()
+            c = _strip_turn_log_block(h.get("content"))
             if c and c != cur and c not in seen:
                 seen.add(c)
                 history.append({"role": h.get("role", "user"), "content": c})
         session = await chat_svc.get_session(session_id, user_id)
         for m in (session or {}).get("messages", []):
-            c = (m.get("content") or "").strip()
+            c = _strip_turn_log_block(m.get("content"))
             if c and c != cur and c not in seen:
                 seen.add(c)
                 history.append({"role": m.get("role", "user"), "content": c})
@@ -2321,6 +2332,8 @@ class _RouterChatClient:
 
         _acc = RouterDecisionAccumulator()
         _router_answered = False
+        _direct_pending = ""
+        _blocked_turn_log_marker = False
         # history (Cosmos + AI Search) gives the router memory; chat/completions is
         # stateless, so the conversation is supplied as prior messages.
         # Anchoring rule: recovered history mixes cross-session retrieval with
@@ -2375,6 +2388,10 @@ class _RouterChatClient:
                     continue
                 for tc in getattr(delta, "tool_calls", None) or []:
                     _acc.add_delta(tc)
+                if _acc.has_function and _direct_pending:
+                    # Late capability signal: drop buffered direct text tail so a
+                    # tool turn never mixes with partial direct prose.
+                    _direct_pending = ""
                 # Stream the router's OWN answer live for no-tool turns: it comes
                 # from the model the router selected AND remembers (history is in
                 # messages). Tool turns emit tool_calls with no content, so this
@@ -2382,10 +2399,35 @@ class _RouterChatClient:
                 # tool_call never mixes with streamed text.
                 content = getattr(delta, "content", None)
                 if content and not _acc.has_function:
-                    _router_answered = True
-                    yield _HostedUpdate([_HostedTextContent(content)])
+                    if _blocked_turn_log_marker:
+                        continue
+                    _direct_pending += str(content)
+                    marker_idx = _direct_pending.find(_TURN_LOG_MARKER)
+                    if marker_idx >= 0:
+                        safe = _direct_pending[:marker_idx]
+                        if safe:
+                            _router_answered = True
+                            yield _HostedUpdate([_HostedTextContent(safe)])
+                        _blocked_turn_log_marker = True
+                        _direct_pending = ""
+                        logger.warning(
+                            "Router direct answer contained %s marker; truncated.",
+                            _TURN_LOG_MARKER,
+                        )
+                        continue
+                    hold = len(_TURN_LOG_MARKER) - 1
+                    if len(_direct_pending) > hold:
+                        safe = _direct_pending[:-hold]
+                        if safe:
+                            _router_answered = True
+                            yield _HostedUpdate([_HostedTextContent(safe)])
+                        _direct_pending = _direct_pending[-hold:]
         finally:
             await router.close()
+
+        if _direct_pending and not _acc.has_function and not _blocked_turn_log_marker:
+            _router_answered = True
+            yield _HostedUpdate([_HostedTextContent(_direct_pending)])
 
         _decision = _acc.finalize()
         _fn_name = _decision.fn_name
@@ -3859,10 +3901,9 @@ async def chat_message_stream(
 
             _last_tool_activity_key: Optional[tuple] = None
             # Turn ledger: the "floating membranes" (tool calls + args + result
-            # heads) that used to evaporate with store=False. Appended to the
-            # PERSISTED assistant content at close, so the deeds of this turn
-            # (owner/repo/ref, SHAs) enter the same Cosmos + Search memory the
-            # next turn's router recovers — no new store, no new recovery path.
+            # heads) that used to evaporate with store=False. Persisted in
+            # assistant metadata.turn_log at close (NOT in content) so the deeds
+            # of this turn are auditable without contaminating router memory.
             _turn_ledger: list = []
             _ledger_pending_args: str = ""
 
@@ -4371,14 +4412,13 @@ async def chat_message_stream(
                     }
                     for gf in collected_generated_files
                 ]
-            # The ledger rides INSIDE the persisted content (not the streamed
-            # text): content is the one field both memory layers read (session
-            # doc AND Search index), so the next turn's router recovers the
-            # deeds — tool names, owner/repo/ref args, SHAs — not just words.
-            _persist_content = full_text
             if _turn_ledger:
-                _persist_content = (
-                    full_text + "\n\n[turn-log]\n" + "\n".join(_turn_ledger)
+                _persist_meta["turn_log"] = list(_turn_ledger)
+            _persist_content = _strip_turn_log_block(full_text)
+            if _persist_content != full_text:
+                logger.warning(
+                    "Sanitized assistant content containing %s before persistence.",
+                    _TURN_LOG_MARKER,
                 )
             await chat_svc.add_message(
                 session_id=chat_request.session_id,
