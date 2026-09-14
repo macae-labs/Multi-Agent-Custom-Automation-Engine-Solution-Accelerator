@@ -2428,7 +2428,6 @@ class _RouterChatClient:
         if _direct_pending and not _acc.has_function and not _blocked_turn_log_marker:
             _router_answered = True
             yield _HostedUpdate([_HostedTextContent(_direct_pending)])
-            _direct_pending = ""
 
         _decision = _acc.finalize()
         _fn_name = _decision.fn_name
