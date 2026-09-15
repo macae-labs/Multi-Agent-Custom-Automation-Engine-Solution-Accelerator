@@ -30,7 +30,8 @@ async def _ids(svc, user_id):
 
 
 async def main(inventory_path, approval):
-    inv = json.load(open(inventory_path))
+    with open(inventory_path, encoding="utf-8") as f:
+        inv = json.load(f)
     svc = await get_chat_cosmos_service()
     report = {"dry_run": approval is None, "approval": approval, "started_at": datetime.datetime.utcnow().isoformat() + "Z", "users": {}}
     for user_id, listed in inv["sessions_by_user"].items():
