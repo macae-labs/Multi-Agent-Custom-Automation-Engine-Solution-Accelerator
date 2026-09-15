@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "macae/incident/v1",
   "title": "MACAE incident artifact (one entry = one structural signature)",
-  "description": "Artefacto único y versionado del ciclo observe→detect→diagnose→propose→patch→validate→compare→commit→monitor→learn. Una entrada representa UNA firma estructural, no una conversación ni una solución. Invariantes de esquema: (1) autoridad = acción × radio × reversibilidad; la firma sólo fija el techo por defecto y ese techo se fija ANTES de Diagnose. (2) Toda acción de clase write-shared implica human_required=true antes de ejecutarse, incluso durante Diagnose. (3) Una entrada cuya sonda ejecutable ya no reproduce pasa a expired/needs_revalidation y NO participa en retrieval operacional. (4) Compare exige control negativo: revertir el parche debe volver a fallar la sonda. Codificados además: status=open ⇒ patch/compare opcionales; status histórico ⇒ learn.operational=false; acción con human_required ejecutada sin human_approved_at ⇒ violation obligatoria.",
+  "description": "Artefacto único y versionado del ciclo observe→detect→diagnose→propose→patch→validate→compare→commit→monitor→learn. Una entrada representa UNA firma estructural, no una conversación ni una solución. Invariantes de esquema: (1) autoridad = acción × radio × reversibilidad; la firma sólo fija el techo por defecto y ese techo se fija ANTES de Diagnose. (2) Toda acción de clase write-shared implica human_required=true antes de ejecutarse, incluso durante Diagnose. (3) Una entrada cuya sonda ejecutable ya no reproduce pasa a expired/needs_revalidation y NO participa en retrieval operacional. (4) Compare exige control negativo: revertir el parche debe volver a fallar la sonda. Codificados además: status=open ⇒ patch/compare/validate opcionales; status histórico ⇒ learn.operational=false; acción con human_required ejecutada sin human_approved_at ⇒ violation obligatoria.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,6 @@
     "actions",
     "probe_budget",
     "diagnose",
-    "validate",
     "lanes_not_covered",
     "residual_risk",
     "learn"
@@ -760,7 +759,8 @@
       "then": {
         "required": [
           "patch",
-          "compare"
+          "compare",
+          "validate"
         ]
       }
     },

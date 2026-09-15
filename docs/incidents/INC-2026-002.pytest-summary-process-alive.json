@@ -134,7 +134,7 @@
       "blast_radius": "own_scratch",
       "reversible": true,
       "human_required": false,
-      "description": "Guardián endurecido: parchea _dev_acquire_user_token en cada nombre cargado o importable (auth.auth_utils y backend.auth.auth_utils) sólo si es una función real; si el paquete está stubbeado por otro test, omite sin fallar. Verificado: cmd1 31, cmd2 10, cmd3 902 passed; control negativo sin header → AssertionError INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST."
+      "description": "Guardián por IDENTIDAD, sin except genérico (la versión con `except Exception: continue` que pasó CI en 524adfc5 tapaba ImportError reales; objeción del usuario, Copilot no la señaló): se omite sólo si sys.modules['auth'] no es el paquete src/backend/auth (paquete de tests homónimo o Mock de test_router.py); si `auth` está ausente se importa y un ImportError real se propaga (probado). Verificado: cmd1 31, cmd2 10, cmd3 902 passed; control negativo sin header → AssertionError INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST."
     }
   ],
   "probe_budget": {
@@ -176,6 +176,11 @@
         "hypothesis": "Tarea asyncio colgante en teardown",
         "discarded_by": "El volcado no mostró el loop de asyncio bloqueado; el hilo principal estaba en MSAL device flow.",
         "side_effect_kept": null
+      },
+      {
+        "hypothesis": "El fallo del guardián en el lote completo era sólo el Mock de sys.modules['auth'] que deja test_router.py",
+        "discarded_by": "Sonda: un test que imprime sys.modules['auth'].__file__ dentro del lote → src/tests/backend/auth/__init__.py. Es el paquete de TESTS registrado por pytest (importlib mode) bajo el nombre `auth`, no un Mock. Ver INC-2026-004.",
+        "side_effect_kept": "Regla de omisión por identidad de paquete (ruta real) en el guardián."
       }
     ]
   },
@@ -268,7 +273,9 @@
       "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST",
       "902 errors at setup ModuleNotFoundError auth.auth_utils",
       "conftest change requires full batch",
-      "sys.modules pollution auth Mock"
+      "sys.modules pollution auth Mock",
+      "sys.modules auth es src/tests/backend/auth",
+      "test package shadows backend package"
     ],
     "executable_probe": {
       "class": "write-scratch",
