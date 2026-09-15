@@ -424,8 +424,8 @@ class TestMCPService:
                 patch.object(service, 'close') as mock_close:
 
             async with service:
-                # Verify context manager entry
-                assert service is not None
+                # Verify context manager entry opened the session
+                mock_ensure_session.assert_awaited_once()
 
             # Verify cleanup on exit
             mock_close.assert_called_once()

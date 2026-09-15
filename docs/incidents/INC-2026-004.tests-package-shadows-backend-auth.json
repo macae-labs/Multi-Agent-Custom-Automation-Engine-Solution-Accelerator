@@ -42,7 +42,7 @@
     "network_scope": "loopback_only",
     "git": {
       "branch": "stable/v4-baseline",
-      "base_sha": "69d34c39",
+      "base_sha": "508c3663",
       "dirty": true
     }
   },
@@ -105,9 +105,18 @@
       "blast_radius": "shared_dev",
       "reversible": true,
       "human_required": true,
-      "human_approved_at": null,
-      "executed_at": null,
-      "description": "Commit y PR: click de Winston."
+      "human_approved_at": "2026-09-15T04:40:00Z",
+      "executed_at": "2026-09-15T04:40:00Z",
+      "description": "Commit, push, checks en verde, squash-merge #211 y ritual post-merge: ejecutado por Winston."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-15T05:16:32Z",
+      "description": "Revisión de Winston sobre #211: (1) comentario de test.yml apuntaba a una cuarentena xfail e INC-2026-005 inexistentes; (2) el guardián iteraba ('auth.auth_utils','auth.auth_utils') con docstring de 'ambos nombres' (residuo del alias); (3) warm-up de conftest con try/except: pass que describía los stubs ya retirados y tragaría ImportError reales. Los tres fuera. F841 en test_mcp_service: __aenter__ real llama a _ensure_session → el test ahora lo afirma (assert_awaited_once). Invocación única con ABRT+faulthandler+sonda: 987 passed, exit 0, 0 MODTRACK, 49.73%."
     }
   ],
   "probe_budget": {
@@ -172,7 +181,7 @@
       "expected_signal_when_failing": "≥1 línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO, o algún __init__.py bajo src/tests/backend",
       "expected_signal_when_healthy": "0 líneas MODTRACK, 0 __init__.py y 0 sys.path.insert; lote en un proceso sin xfail"
     },
-    "last_verified": "2026-09-15T03:44:29Z",
+    "last_verified": "2026-09-15T05:16:32Z",
     "expires_if_not_reverified_by": "2026-12-14T03:44:29Z",
     "operational": true
   },
@@ -180,8 +189,8 @@
     "identity": {
       "branch": "stable/v4-baseline",
       "base_sha": "69d34c39",
-      "commit_or_pr": "pendiente: árbol de trabajo sobre 69d34c39, commit de Winston",
-      "etag_or_dirty": "dirty"
+      "commit_or_pr": "#211 (508c3663, squash-merge por Winston)",
+      "etag_or_dirty": "seguimiento: 3 residuos de prosa + F841 en árbol de trabajo sobre 508c3663"
     },
     "changed_paths": [
       ".github/workflows/test.yml",
