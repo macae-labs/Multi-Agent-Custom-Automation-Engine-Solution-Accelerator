@@ -180,7 +180,11 @@ def main(argv):
           f"deed0={(json.dumps(first, ensure_ascii=False)[:90] + '…') if first else None}")
 
     if cfg["local"]:
-        logs = open(cfg["local_log"], encoding="utf-8", errors="replace").read() if cfg["local_log"] else ""
+        if cfg["local_log"]:
+            with open(cfg["local_log"], encoding="utf-8", errors="replace") as f:
+                logs = f.read()
+        else:
+            logs = ""
     else:
         logs = subprocess.run(
             ["az", "containerapp", "logs", "show", "-n", BK, "-g", RG, "--revision", cfg["rev"],
