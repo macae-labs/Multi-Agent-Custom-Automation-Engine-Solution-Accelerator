@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 from agent_framework import (
     Agent,
     AgentResponseUpdate,
-    InMemoryCheckpointStorage,
     Message,
 )
 
@@ -29,6 +28,7 @@ from agent_framework_orchestrations._magentic import (
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import PlanStatus, TeamConfiguration
+from common.services.checkpoint_storage import get_checkpoint_storage
 from v4.callbacks.response_handlers import (
     streaming_agent_response_callback,
 )
@@ -318,7 +318,7 @@ class OrchestrationManager:
                 cls.logger.debug("Added participant '%s'", name)
 
         # Assemble workflow with callback
-        storage = InMemoryCheckpointStorage()
+        storage = get_checkpoint_storage()
 
         # New SDK: participants() accepts a Sequence (list) of agents
         # The orchestrator uses agent.name to identify them
