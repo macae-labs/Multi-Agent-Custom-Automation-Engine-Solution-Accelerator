@@ -8,38 +8,24 @@ and message date formatting functionality.
 import json
 import locale
 import unittest
-import sys
-import os
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-# Add the backend directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'backend'))
-
-# Set required environment variables for testing
-os.environ.setdefault('APPLICATIONINSIGHTS_CONNECTION_STRING', 'test_connection_string')
-os.environ.setdefault('APP_ENV', 'dev')
 
 # Only mock external problematic dependencies - do NOT mock internal common.* modules
-sys.modules['dateutil'] = Mock()
-sys.modules['dateutil.parser'] = Mock()
-sys.modules['regex'] = Mock()
 
 # Only mock external problematic dependencies - do NOT mock internal common.* modules
 # Mock the external dependencies but not in a way that breaks real function
-sys.modules['dateutil'] = Mock()
-sys.modules['dateutil.parser'] = Mock()
-sys.modules['regex'] = Mock()
 
 # Import the REAL modules using backend.* paths for proper coverage tracking
-from backend.common.utils.utils_date import (
+from common.utils.utils_date import (
     DateTimeEncoder,
     format_date_for_user,
     format_dates_in_messages,
 )
 
 # Now patch the parser in the actual module to work correctly
-import backend.common.utils.utils_date as utils_date_module
+import common.utils.utils_date as utils_date_module
 
 # Create proper mock for dateutil.parser that returns real datetime objects
 parser_mock = Mock()
@@ -147,7 +133,7 @@ class TestFormatDateForUser(unittest.TestCase):
                 result = format_date_for_user(invalid_date)
                 self.assertEqual(result, invalid_date)
 
-    @patch('backend.common.utils.utils_date.locale.setlocale')
+    @patch('common.utils.utils_date.locale.setlocale')
     def test_format_date_for_user_with_user_locale(self, mock_setlocale):
         """Test format_date_for_user with specific user locale."""
         # Mock locale setting to avoid system dependency
@@ -160,13 +146,13 @@ class TestFormatDateForUser(unittest.TestCase):
         # Should still format the date
         self.assertNotEqual(result, "2023-12-25")
 
-    @patch('backend.common.utils.utils_date.locale.setlocale')
+    @patch('common.utils.utils_date.locale.setlocale')
     def test_format_date_for_user_locale_setting_fails(self, mock_setlocale):
         """Test format_date_for_user when locale setting fails."""
         # Make setlocale raise an exception
         mock_setlocale.side_effect = locale.Error("Unsupported locale")
         
-        with patch('backend.common.utils.utils_date.logging.warning') as mock_warning:
+        with patch('common.utils.utils_date.logging.warning') as mock_warning:
             result = format_date_for_user("2023-12-25", "invalid_locale")
             
             # Should return original date when locale fails
@@ -178,7 +164,7 @@ class TestFormatDateForUser(unittest.TestCase):
         # Test with invalid date format that will cause strptime to fail
         invalid_date = "invalid-date-format"
         
-        with patch('backend.common.utils.utils_date.logging.warning') as mock_warning:
+        with patch('common.utils.utils_date.logging.warning') as mock_warning:
             result = format_date_for_user(invalid_date)
             
             self.assertEqual(result, invalid_date)
@@ -190,7 +176,7 @@ class TestFormatDateForUser(unittest.TestCase):
         # Should work with default locale
         self.assertNotEqual(result, "2023-12-25")
 
-    @patch('backend.common.utils.utils_date.logging.warning')
+    @patch('common.utils.utils_date.logging.warning')
     def test_format_date_for_user_logging_on_error(self, mock_warning):
         """Test that logging.warning is called on formatting errors."""
         invalid_date = "invalid-date-string"
@@ -420,7 +406,7 @@ class TestFormatDatesInMessages(unittest.TestCase):
         """Test format_dates_in_messages when date parsing fails."""
         test_string = "Invalid date: Jul 32, 2025"  # Invalid day
         
-        with patch('backend.common.utils.utils_date.parser.parse') as mock_parse:
+        with patch('common.utils.utils_date.parser.parse') as mock_parse:
             mock_parse.side_effect = Exception("Parse error")
             result = format_dates_in_messages(test_string, "en-US")
             

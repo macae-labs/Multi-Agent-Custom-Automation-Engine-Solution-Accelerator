@@ -11,14 +11,12 @@ This module contains extensive test coverage for:
 
 import pytest
 import os
-import sys
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Any, Dict
 
 # Add backend directory to sys.path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(current_dir, "..", "..", "..", "..")
-sys.path.insert(0, src_dir)
 
 # Mock Azure modules before importing the FoundryService
 azure_ai_module = MagicMock()
@@ -34,10 +32,6 @@ azure_ai_module.projects = azure_ai_projects_module
 azure_ai_projects_module.aio = azure_ai_projects_aio_module
 
 # Inject the mocked modules
-sys.modules["azure"] = MagicMock()
-sys.modules["azure.ai"] = azure_ai_module
-sys.modules["azure.ai.projects"] = azure_ai_projects_module
-sys.modules["azure.ai.projects.aio"] = azure_ai_projects_aio_module
 
 # Mock the config module
 mock_config_module = MagicMock()
@@ -72,13 +66,12 @@ mock_config.get_ai_project_client = mock_get_ai_project_client
 mock_config.get_azure_credentials = mock_get_azure_credentials
 
 mock_config_module.config = mock_config
-sys.modules["common.config.app_config"] = mock_config_module
 
 # Now import the real FoundryService
-from backend.v4.common.services.foundry_service import FoundryService  # noqa: E402
+from v4.common.services.foundry_service import FoundryService  # noqa: E402
 
 # Also import the module for patching
-import backend.v4.common.services.foundry_service as foundry_service_module  # noqa: E402
+import v4.common.services.foundry_service as foundry_service_module  # noqa: E402
 
 
 # Test fixtures and mock classes

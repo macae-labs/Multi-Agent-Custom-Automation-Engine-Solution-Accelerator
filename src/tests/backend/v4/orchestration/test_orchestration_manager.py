@@ -5,59 +5,18 @@ Comprehensive test cases covering OrchestrationManager with proper mocking.
 
 import asyncio
 import logging
-import os
 import sys
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, Mock, patch
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
+from agent_framework import Agent, AgentResponseUpdate, Content, Message, Workflow
+from agent_framework_orchestrations._base_group_chat_orchestrator import (
+    GroupChatRequestSentEvent,
+    GroupChatResponseReceivedEvent,
 )
 
-# Set up required environment variables before any imports
-os.environ.update(
-    {
-        "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=test-key",
-        "APP_ENV": "dev",
-        "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
-        "AZURE_OPENAI_API_KEY": "test_key",
-        "AZURE_OPENAI_DEPLOYMENT_NAME": "test_deployment",
-        "AZURE_AI_SUBSCRIPTION_ID": "test_subscription_id",
-        "AZURE_AI_RESOURCE_GROUP": "test_resource_group",
-        "AZURE_AI_PROJECT_NAME": "test_project_name",
-        "AZURE_AI_AGENT_ENDPOINT": "https://test.agent.azure.com/",
-        "AZURE_AI_PROJECT_ENDPOINT": "https://test.project.azure.com/",
-        "COSMOSDB_ENDPOINT": "https://test.documents.azure.com:443/",
-        "COSMOSDB_DATABASE": "test_database",
-        "COSMOSDB_CONTAINER": "test_container",
-        "AZURE_CLIENT_ID": "test_client_id",
-        "AZURE_TENANT_ID": "test_tenant_id",
-        "AZURE_OPENAI_RAI_DEPLOYMENT_NAME": "test_rai_deployment",
-    }
-)
 
 # Mock external Azure dependencies
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.agents"] = Mock()
-sys.modules["azure.ai.agents.aio"] = Mock(AgentsClient=Mock)
-sys.modules["azure.ai.projects"] = Mock()
-sys.modules["azure.ai.projects.aio"] = Mock(AIProjectClient=Mock)
-sys.modules["azure.ai.projects.models"] = Mock(MCPTool=Mock)
-sys.modules["azure.ai.projects.models._models"] = Mock()
-sys.modules["azure.ai.projects._client"] = Mock()
-sys.modules["azure.ai.projects.operations"] = Mock()
-sys.modules["azure.ai.projects.operations._patch"] = Mock()
-sys.modules["azure.ai.projects.operations._patch_datasets"] = Mock()
-sys.modules["azure.search"] = Mock()
-sys.modules["azure.search.documents"] = Mock()
-sys.modules["azure.search.documents.indexes"] = Mock()
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["azure.cosmos"] = Mock(CosmosClient=Mock)
 
 
 # Mock agent_framework dependencies
@@ -77,35 +36,12 @@ class MockWorkflowOutputEvent:
         self.data = data or MockChatMessage()
 
 
-class MockMagenticOrchestratorMessageEvent:
-    """Mock MagenticOrchestratorMessageEvent."""
-
-    def __init__(self, message=None, kind="orchestrator"):
-        self.message = message or MockChatMessage()
-        self.kind = kind
-
-
 class MockMagenticAgentDeltaEvent:
     """Mock MagenticAgentDeltaEvent."""
 
     def __init__(self, agent_id="test_agent"):
         self.agent_id = agent_id
         self.delta = "streaming update"
-
-
-class MockMagenticAgentMessageEvent:
-    """Mock MagenticAgentMessageEvent."""
-
-    def __init__(self, agent_id="test_agent", message=None):
-        self.agent_id = agent_id
-        self.message = message or MockChatMessage()
-
-
-class MockMagenticFinalResultEvent:
-    """Mock MagenticFinalResultEvent."""
-
-    def __init__(self, message=None):
-        self.message = message or MockChatMessage()
 
 
 class MockAgent:
@@ -117,7 +53,7 @@ class MockAgent:
         if name:
             self.name = name
         if has_inner_agent:
-            self._agent = Mock()
+            self._agent = Agent(client=Mock(), name=agent_name or name)
         self.close = AsyncMock()
 
 
@@ -149,166 +85,17 @@ class AsyncGeneratorMock:
             raise AssertionError(f"Expected {expected}, got {actual}")
 
 
-class MockMagenticBuilder:
-    """Mock MagenticBuilder."""
-
-    def __init__(
-        self,
-        participants=None,
-        manager=None,
-        checkpoint_storage=None,
-        max_round_count=10,
-        max_stall_count=0,
-        intermediate_outputs=False,
-        **kwargs,
-    ):
-        self._participants = {}
-        self._manager = manager
-        self._storage = checkpoint_storage
-        if participants:
-            for p in participants:
-                name = (
-                    getattr(p, "name", None) or getattr(p, "agent_name", None) or str(p)
-                )
-                self._participants[name] = p
-
-    def participants(self, participants_dict=None, **kwargs):
-        if participants_dict:
-            self._participants = participants_dict
-        else:
-            self._participants = kwargs
-        return self
-
-    def with_standard_manager(
-        self, manager=None, max_round_count=10, max_stall_count=0
-    ):
-        self._manager = manager
-        return self
-
-    def with_manager(self, manager=None, max_round_count=10, max_stall_count=0):
-        """Mock for with_manager builder method."""
-        self._manager = manager
-        return self
-
-    def with_checkpointing(self, storage):
-        self._storage = storage
-        return self
-
-    def build(self):
-        workflow = Mock()
-        workflow._participants = self._participants
-        workflow.executors = {
-            "magentic_orchestrator": Mock(_conversation=[]),
-            "agent_1": Mock(_chat_history=[]),
-        }
-        # Mock async generator for run (source uses workflow.run(task, stream=True))
-        workflow.run = AsyncGeneratorMock([])
-        return workflow
-
-
-class MockInMemoryCheckpointStorage:
-    """Mock InMemoryCheckpointStorage."""
-
-    pass
-
-
 # Base class for orchestrator events - needed for isinstance() checks
-class MockMagenticOrchestratorEvent:
-    """Mock MagenticOrchestratorEvent base class."""
-
-    def __init__(self, data=None):
-        self.data = data
-
-
-class MockAgentRunUpdateEvent:
-    """Mock AgentRunUpdateEvent."""
-
-    def __init__(self, agent_id="test_agent", update=None):
-        self.agent_id = agent_id
-        self.update = update
-        self.author_name = agent_id  # Used in some callbacks
-
-
-class MockGroupChatRequestSentEvent:
-    """Mock GroupChatRequestSentEvent."""
-
-    def __init__(self):
-        pass
-
-
-class MockGroupChatResponseReceivedEvent:
-    """Mock GroupChatResponseReceivedEvent."""
-
-    def __init__(self):
-        pass
-
-
-class MockExecutorCompletedEvent:
-    """Mock ExecutorCompletedEvent."""
-
-    def __init__(self, executor_name="test_executor"):
-        self.executor_name = executor_name
-
-
-class MockMagenticProgressLedger:
-    """Mock MagenticProgressLedger."""
-
-    def __init__(self):
-        self.is_request_satisfied = Mock()
-        self.is_request_satisfied.answer = False
 
 
 # Set up agent_framework mocks
-sys.modules["agent_framework_azure_ai"] = Mock(
-    AzureAIAgentClient=Mock(), AzureAIClient=Mock()
-)
-sys.modules["agent_framework"] = Mock(
-    Agent=Mock(return_value=Mock()),
-    AgentResponseUpdate=MockAgentRunUpdateEvent,
-    ChatOptions=Mock(return_value=Mock()),
-    ChatMessage=MockChatMessage,
-    Message=MockChatMessage,
-    InMemoryCheckpointStorage=MockInMemoryCheckpointStorage,
-    WorkflowOutputEvent=MockWorkflowOutputEvent,
-    MagenticOrchestratorMessageEvent=MockMagenticOrchestratorMessageEvent,
-    MagenticAgentDeltaEvent=MockMagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent=MockMagenticAgentMessageEvent,
-    MagenticFinalResultEvent=MockMagenticFinalResultEvent,
-    MagenticOrchestratorEvent=MockMagenticOrchestratorEvent,
-    AgentRunUpdateEvent=MockAgentRunUpdateEvent,
-    GroupChatRequestSentEvent=MockGroupChatRequestSentEvent,
-    GroupChatResponseReceivedEvent=MockGroupChatResponseReceivedEvent,
-    ExecutorCompletedEvent=MockExecutorCompletedEvent,
-    MagenticProgressLedger=MockMagenticProgressLedger,
-)
 # agent_framework_orchestrations mocks (source imports from these paths)
-sys.modules["agent_framework_orchestrations"] = Mock(
-    MagenticBuilder=MockMagenticBuilder,
-)
-sys.modules["agent_framework_orchestrations._base_group_chat_orchestrator"] = Mock(
-    GroupChatRequestSentEvent=MockGroupChatRequestSentEvent,
-    GroupChatResponseReceivedEvent=MockGroupChatResponseReceivedEvent,
-)
-sys.modules["agent_framework_orchestrations._magentic"] = Mock(
-    MagenticProgressLedger=MockMagenticProgressLedger,
-    StandardMagenticManager=Mock(),
-    MagenticContext=Mock(),
-    ORCHESTRATOR_FINAL_ANSWER_PROMPT="Final answer prompt",
-    ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT="Task ledger plan prompt",
-    ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT="Task ledger plan update prompt",
-    ORCHESTRATOR_PROGRESS_LEDGER_PROMPT="Progress ledger prompt",
-)
 
 # Mock common modules
 mock_config = Mock()
 mock_config.get_azure_credential.return_value = Mock()
 mock_config.AZURE_CLIENT_ID = "test_client_id"
 mock_config.AZURE_AI_PROJECT_ENDPOINT = "https://test.project.azure.com/"
-
-sys.modules["common"] = Mock()
-sys.modules["common.config"] = Mock()
-sys.modules["common.config.app_config"] = Mock(config=mock_config)
-sys.modules["common.models"] = Mock()
 
 
 class MockTeamConfiguration:
@@ -319,22 +106,10 @@ class MockTeamConfiguration:
         self.deployment_name = deployment_name
 
 
-sys.modules["common.models.messages_af"] = Mock(
-    TeamConfiguration=MockTeamConfiguration,
-    # Real PlanStatus is a str-enum; the failure-marking block sets
-    # plan.overall_status = PlanStatus.failed and tests assert the string.
-    PlanStatus=Mock(failed="failed"),
-)
-
-
 class MockDatabaseBase:
     """Mock DatabaseBase."""
 
     pass
-
-
-sys.modules["common.database"] = Mock()
-sys.modules["common.database.database_base"] = Mock(DatabaseBase=MockDatabaseBase)
 
 
 # Mock v4 modules
@@ -344,19 +119,6 @@ class MockTeamService:
     def __init__(self):
         self.memory_context = MockDatabaseBase()
 
-
-sys.modules["v4"] = Mock()
-sys.modules["v4.common"] = Mock()
-sys.modules["v4.common.services"] = Mock()
-sys.modules["v4.common.services.team_service"] = Mock(TeamService=MockTeamService)
-
-sys.modules["v4.callbacks"] = Mock()
-sys.modules["v4.callbacks.response_handlers"] = Mock(
-    agent_response_callback=Mock(),
-    streaming_agent_response_callback=AsyncMock(),
-    # Source flushes buffered agent streams through clean_citations()
-    clean_citations=Mock(side_effect=lambda text: text),
-)
 
 # Mock v4.config.settings
 mock_connection_config = Mock()
@@ -372,42 +134,11 @@ mock_orchestration_config.managers = {}
 mock_orchestration_config.get_current_orchestration = Mock(return_value=None)
 mock_orchestration_config.set_approval_pending = Mock()
 
-sys.modules["v4.config"] = Mock()
-sys.modules["v4.config.settings"] = Mock(
-    connection_config=mock_connection_config,
-    orchestration_config=mock_orchestration_config,
-)
-
 
 # Mock v4.models.messages
-class MockWebsocketMessageType:
-    """Mock WebsocketMessageType."""
-
-    FINAL_RESULT_MESSAGE = "final_result_message"
-    AGENT_MESSAGE = "agent_message"
-
-
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock(
-    WebsocketMessageType=MockWebsocketMessageType,
-    AgentMessage=Mock,
-)
 
 
 # Mock v4.orchestration.human_approval_manager
-class MockHumanApprovalMagenticManager:
-    """Mock HumanApprovalMagenticManager."""
-
-    def __init__(self, user_id, agent, *args, **kwargs):
-        self.user_id = user_id
-        self.agent = agent
-        self.max_round_count = kwargs.get("max_round_count", 10)
-
-
-sys.modules["v4.orchestration"] = Mock()
-sys.modules["v4.orchestration.human_approval_manager"] = Mock(
-    HumanApprovalMagenticManager=MockHumanApprovalMagenticManager
-)
 
 
 # Mock v4.magentic_agents.magentic_agent_factory
@@ -433,32 +164,36 @@ class MockMagenticAgentFactory:
         return [agent1, agent2]
 
 
-class MockProxyAgent:
-    """Mock ProxyAgent class for isinstance checks in run_orchestration."""
-
-    pass
-
-
-sys.modules["v4.magentic_agents"] = Mock()
-sys.modules["v4.magentic_agents.magentic_agent_factory"] = Mock(
-    MagenticAgentFactory=MockMagenticAgentFactory
-)
-sys.modules["v4.magentic_agents.proxy_agent"] = Mock(ProxyAgent=MockProxyAgent)
-
 # Now import the module under test
-from backend.v4.orchestration.orchestration_manager import (  # noqa: E402
+from v4.orchestration.orchestration_manager import (  # noqa: E402
     OrchestrationManager,
 )
+import pytest
 
-# Get mocked references for tests
-connection_config = sys.modules["v4.config.settings"].connection_config
-orchestration_config = sys.modules["v4.config.settings"].orchestration_config
-agent_response_callback = sys.modules[
-    "v4.callbacks.response_handlers"
-].agent_response_callback
-streaming_agent_response_callback = sys.modules[
-    "v4.callbacks.response_handlers"
-].streaming_agent_response_callback
+
+# Colaboradores del módulo bajo test: los mismos objetos que la fixture
+# instala en su namespace durante cada test (setUp los resetea).
+connection_config = mock_connection_config
+orchestration_config = mock_orchestration_config
+streaming_agent_response_callback = AsyncMock()
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.orchestration.orchestration_manager parcheados en SU namespace y sólo durante cada
+    test. Antes eran Mocks instalados en sys.modules a nivel de módulo para
+    todo el proceso (INC-2026-004)."""
+    import importlib
+
+    mod = importlib.import_module("v4.orchestration.orchestration_manager")
+    for name, value in (
+        ("connection_config", connection_config),
+        ("orchestration_config", orchestration_config),
+        ("streaming_agent_response_callback", streaming_agent_response_callback),
+        ("config", mock_config),
+        ("MagenticAgentFactory", MockMagenticAgentFactory),
+    ):
+        monkeypatch.setattr(mod, name, value)
 
 
 class TestOrchestrationManager(IsolatedAsyncioTestCase):
@@ -475,7 +210,6 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         orchestration_config.set_approval_pending.reset_mock()
         connection_config.send_status_update_async.reset_mock()
         connection_config.send_status_update_async.side_effect = None
-        agent_response_callback.reset_mock()
         streaming_agent_response_callback.reset_mock()
         streaming_agent_response_callback.side_effect = None
 
@@ -501,7 +235,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         # Use MockAgent instead of Mock to avoid attribute issues
         agent1 = MockAgent(agent_name="TestAgent1", has_inner_agent=True)
-        agent2 = MockAgent(name="TestAgent2")
+        agent2 = Agent(client=Mock(), name="TestAgent2")
 
         agents = [agent1, agent2]
 
@@ -529,7 +263,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         self.assertIn("user_id is required", str(context.exception))
 
-    @patch("backend.v4.orchestration.orchestration_manager.AzureAIClient")
+    @patch("v4.orchestration.orchestration_manager.AzureAIClient")
     async def test_init_orchestration_client_creation_failure(self, mock_client_class):
         """Test orchestration initialization when client creation fails."""
         mock_client_class.side_effect = Exception("Client creation failed")
@@ -547,7 +281,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         self.assertIn("Client creation failed", str(context.exception))
 
     @patch(
-        "backend.v4.orchestration.orchestration_manager.HumanApprovalMagenticManager"
+        "v4.orchestration.orchestration_manager.HumanApprovalMagenticManager"
     )
     async def test_init_orchestration_manager_creation_failure(
         self, mock_manager_class
@@ -570,13 +304,15 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
     async def test_init_orchestration_participants_mapping(self):
         """Test proper participant mapping in orchestration initialization."""
         # Use MockAgent to avoid attribute issues
+        # Un wrapper con agente interno (el builder recibe ._agent) y un agente
+        # directo. Un participante sin nombre no existe en el contrato real:
+        # MagenticBuilder rechaza SupportsAgentRun sin nombre.
         agent_with_agent_name = MockAgent(
             agent_name="AgentWithAgentName", has_inner_agent=True
         )
-        agent_with_name = MockAgent(name="AgentWithName")
-        agent_without_name = MockAgent()  # Neither agent_name nor name
+        agent_with_name = Agent(client=Mock(), name="AgentWithName")
 
-        agents = [agent_with_agent_name, agent_with_name, agent_without_name]
+        agents = [agent_with_agent_name, agent_with_name]
 
         workflow = await OrchestrationManager.init_orchestration(
             agents=agents,
@@ -585,9 +321,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
             user_id=self.test_user_id,
         )
 
-        self.assertIsNotNone(workflow)
-        # Verify builder was called with participants
-        self.assertIsNotNone(workflow._participants)
+        self.assertIsInstance(workflow, Workflow)
 
     async def test_get_current_or_new_orchestration_existing(self):
         """Test getting existing orchestration."""
@@ -674,7 +408,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         # Mock agent factory to raise exception
         with patch(
-            "backend.v4.orchestration.orchestration_manager.MagenticAgentFactory"
+            "v4.orchestration.orchestration_manager.MagenticAgentFactory"
         ) as mock_factory_class:
             mock_factory = Mock()
             mock_factory.get_agents = AsyncMock(
@@ -713,51 +447,18 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
     async def test_run_orchestration_success(self):
         """Test successful orchestration execution."""
-        # Set up mock workflow with events
         mock_workflow = Mock()
-
-        # Source dispatches on event.type (string), not isinstance() for event classes
-        mock_orchestrator_event = Mock()
-        mock_orchestrator_event.type = "magentic_orchestrator"
-        mock_orchestrator_event.data = MockChatMessage("Plan message")
-
-        # Request event opens the active-response window; streamed chunks
-        # outside a RequestSent→ResponseReceived window are discarded by source.
-        mock_request_data = MockGroupChatRequestSentEvent()
-        mock_request_data.participant_name = "agent_1"
-        mock_request_data.round_index = 1
-        mock_request_event = Mock()
-        mock_request_event.type = "group_chat"
-        mock_request_event.data = mock_request_data
-
-        # Output event with AgentResponseUpdate data triggers streaming callback
-        mock_agent_update_data = MockAgentRunUpdateEvent()
-        mock_agent_update_data.text = "Agent streaming update"
-        mock_output_event = Mock()
-        mock_output_event.type = "output"
-        mock_output_event.executor_id = "agent_1"
-        mock_output_event.data = mock_agent_update_data
-
-        mock_response_data = MockGroupChatResponseReceivedEvent()
-        mock_response_data.round_index = 1
-        mock_response_data.participant_name = "agent_1"
-        mock_response_data.data = MockChatMessage("Agent response")
-        mock_response_event = Mock()
-        mock_response_event.type = "group_chat"
-        mock_response_event.data = mock_response_data
-
-        # Final output event
-        mock_final_output = Mock()
-        mock_final_output.type = "output"
-        mock_final_output.executor_id = None
-        mock_final_output.data = MockChatMessage("Final result")
-
+        # El producto despacha por isinstance sobre las clases reales del framework.
         mock_events = [
-            mock_orchestrator_event,
-            mock_request_event,
-            mock_output_event,
-            mock_response_event,
-            mock_final_output,
+            Mock(type="magentic_orchestrator", data=Message(role="assistant", text="Plan message")),
+            Mock(type="group_chat", data=GroupChatRequestSentEvent(round_index=1, participant_name="agent_1")),
+            Mock(
+                type="output",
+                executor_id="agent_1",
+                data=AgentResponseUpdate(contents=[Content.from_text("Agent streaming update")]),
+            ),
+            Mock(type="group_chat", data=GroupChatResponseReceivedEvent(round_index=1, participant_name="agent_1")),
+            Mock(type="output", executor_id=None, data=Message(role="assistant", text="Final result")),
         ]
         mock_workflow.run = AsyncGeneratorMock(mock_events)
         mock_workflow.executors = {
@@ -773,6 +474,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         input_task.context = ""
 
         # Execute orchestration
+        self.orchestration_manager._persist_agent_message = AsyncMock()
         await self.orchestration_manager.run_orchestration(
             user_id=self.test_user_id,
             session_id=self.test_session_id,
@@ -1023,51 +725,18 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
     async def test_run_orchestration_all_event_types(self):
         """Test processing of all event types."""
         mock_workflow = Mock()
-
-        # Source dispatches on event.type (string), not isinstance() for event classes
-        mock_orchestrator_event = Mock()
-        mock_orchestrator_event.type = "magentic_orchestrator"
-        mock_orchestrator_event.data = MockChatMessage("Plan message")
-
-        # Output event with AgentResponseUpdate triggers streaming callback
-        mock_agent_update_data = MockAgentRunUpdateEvent()
-        mock_agent_update_data.text = "Agent streaming update"
-        mock_output_event = Mock()
-        mock_output_event.type = "output"
-        mock_output_event.executor_id = "agent_1"
-        mock_output_event.data = mock_agent_update_data
-
-        mock_request_data = MockGroupChatRequestSentEvent()
-        mock_request_data.participant_name = "agent_1"
-        mock_request_data.round_index = 1
-        mock_request_event = Mock()
-        mock_request_event.type = "group_chat"
-        mock_request_event.data = mock_request_data
-
-        mock_response_data = MockGroupChatResponseReceivedEvent()
-        mock_response_data.round_index = 1
-        mock_response_data.participant_name = "agent_1"
-        mock_response_data.data = MockChatMessage("Agent response")
-        mock_response_event = Mock()
-        mock_response_event.type = "group_chat"
-        mock_response_event.data = mock_response_data
-
-        mock_executor_completed = Mock()
-        mock_executor_completed.type = "executor_completed"
-        mock_executor_completed.executor_id = "agent_1"
-
-        # Create all possible event types.
-        # Request must precede the output chunk: source only forwards streamed
-        # chunks for agents inside a RequestSent→ResponseReceived window.
         events = [
-            mock_orchestrator_event,
-            mock_request_event,
-            mock_output_event,
-            mock_response_event,
-            mock_executor_completed,
+            Mock(type="magentic_orchestrator", data=Message(role="assistant", text="Plan message")),
+            Mock(type="group_chat", data=GroupChatRequestSentEvent(round_index=1, participant_name="agent_1")),
+            Mock(
+                type="output",
+                executor_id="agent_1",
+                data=AgentResponseUpdate(contents=[Content.from_text("Agent streaming update")]),
+            ),
+            Mock(type="group_chat", data=GroupChatResponseReceivedEvent(round_index=1, participant_name="agent_1")),
+            Mock(type="executor_completed", executor_id="agent_1"),
             Mock(),  # Unknown event type - should be safely ignored
         ]
-
         mock_workflow.run = AsyncGeneratorMock(events)
         mock_workflow.executors = {}
 
@@ -1078,6 +747,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         input_task.context = ""
 
         # Should process all events without errors
+        self.orchestration_manager._persist_agent_message = AsyncMock()
         await self.orchestration_manager.run_orchestration(
             user_id=self.test_user_id,
             session_id=self.test_session_id,
@@ -1244,11 +914,11 @@ class TestExtractResponseText(IsolatedAsyncioTestCase):
         agent_resp = Mock(spec_set=["text"])
         agent_resp.text = None
 
-        last_msg = MockChatMessage("Last conversation message")
+        last_msg = Message(role="assistant", text="Last conversation message")
 
         executor_resp = Mock(spec_set=["agent_response", "full_conversation"])
         executor_resp.agent_response = agent_resp
-        executor_resp.full_conversation = [MockChatMessage("First"), last_msg]
+        executor_resp.full_conversation = [Message(role="assistant", text="First"), last_msg]
 
         result = self.manager._extract_response_text(executor_resp)
         self.assertEqual(result, "Last conversation message")
@@ -1325,7 +995,6 @@ class TestWorkflowOutputEventHandling(IsolatedAsyncioTestCase):
         orchestration_config.get_current_orchestration.return_value = None
         connection_config.send_status_update_async.reset_mock()
         connection_config.send_status_update_async.side_effect = None
-        agent_response_callback.reset_mock()
         streaming_agent_response_callback.reset_mock()
         streaming_agent_response_callback.side_effect = None
 

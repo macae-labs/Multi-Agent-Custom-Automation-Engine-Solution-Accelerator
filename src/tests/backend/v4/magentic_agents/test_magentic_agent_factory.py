@@ -1,4 +1,4 @@
-"""Unit tests for backend.v4.magentic_agents.magentic_agent_factory module."""
+"""Unit tests for v4.magentic_agents.magentic_agent_factory module."""
 import logging
 import sys
 from types import SimpleNamespace
@@ -6,22 +6,6 @@ from unittest.mock import Mock, AsyncMock
 import pytest
 
 # Mock the dependencies before importing the module under test
-sys.modules['common'] = Mock()
-sys.modules['common.config'] = Mock()
-sys.modules['common.config.app_config'] = Mock()
-sys.modules['common.database'] = Mock()
-sys.modules['common.database.database_base'] = Mock()
-sys.modules['common.models'] = Mock()
-sys.modules['common.models.messages_af'] = Mock()
-sys.modules['v4'] = Mock()
-sys.modules['v4.common'] = Mock()
-sys.modules['v4.common.services'] = Mock()
-sys.modules['v4.common.services.team_service'] = Mock()
-sys.modules['v4.magentic_agents'] = Mock()
-sys.modules['v4.magentic_agents.foundry_agent'] = Mock()
-sys.modules['v4.magentic_agents.models'] = Mock()
-sys.modules['v4.magentic_agents.models.agent_models'] = Mock()
-sys.modules['v4.magentic_agents.proxy_agent'] = Mock()
 
 # Create mock classes
 mock_config = Mock()
@@ -37,21 +21,37 @@ mock_search_config = Mock()
 mock_proxy_agent = Mock()
 
 # Set up the mock modules
-sys.modules['common.config.app_config'].config = mock_config
-sys.modules['common.database.database_base'].DatabaseBase = mock_database_base
-sys.modules['common.models.messages_af'].TeamConfiguration = mock_team_configuration
-sys.modules['v4.common.services.team_service'].TeamService = mock_team_service
-sys.modules['v4.magentic_agents.foundry_agent'].FoundryAgentTemplate = mock_foundry_agent_template
-sys.modules['v4.magentic_agents.models.agent_models'].MCPConfig = mock_mcp_config
-sys.modules['v4.magentic_agents.models.agent_models'].SearchConfig = mock_search_config
-sys.modules['v4.magentic_agents.proxy_agent'].ProxyAgent = mock_proxy_agent
 
 # Import the module under test
-from backend.v4.magentic_agents.magentic_agent_factory import (
+from v4.magentic_agents.magentic_agent_factory import (
     MagenticAgentFactory,
     UnsupportedModelError,
     InvalidConfigurationError
 )
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores del módulo bajo test, parcheados en SU namespace y sólo
+    durante cada test. Antes se mutaban atributos de los módulos REALES en
+    sys.modules a nivel de módulo (MCPConfig, TeamConfiguration, …) y quedaban
+    envenenados para todo el proceso; los nombres que el módulo ya no importa se
+    omiten (eran mutaciones sin efecto sobre este módulo)."""
+    import importlib
+
+    mod = importlib.import_module("v4.magentic_agents.magentic_agent_factory")
+    for name, value in (
+        ('config', mock_config),
+        ('DatabaseBase', mock_database_base),
+        ('TeamConfiguration', mock_team_configuration),
+        ('TeamService', mock_team_service),
+        ('FoundryAgentTemplate', mock_foundry_agent_template),
+        ('MCPConfig', mock_mcp_config),
+        ('SearchConfig', mock_search_config),
+        ('ProxyAgent', mock_proxy_agent),
+    ):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, value)
 
 
 class TestMagenticAgentFactory:

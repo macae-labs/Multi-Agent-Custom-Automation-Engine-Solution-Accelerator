@@ -1,29 +1,16 @@
 """Unit tests for DatabaseBase abstract class."""
 
-import sys
-import os
 from abc import ABC
 from typing import Any, Dict, List, Optional, Type
 from unittest.mock import Mock
 import pytest
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
-
-# Set required environment variables for testing
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "test_connection_string")
-os.environ.setdefault("APP_ENV", "dev")
 
 # Only mock external problematic dependencies - do NOT mock internal common.* modules
-sys.modules["v4"] = Mock()
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock()
 
 # Import the REAL modules using backend.* paths for proper coverage tracking
-from backend.common.database.database_base import DatabaseBase
-from backend.common.models.messages_af import (
+from common.database.database_base import DatabaseBase
+from common.models.messages_af import (
     AgentMessageData,
     BaseDataModel,
     CurrentTeamAgent,

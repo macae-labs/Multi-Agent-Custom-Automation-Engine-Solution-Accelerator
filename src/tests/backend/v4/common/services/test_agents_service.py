@@ -11,24 +11,31 @@ This module contains extensive test coverage for:
 """
 
 import pytest
-import os
-import sys
 import asyncio
 import logging
-import importlib.util
-from unittest.mock import patch, MagicMock
+from v4.common.services.agents_service import AgentsService
 
-# Add the src directory to sys.path for proper import
-src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
-if src_path not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_path))
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.common.services.agents_service parcheados en SU namespace y sólo durante cada
+    test. Antes el módulo se cargaba por ruta de archivo con sus dependencias
+    sustituidas en sys.modules y se registraba así, con Mocks dentro, para
+    todo el proceso (INC-2026-004)."""
+    import importlib
+
+    mod = importlib.import_module("v4.common.services.agents_service")
+    for name, value in (
+        ('TeamAgent', mock_messages_af.TeamAgent),
+        ('TeamConfiguration', mock_messages_af.TeamConfiguration),
+        ('TeamService', mock_team_service_module.TeamService),
+    ):
+        monkeypatch.setattr(mod, name, value)
+
+from unittest.mock import MagicMock
+
 
 # Mock problematic modules and imports first
-sys.modules['common.models.messages_af'] = MagicMock()
-sys.modules['v4'] = MagicMock()
-sys.modules['v4.common'] = MagicMock()
-sys.modules['v4.common.services'] = MagicMock()
-sys.modules['v4.common.services.team_service'] = MagicMock()
 
 # Create mock data models for testing
 class MockTeamAgent:
@@ -62,36 +69,12 @@ class MockTeamService:
 mock_messages_af = MagicMock()
 mock_messages_af.TeamAgent = MockTeamAgent
 mock_messages_af.TeamConfiguration = MockTeamConfiguration
-sys.modules['common.models.messages_af'] = mock_messages_af
 
 # Mock the TeamService module
 mock_team_service_module = MagicMock()
 mock_team_service_module.TeamService = MockTeamService
-sys.modules['v4.common.services.team_service'] = mock_team_service_module
 
 # Now import the real AgentsService using direct file import with proper mocking
-import importlib.util
-
-with patch.dict('sys.modules', {
-    'common.models.messages_af': mock_messages_af,
-    'v4.common.services.team_service': mock_team_service_module,
-}):
-    agents_service_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'agents_service.py')
-    agents_service_path = os.path.abspath(agents_service_path)
-    spec = importlib.util.spec_from_file_location("backend.v4.common.services.agents_service", agents_service_path)
-    agents_service_module = importlib.util.module_from_spec(spec)
-    
-    # Set the proper module name for coverage tracking (matching --cov=backend pattern)
-    agents_service_module.__name__ = "backend.v4.common.services.agents_service"
-    agents_service_module.__file__ = agents_service_path
-    
-    # Add to sys.modules BEFORE execution for coverage tracking (both variations)
-    sys.modules['backend.v4.common.services.agents_service'] = agents_service_module
-    sys.modules['src.backend.v4.common.services.agents_service'] = agents_service_module
-    
-    spec.loader.exec_module(agents_service_module)
-
-AgentsService = agents_service_module.AgentsService
 
 
 class TestAgentsServiceInitialization:
@@ -104,7 +87,7 @@ class TestAgentsServiceInitialization:
         
         assert service.team_service == mock_team_service
         assert service.logger is not None
-        assert service.logger.name == "backend.v4.common.services.agents_service"
+        assert service.logger.name == "v4.common.services.agents_service"
 
     def test_init_team_service_attribute(self):
         """Test that team_service attribute is properly set."""

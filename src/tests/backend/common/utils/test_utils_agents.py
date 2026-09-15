@@ -8,7 +8,7 @@ import string
 import unittest
 from unittest.mock import patch
 
-from backend.common.utils.utils_agents import generate_assistant_id
+from common.utils.utils_agents import generate_assistant_id
 
 
 class TestGenerateAssistantId(unittest.TestCase):
@@ -90,7 +90,7 @@ class TestGenerateAssistantId(unittest.TestCase):
         
         self.assertTrue(result_chars.issubset(valid_chars))
 
-    @patch('backend.common.utils.utils_agents.secrets.choice')
+    @patch('common.utils.utils_agents.secrets.choice')
     def test_generate_assistant_id_uses_secrets(self, mock_choice):
         """Test that generate_assistant_id uses secrets module for randomness."""
         mock_choice.return_value = 'a'

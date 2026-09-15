@@ -9,17 +9,10 @@ This module contains extensive test coverage for:
 """
 
 import pytest
-import os
-import sys
-import importlib.util
 from unittest.mock import patch, MagicMock, AsyncMock, Mock
 import aiohttp
 from aiohttp import ClientTimeout, ClientSession
 
-# Add the src directory to sys.path for proper import
-src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
-if src_path not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_path))
 
 # Mock Azure modules before importing the BaseAPIService
 azure_ai_module = MagicMock()
@@ -35,13 +28,8 @@ azure_ai_module.projects = azure_ai_projects_module
 azure_ai_projects_module.aio = azure_ai_projects_aio_module
 
 # Inject the mocked modules
-sys.modules['azure'] = MagicMock()
-sys.modules['azure.ai'] = azure_ai_module
-sys.modules['azure.ai.projects'] = azure_ai_projects_module
-sys.modules['azure.ai.projects.aio'] = azure_ai_projects_aio_module
 
 # Mock other problematic modules
-sys.modules['common.models.messages_af'] = MagicMock()
 
 # Mock the config module
 mock_config_module = MagicMock()
@@ -53,27 +41,21 @@ mock_config.TEST_ENDPOINT = 'https://test.example.com'
 mock_config.MISSING_ENDPOINT = None
 
 mock_config_module.config = mock_config
-sys.modules['common.config.app_config'] = mock_config_module
 
-# Now import the real BaseAPIService using direct file import but register for coverage
-import importlib.util
-base_api_service_path = os.path.join(os.path.dirname(
-    __file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'base_api_service.py')
-base_api_service_path = os.path.abspath(base_api_service_path)
-spec = importlib.util.spec_from_file_location(
-    "backend.v4.common.services.base_api_service", base_api_service_path)
-base_api_service_module = importlib.util.module_from_spec(spec)
+import v4.common.services.base_api_service as base_api_service_module
+from v4.common.services.base_api_service import BaseAPIService
 
-# Set the proper module name for coverage tracking (matching --cov=backend pattern)
-base_api_service_module.__name__ = "backend.v4.common.services.base_api_service"
-base_api_service_module.__file__ = base_api_service_path
 
-# Add to sys.modules BEFORE execution for coverage tracking (both variations)
-sys.modules['backend.v4.common.services.base_api_service'] = base_api_service_module
-sys.modules['src.backend.v4.common.services.base_api_service'] = base_api_service_module
-
-spec.loader.exec_module(base_api_service_module)
-BaseAPIService = base_api_service_module.BaseAPIService
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de base_api_service parcheados en SU namespace y sólo
+    durante cada test. Antes el módulo se cargaba por ruta de archivo y se
+    registraba como v4.common.services.base_api_service para todo el proceso
+    (INC-2026-004)."""
+    for name, value in (
+        ('config', mock_config_module.config),
+    ):
+        monkeypatch.setattr(base_api_service_module, name, value)
 
 
 class TestBaseAPIService:

@@ -1,50 +1,13 @@
 """Unit tests for event_utils module."""
 
 import logging
-import sys
-import os
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 import pytest
 
 # Mock external dependencies at module level
-sys.modules['azure'] = Mock()
-sys.modules['azure.ai'] = Mock()
-sys.modules['azure.ai.projects'] = Mock()
-sys.modules['azure.ai.projects.aio'] = Mock()
-sys.modules['azure.monitor'] = Mock()
-sys.modules['azure.monitor.events'] = Mock()
-sys.modules['azure.monitor.events.extension'] = Mock()
-sys.modules['azure.core'] = Mock()
-sys.modules['azure.core.exceptions'] = Mock()
-sys.modules['azure.identity'] = Mock()
-sys.modules['azure.identity.aio'] = Mock()
-sys.modules['azure.cosmos'] = Mock()
-sys.modules['azure.cosmos.aio'] = Mock()
-sys.modules['azure.keyvault'] = Mock()
-sys.modules['azure.keyvault.secrets'] = Mock()
-sys.modules['azure.keyvault.secrets.aio'] = Mock()
 
-# Add the backend directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(
-    __file__), '..', '..', '..', '..', 'backend'))
 
-# Set required environment variables for testing
-os.environ.setdefault('APPLICATIONINSIGHTS_CONNECTION_STRING', 'test_connection_string')
-os.environ.setdefault('APP_ENV', 'dev')
-os.environ.setdefault('AZURE_OPENAI_ENDPOINT', 'https://test.openai.azure.com/')
-os.environ.setdefault('AZURE_OPENAI_API_KEY', 'test_key')
-os.environ.setdefault('AZURE_OPENAI_DEPLOYMENT_NAME', 'test_deployment')
-os.environ.setdefault('AZURE_AI_SUBSCRIPTION_ID', 'test_subscription_id')
-os.environ.setdefault('AZURE_AI_RESOURCE_GROUP', 'test_resource_group')
-os.environ.setdefault('AZURE_AI_PROJECT_NAME', 'test_project_name')
-os.environ.setdefault('AZURE_AI_AGENT_ENDPOINT', 'https://test.agent.azure.com/')
-os.environ.setdefault('COSMOSDB_ENDPOINT', 'https://test.documents.azure.com:443/')
-os.environ.setdefault('COSMOSDB_DATABASE', 'test_database')
-os.environ.setdefault('COSMOSDB_CONTAINER', 'test_container')
-os.environ.setdefault('AZURE_CLIENT_ID', 'test_client_id')
-os.environ.setdefault('AZURE_TENANT_ID', 'test_tenant_id')
-
-from backend.common.utils.event_utils import track_event_if_configured
+from common.utils.event_utils import track_event_if_configured
 
 
 class TestTrackEventIfConfigured:
@@ -62,8 +25,8 @@ class TestTrackEventIfConfigured:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_valid_configuration(self, mock_config, mock_track_event):
         """Test track_event_if_configured with valid Application Insights configuration."""
         # Setup
@@ -77,9 +40,9 @@ class TestTrackEventIfConfigured:
         # Verify
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_with_no_configuration(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured when Application Insights is not configured."""
         # Setup
@@ -96,9 +59,9 @@ class TestTrackEventIfConfigured:
             f"Skipping track_event for {event_name} as Application Insights is not configured"
         )
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_with_empty_configuration(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured with empty connection string."""
         # Setup
@@ -115,9 +78,9 @@ class TestTrackEventIfConfigured:
             f"Skipping track_event for {event_name} as Application Insights is not configured"
         )
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_handles_attribute_error(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured handles AttributeError (ProxyLogger error)."""
         # Setup
@@ -136,9 +99,9 @@ class TestTrackEventIfConfigured:
             "ProxyLogger error in track_event: 'ProxyLogger' object has no attribute 'resource'"
         )
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_handles_generic_exception(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured handles generic exceptions."""
         # Setup
@@ -156,8 +119,8 @@ class TestTrackEventIfConfigured:
             "Error in track_event: Unexpected error occurred"
         )
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_complex_event_data(self, mock_config, mock_track_event):
         """Test track_event_if_configured with complex event data structures."""
         # Setup
@@ -178,8 +141,8 @@ class TestTrackEventIfConfigured:
         # Verify
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_empty_event_data(self, mock_config, mock_track_event):
         """Test track_event_if_configured with empty event data."""
         # Setup
@@ -193,8 +156,8 @@ class TestTrackEventIfConfigured:
         # Verify
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_special_characters_in_name(self, mock_config, mock_track_event):
         """Test track_event_if_configured with special characters in event name."""
         # Setup
@@ -208,9 +171,9 @@ class TestTrackEventIfConfigured:
         # Verify
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_multiple_calls_with_mixed_scenarios(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured with multiple calls having different scenarios."""
         # Setup
@@ -248,7 +211,7 @@ class TestEventUtilsIntegration:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-    @patch('backend.common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.track_event')
     def test_track_event_with_real_config_module(self, mock_track_event):
         """Test track_event_if_configured with real config module (mocked at track_event level)."""
         # Note: config is already loaded from the real module due to our imports
@@ -264,8 +227,8 @@ class TestEventUtilsIntegration:
         # track_event should be called
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_preserves_original_event_data(self, mock_config, mock_track_event):
         """Test that track_event_if_configured preserves original event data."""
         # Setup
@@ -280,9 +243,9 @@ class TestEventUtilsIntegration:
         assert original_event_data == event_data_copy
         mock_track_event.assert_called_once_with("test_event", original_event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_logging_behavior_with_different_log_levels(self, mock_logging, mock_config, mock_track_event):
         """Test that warnings are logged at the correct level."""
         # Setup - no configuration
@@ -313,9 +276,9 @@ class TestEventUtilsErrorScenarios:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_with_various_attribute_errors(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured with various AttributeError scenarios."""
         # Setup
@@ -335,9 +298,9 @@ class TestEventUtilsErrorScenarios:
                 f"ProxyLogger error in track_event: {error_msg}")
             mock_logging.reset_mock()
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_with_various_exceptions(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured with various exception types."""
         # Setup
@@ -359,9 +322,9 @@ class TestEventUtilsErrorScenarios:
                 f"Error in track_event: {exception}")
             mock_logging.reset_mock()
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
-    @patch('backend.common.utils.event_utils.logging')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
+    @patch('common.utils.event_utils.logging')
     def test_track_event_with_whitespace_connection_string(self, mock_logging, mock_config, mock_track_event):
         """Test track_event_if_configured with whitespace-only connection string."""
         # Setup
@@ -375,8 +338,8 @@ class TestEventUtilsErrorScenarios:
         # Verify - whitespace should be treated as truthy, so track_event should be called
         mock_track_event.assert_called_once_with(event_name, event_data)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_none_event_name(self, mock_config, mock_track_event):
         """Test track_event_if_configured with None event name."""
         # Setup
@@ -388,8 +351,8 @@ class TestEventUtilsErrorScenarios:
         # Verify - the function should pass None through to track_event
         mock_track_event.assert_called_once_with(None, {"data": "test"})
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_none_event_data(self, mock_config, mock_track_event):
         """Test track_event_if_configured with None event data."""
         # Setup
@@ -405,8 +368,8 @@ class TestEventUtilsErrorScenarios:
 class TestEventUtilsParameterValidation:
     """Test parameter validation and type handling for event_utils."""
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_string_types(self, mock_config, mock_track_event):
         """Test track_event_if_configured with various string types."""
         # Setup
@@ -427,8 +390,8 @@ class TestEventUtilsParameterValidation:
 
         assert mock_track_event.call_count == len(string_types)
 
-    @patch('backend.common.utils.event_utils.track_event')
-    @patch('backend.common.utils.event_utils.config')
+    @patch('common.utils.event_utils.track_event')
+    @patch('common.utils.event_utils.config')
     def test_track_event_with_different_data_types(self, mock_config, mock_track_event):
         """Test track_event_if_configured with different event data types."""
         # Setup

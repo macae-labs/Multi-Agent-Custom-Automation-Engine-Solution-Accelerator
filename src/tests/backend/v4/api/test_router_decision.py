@@ -5,26 +5,10 @@ fragment accumulation across deltas, PARALLEL tool calls (the silent-fallback
 bug: '{"task":"A"}{"task":"B"}' concatenation), and loud parse failures.
 """
 
-import importlib.util
 import json
-import os
 from types import SimpleNamespace
 
-# Direct file-location import: suite-order sys.modules stubs of 'v4' (from
-# other test modules' header mocks) break package imports; the module under
-# test is pure stdlib so loading it standalone is always safe.
-_mod_path = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..", "..", "..", "..", "backend", "v4", "api", "router_decision.py",
-    )
-)
-_spec = importlib.util.spec_from_file_location("router_decision_under_test", _mod_path)
-_rd = importlib.util.module_from_spec(_spec)
-assert _spec and _spec.loader
-_spec.loader.exec_module(_rd)
-RouterDecision = _rd.RouterDecision
-RouterDecisionAccumulator = _rd.RouterDecisionAccumulator
+from v4.api.router_decision import RouterDecision, RouterDecisionAccumulator
 
 
 def _tc(index=0, name=None, arguments=None):

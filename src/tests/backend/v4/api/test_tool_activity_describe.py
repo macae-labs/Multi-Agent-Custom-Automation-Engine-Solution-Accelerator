@@ -11,7 +11,7 @@ sin aislamiento en el workflow.
 
 import json
 
-from backend.v4.api.tool_activity import describe_tool_call
+from v4.api.tool_activity import describe_tool_call
 
 
 def test_plain_tool_is_unchanged():

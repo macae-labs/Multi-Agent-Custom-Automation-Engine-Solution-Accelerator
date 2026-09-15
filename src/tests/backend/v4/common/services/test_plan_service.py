@@ -11,20 +11,35 @@ This module contains extensive test coverage for:
 """
 
 import pytest
-import os
-import sys
 import asyncio
 import json
 import logging
-import importlib.util
+import v4.common.services.plan_service as plan_service_module
+from v4.common.services.plan_service import PlanService
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.common.services.plan_service parcheados en SU namespace y sólo durante cada
+    test. Antes el módulo se cargaba por ruta de archivo con sus dependencias
+    sustituidas en sys.modules y se registraba así, con Mocks dentro, para
+    todo el proceso (INC-2026-004)."""
+    mod = plan_service_module
+    for name, value in (
+        ('AgentMessageData', mock_messages_af.AgentMessageData),
+        ('AgentMessageType', mock_messages_af.AgentMessageType),
+        ('AgentType', mock_messages_af.AgentType),
+        ('PlanStatus', mock_messages_af.PlanStatus),
+        ('messages', mock_v4_messages),
+        ('orchestration_config', MagicMock(orchestration_config=mock_orchestration_config).orchestration_config),
+        ('DatabaseFactory', mock_database_factory.DatabaseFactory),
+    ):
+        monkeypatch.setattr(mod, name, value)
+
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Any, List
 from dataclasses import dataclass
 
-# Add the src directory to sys.path for proper import
-src_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
-if src_path not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_path))
 
 # Mock Azure modules before importing the PlanService
 azure_ai_module = MagicMock()
@@ -40,21 +55,8 @@ azure_ai_module.projects = azure_ai_projects_module
 azure_ai_projects_module.aio = azure_ai_projects_aio_module
 
 # Inject the mocked modules
-sys.modules["azure"] = MagicMock()
-sys.modules["azure.ai"] = azure_ai_module
-sys.modules["azure.ai.projects"] = azure_ai_projects_module
-sys.modules["azure.ai.projects.aio"] = azure_ai_projects_aio_module
 
 # Mock other problematic modules and imports
-sys.modules["common.models.messages_af"] = MagicMock()
-sys.modules["v4"] = MagicMock()
-sys.modules["v4.common"] = MagicMock()
-sys.modules["v4.common.services"] = MagicMock()
-sys.modules["v4.common.services.team_service"] = MagicMock()
-sys.modules["v4.models"] = MagicMock()
-sys.modules["v4.models.messages"] = MagicMock()
-sys.modules["v4.config"] = MagicMock()
-sys.modules["v4.config.settings"] = MagicMock()
 
 # Mock the config module
 mock_config_module = MagicMock()
@@ -65,15 +67,12 @@ mock_config.DATABASE_TYPE = "memory"
 mock_config.DATABASE_CONNECTION = "test-connection"
 
 mock_config_module.config = mock_config
-sys.modules["common.config.app_config"] = mock_config_module
 
 # Mock database modules
 mock_database_factory = MagicMock()
-sys.modules["common.database.database_factory"] = mock_database_factory
 
 # Mock event utils
 mock_event_utils = MagicMock()
-sys.modules["common.utils.event_utils"] = mock_event_utils
 
 # Create mock message types and enums
 mock_messages_af = MagicMock()
@@ -138,59 +137,17 @@ mock_messages_af.AgentType = MockAgentType
 mock_messages_af.AgentMessageType = MockAgentMessageType
 mock_messages_af.PlanStatus = MockPlanStatus
 mock_messages_af.AgentMessageData = MockAgentMessageData
-sys.modules["common.models.messages_af"] = mock_messages_af
 
 # Create mock v4.models.messages module
 mock_v4_messages = MagicMock()
-sys.modules["v4.models.messages"] = mock_v4_messages
 
 # Now import the real PlanService using direct file import with proper mocking
-import importlib.util
 
 # Mock the orchestration_config
 mock_orchestration_config = MagicMock()
 mock_orchestration_config.plans = {}
 
-with patch.dict(
-    "sys.modules",
-    {
-        "common.models.messages_af": mock_messages_af,
-        "v4.models.messages": mock_v4_messages,
-        "v4.config.settings": MagicMock(orchestration_config=mock_orchestration_config),
-        "common.database.database_factory": mock_database_factory,
-        "common.utils.event_utils": mock_event_utils,
-    },
-):
-    plan_service_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "..",
-        "..",
-        "..",
-        "backend",
-        "v4",
-        "common",
-        "services",
-        "plan_service.py",
-    )
-    plan_service_path = os.path.abspath(plan_service_path)
-    spec = importlib.util.spec_from_file_location(
-        "backend.v4.common.services.plan_service", plan_service_path
-    )
-    plan_service_module = importlib.util.module_from_spec(spec)
 
-    # Set the proper module name for coverage tracking (matching --cov=backend pattern)
-    plan_service_module.__name__ = "backend.v4.common.services.plan_service"
-    plan_service_module.__file__ = plan_service_path
-
-    # Add to sys.modules BEFORE execution for coverage tracking (both variations)
-    sys.modules["backend.v4.common.services.plan_service"] = plan_service_module
-    sys.modules["src.backend.v4.common.services.plan_service"] = plan_service_module
-
-    spec.loader.exec_module(plan_service_module)
-
-PlanService = plan_service_module.PlanService
 build_agent_message_from_user_clarification = (
     plan_service_module.build_agent_message_from_user_clarification
 )
@@ -610,7 +567,7 @@ class TestPlanService:
     def test_logging_integration(self):
         """Test that logging is properly configured."""
         # Verify that the logger is set up correctly
-        logger = logging.getLogger("backend.v4.common.services.plan_service")
+        logger = logging.getLogger("v4.common.services.plan_service")
         assert logger is not None
 
     @pytest.mark.asyncio

@@ -1,54 +1,22 @@
-"""
-Unit tests for backend.app module.
+"""Unit tests for app module.
 
-NOTE: This test module relies on conftest.py for path setup and external module mocking.
-When running the full test suite, modules are imported properly from the backend.
-
-IMPORTANT: This module requires the real v4 package to be importable. Other test files
-that mock v4 at module level (sys.modules['v4'] = Mock()) will cause import failures
-when running the full test suite due to test collection order. If v4 is mocked before
-this file is imported, the tests will be skipped.
+Runs in the same process as the rest of the backend suite: the product is
+imported by its real package names (v4, common, auth, app) and collaborators
+are patched per test. conftest.py sets the environment (Azure Monitor real
+sobre un stub HTTP local, TelemetryStub) — no module-level mocking here.
 """
 
 import pytest
 import sys
-import os
-from unittest.mock import Mock, AsyncMock, patch, NonCallableMock
+from unittest.mock import Mock, AsyncMock, patch
 
 # Environment variables are set by conftest.py, but ensure they're available
 # APPLICATIONINSIGHTS_CONNECTION_STRING la fija conftest.py: apunta al stub HTTP
 # local (TelemetryStub); Azure Monitor real, sin servicios remotos.
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-key")
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT_NAME", "test-deployment")
-os.environ.setdefault("AZURE_OPENAI_API_VERSION", "2024-02-01")
-os.environ.setdefault("PROJECT_CONNECTION_STRING", "test-connection")
-os.environ.setdefault("AZURE_COSMOS_ENDPOINT", "https://test.cosmos.azure.com")
-os.environ.setdefault("AZURE_COSMOS_KEY", "test-key")
-os.environ.setdefault("AZURE_COSMOS_DATABASE_NAME", "test-db")
-os.environ.setdefault("AZURE_COSMOS_CONTAINER_NAME", "test-container")
-os.environ.setdefault("FRONTEND_SITE_NAME", "http://localhost:3000")
-os.environ.setdefault("AZURE_AI_SUBSCRIPTION_ID", "test-subscription-id")
-os.environ.setdefault("AZURE_AI_RESOURCE_GROUP", "test-resource-group")
-os.environ.setdefault("AZURE_AI_PROJECT_NAME", "test-project")
-os.environ.setdefault("AZURE_AI_AGENT_ENDPOINT", "https://test.endpoint.azure.com")
-os.environ.setdefault("APP_ENV", "dev")
-os.environ.setdefault("AZURE_OPENAI_RAI_DEPLOYMENT_NAME", "test-rai-deployment")
-
-# Check if v4 has been mocked by another test file (prevents import errors)
-# Use NonCallableMock to catch all mock subclasses (Mock, MagicMock, etc.)
-_v4_is_mocked = 'v4' in sys.modules and isinstance(sys.modules['v4'], NonCallableMock)
-if _v4_is_mocked:
-    # Skip this module - v4 has been mocked by another test file
-    pytest.skip(
-        "Skipping test_app.py: v4 module has been mocked by another test file. "
-        "Run this file individually with: pytest src/tests/backend/test_app.py",
-        allow_module_level=True
-    )
 
 # Import from backend - conftest.py handles path setup
-from backend.app import app, user_browser_language_endpoint, lifespan
-from backend.common.models.messages_af import UserLanguage
+from app import app, user_browser_language_endpoint, lifespan
+from common.models.messages_af import UserLanguage
 
 
 def test_app_initialization():
@@ -138,8 +106,8 @@ async def test_lifespan_context():
 @pytest.mark.asyncio
 async def test_lifespan_cleanup_exception_handling():
     """Test lifespan context manager exception handling during cleanup."""
-    # Patch at the location where agent_registry is used (backend.app module)
-    import backend.app as app_module
+    # Patch at the location where agent_registry is used (app module)
+    import app as app_module
     original_registry = app_module.agent_registry
     
     try:
@@ -177,8 +145,8 @@ def test_app_has_v4_router():
 @pytest.mark.asyncio
 async def test_lifespan_cleanup_import_error_handling():
     """Test lifespan context manager ImportError handling during cleanup."""
-    # Patch at the location where agent_registry is used (backend.app module)
-    import backend.app as app_module
+    # Patch at the location where agent_registry is used (app module)
+    import app as app_module
     original_registry = app_module.agent_registry
     
     try:
@@ -203,7 +171,7 @@ async def test_lifespan_cleanup_success():
     mock_cleanup = AsyncMock(return_value=None)
     
     # Patch at the module level where it's imported
-    with patch.object(sys.modules.get('v4.config.agent_registry', sys.modules.get('backend.v4.config.agent_registry')), 
+    with patch.object(sys.modules.get('v4.config.agent_registry', sys.modules.get('v4.config.agent_registry')), 
                       'agent_registry') as mock_registry:
         mock_registry.cleanup_all_agents = mock_cleanup
         
@@ -215,7 +183,7 @@ async def test_lifespan_cleanup_success():
 
 def test_frontend_url_config():
     """Test that frontend_url is configured from config."""
-    from backend.app import frontend_url
+    from app import frontend_url
     assert frontend_url is not None
 
 

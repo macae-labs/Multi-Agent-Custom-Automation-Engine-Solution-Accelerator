@@ -1,4 +1,4 @@
-"""Unit tests for backend.v4.magentic_agents.common.lifecycle module."""
+"""Unit tests for v4.magentic_agents.common.lifecycle module."""
 
 import logging
 import sys
@@ -7,33 +7,6 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
 # Mock the dependencies before importing the module under test
-sys.modules["agent_framework"] = Mock()
-sys.modules["agent_framework.azure"] = Mock()
-sys.modules["agent_framework_azure_ai"] = Mock()
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.agents"] = Mock()
-sys.modules["azure.ai.agents.aio"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["common"] = Mock()
-sys.modules["common.config"] = Mock()
-sys.modules["common.config.app_config"] = Mock(config=Mock())
-sys.modules["common.database"] = Mock()
-sys.modules["common.database.database_base"] = Mock()
-sys.modules["common.models"] = Mock()
-sys.modules["common.models.messages_af"] = Mock()
-sys.modules["common.utils"] = Mock()
-sys.modules["common.utils.utils_agents"] = Mock()
-sys.modules["v4"] = Mock()
-sys.modules["v4.common"] = Mock()
-sys.modules["v4.common.services"] = Mock()
-sys.modules["v4.common.services.team_service"] = Mock()
-sys.modules["v4.config"] = Mock()
-sys.modules["v4.config.agent_registry"] = Mock()
-sys.modules["v4.magentic_agents"] = Mock()
-sys.modules["v4.magentic_agents.models"] = Mock()
-sys.modules["v4.magentic_agents.models.agent_models"] = Mock()
 
 # Create mock classes
 mock_chat_agent = Mock()
@@ -50,33 +23,45 @@ mock_agent_registry = Mock()
 mock_mcp_config = Mock()
 
 # Set up the mock modules
-sys.modules["agent_framework"].ChatAgent = mock_chat_agent
-sys.modules["agent_framework"].HostedMCPTool = mock_hosted_mcp_tool
-sys.modules["agent_framework"].MCPStreamableHTTPTool = mock_mcp_streamable_http_tool
-sys.modules["agent_framework_azure_ai"].AzureAIAgentClient = mock_azure_ai_agent_client
-sys.modules["azure.ai.agents.aio"].AgentsClient = mock_agents_client
-sys.modules["azure.identity.aio"].DefaultAzureCredential = mock_default_azure_credential
-sys.modules["common.database.database_base"].DatabaseBase = mock_database_base
-sys.modules["common.models.messages_af"].CurrentTeamAgent = mock_current_team_agent
-sys.modules["common.models.messages_af"].TeamConfiguration = mock_team_configuration
-sys.modules["v4.common.services.team_service"].TeamService = mock_team_service
-sys.modules["v4.config.agent_registry"].agent_registry = mock_agent_registry
-sys.modules["v4.magentic_agents.models.agent_models"].MCPConfig = mock_mcp_config
 
 # Mock utility functions
-sys.modules["common.utils.utils_agents"].generate_assistant_id = Mock(
-    return_value="test-agent-id-123"
-)
-sys.modules["common.utils.utils_agents"].get_database_team_agent_id = AsyncMock(
-    return_value="test-db-agent-id"
-)
 
 # Import the module under test
-from backend.v4.magentic_agents.common.lifecycle import (  # noqa: E402
+from v4.magentic_agents.common.lifecycle import (  # noqa: E402
     MCPEnabledBase,
     AzureAgentBase,
     _definition_fingerprint,
 )
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores del módulo bajo test, parcheados en SU namespace y sólo
+    durante cada test. Antes se mutaban atributos de los módulos REALES en
+    sys.modules a nivel de módulo (MCPConfig, TeamConfiguration, …) y quedaban
+    envenenados para todo el proceso; los nombres que el módulo ya no importa se
+    omiten (eran mutaciones sin efecto sobre este módulo)."""
+    import importlib
+
+    mod = importlib.import_module("v4.magentic_agents.common.lifecycle")
+    for name, value in (
+        ('ChatAgent', mock_chat_agent),
+        ('HostedMCPTool', mock_hosted_mcp_tool),
+        ('MCPStreamableHTTPTool', mock_mcp_streamable_http_tool),
+        ('AzureAIAgentClient', mock_azure_ai_agent_client),
+        ('AgentsClient', mock_agents_client),
+        ('DefaultAzureCredential', mock_default_azure_credential),
+        ('DatabaseBase', mock_database_base),
+        ('CurrentTeamAgent', mock_current_team_agent),
+        ('TeamConfiguration', mock_team_configuration),
+        ('TeamService', mock_team_service),
+        ('agent_registry', mock_agent_registry),
+        ('MCPConfig', mock_mcp_config),
+        ('generate_assistant_id', Mock(return_value='test-agent-id-123')),
+        ('get_database_team_agent_id', AsyncMock(return_value='test-db-agent-id')),
+    ):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, value)
 
 
 class TestMCPEnabledBase:
@@ -181,22 +166,22 @@ class TestMCPEnabledBase:
         mock_mcp_tool = AsyncMock()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.AsyncExitStack",
+            "v4.magentic_agents.common.lifecycle.AsyncExitStack",
             return_value=mock_stack,
         ):
             with patch(
-                "backend.v4.magentic_agents.common.lifecycle.config"
+                "v4.magentic_agents.common.lifecycle.config"
             ) as mock_config:
                 # No user token → open() borrows the process-scoped shared
                 # credential (owned by config, NOT closed by this agent).
                 mock_config.get_shared_async_credential.return_value = mock_creds
                 with patch("aiohttp.TCPConnector", return_value=Mock()):
                     with patch(
-                        "backend.v4.magentic_agents.common.lifecycle.AgentsClient",
+                        "v4.magentic_agents.common.lifecycle.AgentsClient",
                         return_value=mock_client,
                     ):
                         with patch(
-                            "backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+                            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
                             return_value=mock_mcp_tool,
                         ):
                             with patch.object(
@@ -239,16 +224,16 @@ class TestMCPEnabledBase:
         mock_client = AsyncMock()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.AsyncExitStack",
+            "v4.magentic_agents.common.lifecycle.AsyncExitStack",
             return_value=mock_stack,
         ):
             with patch(
-                "backend.v4.magentic_agents.common.lifecycle.config"
+                "v4.magentic_agents.common.lifecycle.config"
             ) as mock_config:
                 mock_config.get_shared_async_credential.return_value = mock_creds
                 with patch("aiohttp.TCPConnector", return_value=Mock()):
                     with patch(
-                        "backend.v4.magentic_agents.common.lifecycle.AgentsClient",
+                        "v4.magentic_agents.common.lifecycle.AgentsClient",
                         return_value=mock_client,
                     ):
                         with patch.object(base, "_after_open", new_callable=AsyncMock):
@@ -408,7 +393,7 @@ class TestMCPEnabledBase:
         mock_new_client = Mock()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.AzureAIClient",
+            "v4.magentic_agents.common.lifecycle.AzureAIClient",
             return_value=mock_new_client,
         ) as mock_client_class:
             result = base.get_chat_client()
@@ -427,7 +412,7 @@ class TestMCPEnabledBase:
         base = MCPEnabledBase()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.generate_assistant_id",
+            "v4.magentic_agents.common.lifecycle.generate_assistant_id",
             return_value="generated-agent-id",
         ):
             result = base.get_agent_id()
@@ -444,7 +429,7 @@ class TestMCPEnabledBase:
         base._agent = mock_agent
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.generate_assistant_id",
+            "v4.magentic_agents.common.lifecycle.generate_assistant_id",
             return_value="generated-agent-id",
         ):
             result = base.get_agent_id()
@@ -457,7 +442,7 @@ class TestMCPEnabledBase:
         base = MCPEnabledBase()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.generate_assistant_id",
+            "v4.magentic_agents.common.lifecycle.generate_assistant_id",
             return_value="new-generated-id",
         ):
             result = base.get_agent_id()
@@ -474,7 +459,7 @@ class TestMCPEnabledBase:
         mock_mcp_tool = AsyncMock()
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
             return_value=mock_mcp_tool,
         ) as mock_tool_class:
             await base._prepare_mcp_tool()
@@ -508,7 +493,7 @@ class TestMCPEnabledBase:
         base._stack = mock_stack
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
             side_effect=Exception("MCP error"),
         ):
             await base._prepare_mcp_tool()
@@ -587,7 +572,7 @@ class TestAzureAgentBase:
 
         # Mock parent close
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
+            "v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
             new_callable=AsyncMock,
         ) as mock_parent_close:
             await base.close()
@@ -628,7 +613,7 @@ class TestAzureAgentBase:
 
         # Mock parent close
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
+            "v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
             new_callable=AsyncMock,
         ) as mock_parent_close:
             # Should not raise exceptions
@@ -648,7 +633,7 @@ class TestAzureAgentBase:
         base.creds = None
 
         with patch(
-            "backend.v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
+            "v4.magentic_agents.common.lifecycle.MCPEnabledBase.close",
             new_callable=AsyncMock,
         ) as mock_parent_close:
             await base.close()

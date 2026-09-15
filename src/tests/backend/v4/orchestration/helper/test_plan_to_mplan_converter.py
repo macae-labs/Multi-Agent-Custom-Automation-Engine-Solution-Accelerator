@@ -4,34 +4,20 @@ Unit tests for plan_to_mplan_converter.py module.
 This module tests the PlanToMPlanConverter class and its functionality for converting
 bullet-style plan text into MPlan objects with agent assignment and action extraction.
 
-IMPORTANT: This module requires the real v4.models.models module to be importable.
-Other test files that mock v4 at module level will cause import failures when running
-the full test suite due to test collection order.
 """
 
 import unittest
-import sys
-from unittest.mock import NonCallableMock
 
-import pytest
 
-# Check if v4 has been mocked by another test file (prevents import errors)
-# Use NonCallableMock to catch all mock subclasses (Mock, MagicMock, etc.)
-_v4_is_mocked = 'v4' in sys.modules and isinstance(sys.modules['v4'], NonCallableMock)
-_v4_models_is_mocked = 'v4.models' in sys.modules and isinstance(sys.modules['v4.models'], NonCallableMock)
-if _v4_is_mocked or _v4_models_is_mocked:
-    pytest.skip(
-        "Skipping test_plan_to_mplan_converter.py: v4 module has been mocked by another test file. "
-        "Run this file individually with: pytest src/tests/backend/v4/orchestration/helper/test_plan_to_mplan_converter.py",
-        allow_module_level=True
-    )
 
 # Environment variables and paths are set by conftest.py
 # Import the models (conftest.py handles path setup)
-from backend.v4.models.models import MPlan, MStep, PlanStatus
+from v4.models.models import MPlan
 
 # Import the converter
-from backend.v4.orchestration.helper.plan_to_mplan_converter import PlanToMPlanConverter
+from v4.orchestration.helper.plan_to_mplan_converter import PlanToMPlanConverter
+
+
 
 
 class TestPlanToMPlanConverter(unittest.TestCase):

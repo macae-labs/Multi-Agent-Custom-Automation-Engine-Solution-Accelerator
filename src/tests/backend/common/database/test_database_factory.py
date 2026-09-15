@@ -1,58 +1,17 @@
 """Unit tests for DatabaseFactory."""
 
 import logging
-import sys
-import os
 from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
-
-# Set required environment variables for testing
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "test_connection_string")
-os.environ.setdefault("APP_ENV", "dev")
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com/")
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "test_key")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT_NAME", "test_deployment")
-os.environ.setdefault("AZURE_AI_SUBSCRIPTION_ID", "test_subscription_id")
-os.environ.setdefault("AZURE_AI_RESOURCE_GROUP", "test_resource_group")
-os.environ.setdefault("AZURE_AI_PROJECT_NAME", "test_project_name")
-os.environ.setdefault("AZURE_AI_AGENT_ENDPOINT", "https://test.agent.azure.com/")
-os.environ.setdefault("COSMOSDB_ENDPOINT", "https://test.documents.azure.com:443/")
-os.environ.setdefault("COSMOSDB_DATABASE", "test_database")
-os.environ.setdefault("COSMOSDB_CONTAINER", "test_container")
-os.environ.setdefault("AZURE_CLIENT_ID", "test_client_id")
-os.environ.setdefault("AZURE_TENANT_ID", "test_tenant_id")
 
 # Only mock external problematic dependencies - do NOT mock internal common.* modules
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.projects"] = Mock()
-sys.modules["azure.ai.projects.aio"] = Mock()
-sys.modules["azure.ai.projects.models"] = Mock()
-sys.modules["azure.ai.projects.models._models"] = Mock()
-sys.modules["azure.cosmos"] = Mock()
-sys.modules["azure.cosmos.aio"] = Mock()
-sys.modules["azure.cosmos.aio._database"] = Mock()
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["azure.keyvault"] = Mock()
-sys.modules["azure.keyvault.secrets"] = Mock()
-sys.modules["azure.keyvault.secrets.aio"] = Mock()
 # Mock v4 modules that may be imported by database components
-sys.modules["v4"] = Mock()
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock()
 
 # Import the REAL modules using backend.* paths for proper coverage tracking
-from backend.common.database.database_factory import DatabaseFactory
-from backend.common.database.database_base import DatabaseBase
-from backend.common.database.cosmosdb import CosmosDBClient
+from common.database.database_factory import DatabaseFactory
+from common.database.database_base import DatabaseBase
+from common.database.cosmosdb import CosmosDBClient
 
 
 class TestDatabaseFactoryInitialization:
@@ -122,10 +81,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ) as mock_cosmos_class:
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 result = await DatabaseFactory.get_database(user_id="test_user")
 
                 # Verify CosmosDBClient was created with correct parameters
@@ -154,7 +113,7 @@ class TestDatabaseFactoryGetDatabase:
         DatabaseFactory._instance = existing_instance
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient"
+            "common.database.database_factory.CosmosDBClient"
         ) as mock_cosmos_class:
             result = await DatabaseFactory.get_database(user_id="test_user")
 
@@ -183,10 +142,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ) as mock_cosmos_class:
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 result = await DatabaseFactory.get_database(
                     user_id="test_user", force_new=True
                 )
@@ -225,10 +184,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ) as mock_cosmos_class:
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 result = await DatabaseFactory.get_database()  # No user_id provided
 
                 # Verify CosmosDBClient was created with empty user_id
@@ -260,10 +219,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ):
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 with pytest.raises(Exception, match="Initialization failed"):
                     await DatabaseFactory.get_database(user_id="test_user")
 
@@ -357,10 +316,10 @@ class TestDatabaseFactoryIntegration:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ) as mock_cosmos_class:
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 # First call
                 result1 = await DatabaseFactory.get_database(user_id="user1")
 
@@ -389,9 +348,9 @@ class TestDatabaseFactoryIntegration:
         mock_config.COSMOSDB_CONTAINER = "test_container"
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
-        with patch("backend.common.database.database_factory.config", mock_config):
+        with patch("common.database.database_factory.config", mock_config):
             with patch(
-                "backend.common.database.database_factory.CosmosDBClient",
+                "common.database.database_factory.CosmosDBClient",
                 return_value=mock_cosmos_client1,
             ):
                 result1 = await DatabaseFactory.get_database(user_id="test_user")
@@ -406,9 +365,9 @@ class TestDatabaseFactoryIntegration:
         mock_cosmos_client2 = Mock(spec=CosmosDBClient)
         mock_cosmos_client2.initialize = AsyncMock()
 
-        with patch("backend.common.database.database_factory.config", mock_config):
+        with patch("common.database.database_factory.config", mock_config):
             with patch(
-                "backend.common.database.database_factory.CosmosDBClient",
+                "common.database.database_factory.CosmosDBClient",
                 return_value=mock_cosmos_client2,
             ):
                 result2 = await DatabaseFactory.get_database(user_id="test_user")
@@ -434,10 +393,10 @@ class TestDatabaseFactoryIntegration:
         mock_config.COSMOSDB_CONTAINER = "test_container"
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
-        with patch("backend.common.database.database_factory.config", mock_config):
+        with patch("common.database.database_factory.config", mock_config):
             # Create singleton instance
             with patch(
-                "backend.common.database.database_factory.CosmosDBClient",
+                "common.database.database_factory.CosmosDBClient",
                 return_value=mock_cosmos_client1,
             ):
                 singleton = await DatabaseFactory.get_database(user_id="user1")
@@ -445,7 +404,7 @@ class TestDatabaseFactoryIntegration:
 
             # Create force_new instance
             with patch(
-                "backend.common.database.database_factory.CosmosDBClient",
+                "common.database.database_factory.CosmosDBClient",
                 return_value=mock_cosmos_client2,
             ):
                 force_new = await DatabaseFactory.get_database(
@@ -492,10 +451,10 @@ class TestDatabaseFactoryConfigurationHandling:
         mock_config.get_azure_credentials.return_value = mock_credentials
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ) as mock_cosmos_class:
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 await DatabaseFactory.get_database(user_id="custom_user")
 
                 # Verify all config values were passed correctly
@@ -522,7 +481,7 @@ class TestDatabaseFactoryConfigurationHandling:
         mock_config.COSMOSDB_CONTAINER = "test_container"
         mock_config.get_azure_credentials.side_effect = Exception("Credential error")
 
-        with patch("backend.common.database.database_factory.config", mock_config):
+        with patch("common.database.database_factory.config", mock_config):
             with pytest.raises(Exception, match="Credential error"):
                 await DatabaseFactory.get_database(user_id="test_user")
 
@@ -537,7 +496,7 @@ class TestDatabaseFactoryLogging:
         """Test that logger is properly configured."""
         logger = DatabaseFactory._logger
         assert isinstance(logger, logging.Logger)
-        assert logger.name == "backend.common.database.database_factory"
+        assert logger.name == "common.database.database_factory"
 
     def test_logger_is_class_attribute(self):
         """Test that logger is a class attribute and consistent."""
@@ -569,10 +528,10 @@ class TestDatabaseFactoryErrorHandling:
         mock_config.get_azure_credentials.return_value = "mock_credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             side_effect=Exception("Client creation failed"),
         ):
-            with patch("backend.common.database.database_factory.config", mock_config):
+            with patch("common.database.database_factory.config", mock_config):
                 with pytest.raises(Exception, match="Client creation failed"):
                     await DatabaseFactory.get_database(user_id="test_user")
 
@@ -590,7 +549,7 @@ class TestDatabaseFactoryErrorHandling:
         mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.get_azure_credentials.side_effect = Exception("Config error")
 
-        with patch("backend.common.database.database_factory.config", mock_config):
+        with patch("common.database.database_factory.config", mock_config):
             with pytest.raises(Exception):
                 await DatabaseFactory.get_database()
 
@@ -608,10 +567,10 @@ class TestDatabaseFactoryErrorHandling:
         good_config.get_azure_credentials.return_value = "credentials"
 
         with patch(
-            "backend.common.database.database_factory.CosmosDBClient",
+            "common.database.database_factory.CosmosDBClient",
             return_value=mock_cosmos_client,
         ):
-            with patch("backend.common.database.database_factory.config", good_config):
+            with patch("common.database.database_factory.config", good_config):
                 result = await DatabaseFactory.get_database()
                 assert result is mock_cosmos_client
                 assert DatabaseFactory._instance is mock_cosmos_client
