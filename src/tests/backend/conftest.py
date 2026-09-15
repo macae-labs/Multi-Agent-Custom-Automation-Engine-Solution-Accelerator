@@ -305,6 +305,28 @@ def _patch_azure_ai_projects_models():
 
 # Set up environment and minimal mocks before any test imports
 _setup_environment_variables()
+
+
+@pytest.fixture(autouse=True)
+def _no_interactive_credential_under_pytest(monkeypatch):
+    """INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (INC-2026-002).
+
+    Con APP_ENV=dev, get_authenticated_user_details llama
+    _dev_acquire_user_token cuando la petición no trae access token, y sin
+    MACAE_DEV_OBO_TOKEN eso abre DeviceCodeCredential: un login interactivo que
+    espera a un humano. En CI quedó 33 min colgado. Aquí se convierte en un
+    fallo inmediato con nombre: el test debe llevar el token como lo inyecta
+    EasyAuth (x-ms-token-aad-access-token)."""
+    import auth.auth_utils as auth_utils
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError(
+            "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST: la petición del test no "
+            "trae access token y la cadena de auth intentó DeviceCodeCredential. "
+            "Añade x-ms-token-aad-access-token (o Authorization) al scope."
+        )
+
+    monkeypatch.setattr(auth_utils, "_dev_acquire_user_token", _fail)
 _setup_agent_framework_mock()
 _setup_azure_monitor_mock()
 
