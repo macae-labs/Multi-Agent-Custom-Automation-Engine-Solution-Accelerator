@@ -1,0 +1,263 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-001",
+  "domain": "runtime",
+  "status": "closed",
+  "invariant": {
+    "id": "INV-TOOL-DEEDS-NEVER-MODEL-PROSE-BUT-ALWAYS-EVIDENCE",
+    "statement": "El modelo nunca recibe deeds de tools como prosa propia (content) y nunca queda sin evidencia atribuida al sistema de las ejecuciones reales de la sesión."
+  },
+  "signature": {
+    "family": "semantic_contradiction",
+    "id": "SIG-continuity-contradicts-real-tool-execution",
+    "structural_match": {
+      "router_decision_current_turn": "<none>",
+      "previous_assistant_turn_has_metadata_turn_log": true,
+      "current_answer_contradicts_previous_deed": true,
+      "contradiction_kind": [
+        "fabricated_tool_output",
+        "fabricated_retraction"
+      ]
+    }
+  },
+  "env_fingerprint": {
+    "where": "local",
+    "env_names_present": [
+      "APP_ENV",
+      "AZURE_AI_PROJECT_ENDPOINT",
+      "AZURE_AI_SEARCH_ENDPOINT",
+      "COSMOSDB_ENDPOINT",
+      "MACAE_MCP_PUBLIC_ENDPOINT",
+      "MCP_SERVER_ENDPOINT",
+      "MACAE_DEV_OBO_TOKEN"
+    ],
+    "env_names_absent_vs_reference": [
+      "ENABLE_OBO"
+    ],
+    "credential_mode": "az_login",
+    "dotenv_present": true,
+    "network_scope": "egress_allowed",
+    "replicas": 1,
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "48c39d0b",
+      "dirty": false
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion",
+      "destructive",
+      "external_side_effect"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "description": "Lectura de logs del backend (Router decision: function=<none> ×3) y del documento de sesión en Cosmos con content conteniendo [turn-log]."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Edición en rama de trabajo: ledger → metadata.turn_log, _strip_turn_log_block en recover, compuerta de stream en _RouterChatClient.invoke, _make_deed/_tool_deeds_note."
+    },
+    {
+      "stage": "validate",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Probe E2E turnlog_probe_117.py contra backend local :8010 (APP_ENV=dev, az login) con oid real por header; sesiones de prueba locales."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-14T02:37:44Z",
+      "executed_at": "2026-09-14T02:37:44Z",
+      "description": "PR #207 (fix clase 2: ledger→metadata, strip en recover, compuerta de stream) squash 48c39d0b. Aprobación = clic de merge."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-14T04:38:37Z",
+      "executed_at": "2026-09-14T04:38:37Z",
+      "description": "PR #208 (fix clase 3: deeds estructurados + evidencia system en recover) squash da29a711. Aprobación = clic de merge."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 4,
+    "used": 2,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Lista de commits con 4/6 SHAs inexistentes y bloque [turn-log] en la respuesta sin ninguna tool ejecutada; tras el primer fix, respuesta correcta seguida de retractación falsa ('ese SHA lo inventé').",
+    "candidate_causes": [
+      "Router elige <none> por instrucción de anclaje demasiado restrictiva",
+      "Historial recuperado contiene [turn-log] persistido en content y el modelo lo imita como prosa propia",
+      "Índice de AI Search devuelve turnos de otras sesiones con SHAs viejos",
+      "Sin evidencia de ejecución en el contexto recuperado, el modelo desconoce sus propios resultados (retractación)"
+    ],
+    "discriminating_probe": {
+      "class": "write-scratch",
+      "command_or_test": "PROBE_UID=<oid real> python turnlog_probe.py http://localhost:8010 <sha_esperado> <log_uvicorn>  (S1 compuerta, S2 tool real GitHub, S3 continuidad sin retractación, S4 documento Cosmos)",
+      "cwd": "docs/incidents/probes",
+      "env_requirements": [
+        "APP_ENV=dev",
+        "ENABLE_OBO ausente",
+        "az login de usuario con Azure AI Developer",
+        "backend local en :8010 (nunca :8000)",
+        "PROBE_UID=oid real (con un user_id inventado tool-box no tiene conexión: es por usuario)"
+      ],
+      "expected_signal_when_failing": "S1: texto con '[turn-log]' sin tool_activity; o S3: respuesta que niega la ejecución de S2.",
+      "expected_signal_when_healthy": "S1 sin marcador; S2 tool_activity real; S3 devuelve sólo el SHA sin retractación; S4 content sin marcador y metadata.turn_log presente."
+    },
+    "confirmed_cause": {
+      "statement": "Clase 2: el ledger se persistía dentro de content, se indexaba en AI Search y _recover_session_context lo reinyectaba verbatim como assistant → imitación sin tools. Clase 3: al retirar los deeds de content, el contexto recuperado quedó sin evidencia de ejecución → retractación fabricada.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "Logs 'Router decision: function=<none>' ×3 con [turn-log] en salida; chats nuevos sin historial no reproducían; probe S3 reprodujo la retractación con deeds ausentes y dejó de reproducirla con _tool_deeds_note."
+    },
+    "false_leads": [
+      {
+        "hypothesis": "El anclaje del system prompt del router impedía elegir capability",
+        "discarded_by": "Chat nuevo (sin historial con [turn-log]) elegía run_macae_mcp_server correctamente con el mismo prompt del sistema.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "Recortar el ledger a [:1000] caracteres bastaba",
+        "discarded_by": "El defecto era de ubicación (content vs metadata) y de atribución (assistant vs system), no de tamaño; el recorte silencioso además ocultaba evidencia.",
+        "side_effect_kept": "Deeds estructurados con cotas explícitas y flag truncated (_make_deed, _LEDGER_MAX_DEEDS=16, turn_log_dropped)."
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "48c39d0b",
+      "commit_or_pr": "#207 (rama b9817edd → squash 48c39d0b) + #208 (rama a77c80cf → squash da29a711)",
+      "etag_or_dirty": "clean"
+    },
+    "changed_paths": [
+      "src/backend/v4/api/router.py",
+      "src/tests/backend/v4/api/test_context_recovery_probe.py"
+    ],
+    "new_functions_introduced": [
+      "_strip_turn_log_block",
+      "_make_deed",
+      "_tool_deeds_note"
+    ],
+    "justification_if_new_functions": "La causa exige separar tres responsabilidades que antes no existían: sanear content heredado, estructurar el deed sin recortes silenciosos, y atribuir la evidencia al sistema en recover."
+  },
+  "validate": {
+    "closing_layer": "L6",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "ruff check/format limpios; import de v4.api.router real en el test aislado.",
+        "ref": "test.yml paso probe aislado"
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "Probe aislado: strip contract, recover limpia Cosmos y Search, replay de deeds como system, deeds sin recortes silenciosos, compuerta de stream con marcador partido (9 tests en #208; 10 desde #209).",
+        "ref": "src/tests/backend/v4/api/test_context_recovery_probe.py"
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Suite backend completa 902 passed con --cov-append.",
+        "ref": "test.yml"
+      },
+      "L3": {
+        "result": "n/a",
+        "observed": "No hubo cambio de contrato HTTP/SSE; el evento token/tool_activity/done no cambió de forma."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin dependencia nueva ni cambio de integración externa."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin cambio de UI."
+      },
+      "L6": {
+        "result": "pass",
+        "observed": "Probe local con oid real 4/4: S1 sin marcador, S2 tool real (SHA real), S3 sólo el SHA sin retractación, S4 documento Cosmos con content limpio y metadata.turn_log. Reverificado 2026-09-14T22:21:09Z contra HEAD 982aa925: 4/4 (S2 devolvió 982aa92, S3 sólo el SHA).",
+        "ref": "docs/incidents/probes/turnlog_probe.py"
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "Backend rev 117/118 sólo salud + logs; el carril de identidad no cambió (ver lanes_not_covered)."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Retirar la reinyección de _tool_deeds_note en _recover_session_context vuelve a producir la retractación en S3 del probe; retirar _strip_turn_log_block vuelve a hacer fallar test_recovered_session_history_keeps_prose_and_drops_turn_log."
+    }
+  },
+  "monitor": {
+    "new_revision_at_zero_traffic": true,
+    "direct_probe_by_fqdn": {
+      "class": "read-only",
+      "command_or_test": "GET /config (app) y GET /healthz (HealthCheckMiddleware) por FQDN de la revisión + az containerapp logs show --revision",
+      "expected_signal_when_failing": "/config o /healthz != 200, o excepciones en los logs de la revisión",
+      "expected_signal_when_healthy": "200 y arranque limpio"
+    },
+    "health_logs_latency_errors_checked": true,
+    "traffic_promoted_by_human_at": null
+  },
+  "lanes_not_covered": [
+    "Chat SSE en la revisión canary con identidad de usuario real: con token app-only _bearer hace OBO y muere (AADSTS50058); el probe sólo cubre backend local con az login.",
+    "Rama mcp_call que expone TOOL ERROR en vez de vacío (diferida, rechazada por el usuario; no reaplicar sin pedir)."
+  ],
+  "residual_risk": [
+    "Documentos legados en Cosmos/Search conservan [turn-log] en content; se sanean en lectura, no se migraron.",
+    "La compuerta de stream trunca al marcador: una respuesta íntegramente fabricada queda vacía y cae a _execute_responses (comportamiento deseado, pero con coste de un round-trip extra)."
+  ],
+  "learn": {
+    "retrieval_keys": [
+      "fabrication over voids",
+      "[turn-log] en content",
+      "retractación fabricada",
+      "Router decision <none> con SHAs",
+      "deeds como evidencia system"
+    ],
+    "executable_probe": {
+      "class": "write-scratch",
+      "command_or_test": "uv run --project src/backend pytest src/tests/backend/v4/api/test_context_recovery_probe.py -q  (L1)  +  cd docs/incidents/probes && PROBE_UID=<oid> python turnlog_probe.py http://localhost:8010 <sha> <log>  (L6)",
+      "cwd": "repo root / docs/incidents/probes",
+      "env_requirements": [
+        "APP_ENV=dev",
+        "az login",
+        "backend local :8010"
+      ],
+      "expected_signal_when_failing": "cualquier test del probe en rojo o S1/S3 con marcador/retractación",
+      "expected_signal_when_healthy": "tests verdes y probe 4/4"
+    },
+    "last_verified": "2026-09-14T22:21:09Z",
+    "expires_if_not_reverified_by": "2026-12-13T22:21:09Z",
+    "operational": true
+  }
+}

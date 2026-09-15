@@ -1,0 +1,791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "macae/incident/v1",
+  "title": "MACAE incident artifact (one entry = one structural signature)",
+  "description": "Artefacto único y versionado del ciclo observe→detect→diagnose→propose→patch→validate→compare→commit→monitor→learn. Una entrada representa UNA firma estructural, no una conversación ni una solución. Invariantes de esquema: (1) autoridad = acción × radio × reversibilidad; la firma sólo fija el techo por defecto y ese techo se fija ANTES de Diagnose. (2) Toda acción de clase write-shared implica human_required=true antes de ejecutarse, incluso durante Diagnose. (3) Una entrada cuya sonda ejecutable ya no reproduce pasa a expired/needs_revalidation y NO participa en retrieval operacional. (4) Compare exige control negativo: revertir el parche debe volver a fallar la sonda. Codificados además: status=open ⇒ patch/compare opcionales; status histórico ⇒ learn.operational=false; acción con human_required ejecutada sin human_approved_at ⇒ violation obligatoria.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "incident_id",
+    "domain",
+    "status",
+    "invariant",
+    "signature",
+    "env_fingerprint",
+    "authority_ceiling",
+    "actions",
+    "probe_budget",
+    "diagnose",
+    "validate",
+    "lanes_not_covered",
+    "residual_risk",
+    "learn"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "incident_id": {
+      "type": "string",
+      "pattern": "^INC-[0-9]{4}-[0-9]{3}$"
+    },
+    "domain": {
+      "enum": [
+        "tests",
+        "runtime",
+        "canary",
+        "ui"
+      ]
+    },
+    "status": {
+      "enum": [
+        "open",
+        "closed",
+        "expired",
+        "needs_revalidation"
+      ],
+      "description": "expired/needs_revalidation ⇒ excluida del retrieval operacional (ver learn)."
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "statement"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^INV-[A-Z0-9-]+$"
+        },
+        "statement": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "description": "Firma ESTRUCTURAL: identidad por eventos/estado, nunca por texto libre ni por reloj. El reloj sólo dispara la captura.",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "id",
+        "structural_match"
+      ],
+      "properties": {
+        "family": {
+          "enum": [
+            "process_hang",
+            "gate_failure",
+            "runtime_exception",
+            "semantic_contradiction",
+            "stale_state",
+            "latency_regression",
+            "tool_failure"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^SIG-[a-z0-9-]+$"
+        },
+        "structural_match": {
+          "type": "object",
+          "description": "Pares observable→valor que identifican la firma. Sin prosa.",
+          "minProperties": 2,
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "array"
+            ]
+          }
+        },
+        "clock_trigger": {
+          "type": "string",
+          "description": "Instrumento de captura (p.ej. 'timeout -s ABRT 300'); NO es criterio de identidad ni de corrección."
+        }
+      }
+    },
+    "env_fingerprint": {
+      "type": "object",
+      "description": "Huella del entorno donde se OBSERVÓ la firma. Nombres, nunca valores. Dos ejecuciones sólo son comparables si la huella coincide.",
+      "additionalProperties": false,
+      "required": [
+        "where",
+        "env_names_present",
+        "credential_mode",
+        "dotenv_present",
+        "network_scope"
+      ],
+      "properties": {
+        "where": {
+          "enum": [
+            "local",
+            "ci",
+            "canary_revision",
+            "prod"
+          ]
+        },
+        "env_names_present": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env_names_absent_vs_reference": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "credential_mode": {
+          "enum": [
+            "easyauth_token",
+            "static_dev_token",
+            "az_login",
+            "managed_identity",
+            "device_code",
+            "none"
+          ]
+        },
+        "dotenv_present": {
+          "type": "boolean"
+        },
+        "network_scope": {
+          "enum": [
+            "loopback_only",
+            "egress_allowed",
+            "vnet"
+          ]
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "string"
+        },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "base_sha": {
+              "type": "string"
+            },
+            "dirty": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "authority_ceiling": {
+      "type": "object",
+      "description": "Fijado ANTES de Diagnose. La firma pone el techo por defecto; cada acción concreta se evalúa además por radio × reversibilidad y no puede exceder el techo.",
+      "additionalProperties": false,
+      "required": [
+        "fixed_before_diagnose",
+        "max_level",
+        "max_action_class_without_human"
+      ],
+      "properties": {
+        "fixed_before_diagnose": {
+          "const": true
+        },
+        "max_level": {
+          "enum": [
+            "observe_only",
+            "propose",
+            "patch_and_pr",
+            "never_autonomous"
+          ]
+        },
+        "max_action_class_without_human": {
+          "enum": [
+            "read-only",
+            "write-scratch"
+          ]
+        },
+        "human_required_for": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "write-shared",
+              "merge",
+              "traffic_promotion",
+              "destructive",
+              "external_side_effect"
+            ]
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "description": "Toda acción ejecutada en cualquier etapa (sondas incluidas). write-shared ⇒ human_required=true y human_approved_at antes de executed_at.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "class",
+          "blast_radius",
+          "reversible",
+          "human_required",
+          "description"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "observe",
+              "detect",
+              "diagnose",
+              "propose",
+              "patch",
+              "validate",
+              "compare",
+              "commit",
+              "monitor",
+              "learn"
+            ]
+          },
+          "class": {
+            "enum": [
+              "read-only",
+              "write-scratch",
+              "write-shared"
+            ]
+          },
+          "blast_radius": {
+            "enum": [
+              "none",
+              "own_scratch",
+              "shared_dev",
+              "shared_prod_data",
+              "shared_prod_traffic"
+            ]
+          },
+          "reversible": {
+            "type": "boolean"
+          },
+          "human_required": {
+            "type": "boolean"
+          },
+          "human_approved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "executed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "violation": {
+            "type": "string",
+            "description": "Registro explícito si la acción excedió el techo (aprendizaje, no ocultación)."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "class": {
+                  "const": "write-shared"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "human_required": {
+                  "const": true
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "human_required": {
+                  "const": true
+                },
+                "human_approved_at": {
+                  "type": "null"
+                },
+                "executed_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "executed_at"
+              ]
+            },
+            "then": {
+              "required": [
+                "violation"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "probe_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_probes",
+        "used"
+      ],
+      "properties": {
+        "max_probes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exhausted_outcome": {
+          "enum": [
+            "undiagnosed_escalated",
+            null
+          ]
+        }
+      }
+    },
+    "diagnose": {
+      "type": "object",
+      "description": "Prohibido proponer sin sonda discriminante ejecutada. Las pistas falsas se registran con el mismo peso que la causa.",
+      "additionalProperties": false,
+      "required": [
+        "symptom",
+        "candidate_causes",
+        "discriminating_probe",
+        "confirmed_cause",
+        "false_leads"
+      ],
+      "properties": {
+        "symptom": {
+          "type": "string"
+        },
+        "candidate_causes": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "discriminating_probe": {
+          "$ref": "#/$defs/executable_probe"
+        },
+        "confirmed_cause": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "statement",
+            "confirmed_by_signal",
+            "evidence_ref"
+          ],
+          "properties": {
+            "statement": {
+              "type": "string"
+            },
+            "confirmed_by_signal": {
+              "const": true
+            },
+            "evidence_ref": {
+              "type": "string"
+            }
+          }
+        },
+        "false_leads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "hypothesis",
+              "discarded_by",
+              "side_effect_kept"
+            ],
+            "properties": {
+              "hypothesis": {
+                "type": "string"
+              },
+              "discarded_by": {
+                "type": "string"
+              },
+              "side_effect_kept": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Si la pista falsa dejó una mejora legítima (p.ej. validación hermética), se anota AQUÍ, nunca como causa."
+              }
+            }
+          }
+        }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "description": "Mínimo que restaura el invariante. Edición con identidad: superficie (Monaco/GitHub/MCP) es irrelevante; la identidad es el contrato.",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "changed_paths",
+        "new_functions_introduced",
+        "justification_if_new_functions"
+      ],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "branch",
+            "base_sha",
+            "commit_or_pr"
+          ],
+          "properties": {
+            "workspace_id": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "base_sha": {
+              "type": "string"
+            },
+            "commit_or_pr": {
+              "type": "string"
+            },
+            "etag_or_dirty": {
+              "type": "string"
+            }
+          }
+        },
+        "changed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "lines_changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "new_functions_introduced": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "justification_if_new_functions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "validate": {
+      "type": "object",
+      "description": "Capas herméticas; no se sube con la anterior en rojo; n/a explícito; cada capa declara QUÉ observó.",
+      "additionalProperties": false,
+      "required": [
+        "closing_layer",
+        "layers"
+      ],
+      "properties": {
+        "closing_layer": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3",
+            "L4",
+            "L5",
+            "L6",
+            "L7"
+          ]
+        },
+        "layers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "L0",
+            "L1",
+            "L2",
+            "L3",
+            "L4",
+            "L5",
+            "L6",
+            "L7"
+          ],
+          "properties": {
+            "L0": {
+              "$ref": "#/$defs/layer"
+            },
+            "L1": {
+              "$ref": "#/$defs/layer"
+            },
+            "L2": {
+              "$ref": "#/$defs/layer"
+            },
+            "L3": {
+              "$ref": "#/$defs/layer"
+            },
+            "L4": {
+              "$ref": "#/$defs/layer"
+            },
+            "L5": {
+              "$ref": "#/$defs/layer"
+            },
+            "L6": {
+              "$ref": "#/$defs/layer"
+            },
+            "L7": {
+              "$ref": "#/$defs/layer"
+            }
+          }
+        }
+      }
+    },
+    "compare": {
+      "type": "object",
+      "description": "Misma repro, misma huella, sin fallo, misma función. Control negativo OBLIGATORIO: revertir el parche vuelve a fallar la sonda.",
+      "additionalProperties": false,
+      "required": [
+        "same_repro",
+        "same_env_fingerprint",
+        "failure_absent_after_patch",
+        "functional_behavior_unchanged",
+        "negative_control"
+      ],
+      "properties": {
+        "same_repro": {
+          "const": true
+        },
+        "same_env_fingerprint": {
+          "const": true
+        },
+        "failure_absent_after_patch": {
+          "const": true
+        },
+        "functional_behavior_unchanged": {
+          "const": true
+        },
+        "negative_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "performed",
+            "reverting_patch_reproduces_failure",
+            "how"
+          ],
+          "properties": {
+            "performed": {
+              "const": true
+            },
+            "reverting_patch_reproduces_failure": {
+              "const": true
+            },
+            "how": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "monitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "new_revision_at_zero_traffic": {
+          "type": "boolean"
+        },
+        "direct_probe_by_fqdn": {
+          "$ref": "#/$defs/executable_probe"
+        },
+        "health_logs_latency_errors_checked": {
+          "type": "boolean"
+        },
+        "traffic_promoted_by_human_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "lanes_not_covered": {
+      "type": "array",
+      "description": "Carriles que las sondas/capas NO validaron. Obligatorio aunque esté vacío, para que 'sano' no se venda como 'validado'.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "residual_risk": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "learn": {
+      "type": "object",
+      "description": "Retrieval operacional sólo si status ∈ {open, closed} y la sonda ejecutable sigue reproduciendo. Si no corre ⇒ expired/needs_revalidation (histórico, no operativo).",
+      "additionalProperties": false,
+      "required": [
+        "retrieval_keys",
+        "executable_probe",
+        "last_verified",
+        "expires_if_not_reverified_by",
+        "operational"
+      ],
+      "properties": {
+        "retrieval_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "executable_probe": {
+          "$ref": "#/$defs/executable_probe"
+        },
+        "last_verified": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_if_not_reverified_by": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "operational": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "executable_probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class",
+        "command_or_test",
+        "expected_signal_when_failing",
+        "expected_signal_when_healthy"
+      ],
+      "properties": {
+        "class": {
+          "enum": [
+            "read-only",
+            "write-scratch",
+            "write-shared"
+          ]
+        },
+        "command_or_test": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_signal_when_failing": {
+          "type": "string"
+        },
+        "expected_signal_when_healthy": {
+          "type": "string"
+        }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result",
+        "observed"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "n/a"
+          ]
+        },
+        "observed": {
+          "type": "string",
+          "description": "Qué se observó, no sólo si pasó. Para n/a: por qué no aplica."
+        },
+        "ref": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "closed",
+              "expired",
+              "needs_revalidation"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "patch",
+          "compare"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "expired",
+              "needs_revalidation"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "learn": {
+            "properties": {
+              "operational": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

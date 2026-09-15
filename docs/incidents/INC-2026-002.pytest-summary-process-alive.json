@@ -1,0 +1,267 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-002",
+  "domain": "tests",
+  "status": "closed",
+  "invariant": {
+    "id": "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST",
+    "statement": "Ninguna credencial interactiva (DeviceCode/Interactive) entra en la cadena de autenticación mientras corre pytest; el proceso termina cuando pytest imprime el resumen."
+  },
+  "signature": {
+    "family": "process_hang",
+    "id": "SIG-pytest-summary-printed-process-alive",
+    "structural_match": {
+      "step_last_stdout_event": "pytest summary line of the PREVIOUS command (N passed)",
+      "next_pytest_process_started": true,
+      "next_pytest_process_stdout": "none (con -q no imprime hasta el primer test)",
+      "orphan_processes_at_cancel": [
+        "uv",
+        "python3"
+      ],
+      "faulthandler_top_frame_contains": [
+        "auth_utils._dev_acquire_user_token",
+        "DeviceCodeCredential.get_token",
+        "acquire_token_by_device_flow"
+      ],
+      "blocked_thread": "main (MSAL device flow), no un worker no-daemon"
+    },
+    "clock_trigger": "timeout -s ABRT <N> python -X faulthandler -m pytest … (el reloj sólo dispara el volcado; no identifica ni corrige)"
+  },
+  "env_fingerprint": {
+    "where": "ci",
+    "env_names_present": [
+      "PYTHONPATH",
+      "APP_ENV",
+      "AZURE_AI_SUBSCRIPTION_ID",
+      "AZURE_AI_RESOURCE_GROUP",
+      "AZURE_AI_PROJECT_NAME",
+      "AZURE_AI_AGENT_ENDPOINT",
+      "AZURE_OPENAI_ENDPOINT",
+      "AZURE_COSMOS_ENDPOINT",
+      "APPLICATIONINSIGHTS_CONNECTION_STRING"
+    ],
+    "env_names_absent_vs_reference": [
+      "MACAE_DEV_OBO_TOKEN"
+    ],
+    "credential_mode": "device_code",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed",
+    "revision": "GitHub Actions run 34817559323",
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "da29a711",
+      "dirty": false
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion",
+      "destructive",
+      "external_side_effect"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "description": "Log del job CI: '29 passed' impreso, step sigue 33 min sin salida; local mismo comando termina."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": null,
+      "description": "git worktree limpio SIN .env + timeout -s ABRT + python -X faulthandler -m pytest; volcado de hilos y árbol de procesos."
+    },
+    {
+      "stage": "propose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "description": "Propuesta previa (agente) de neutralizar configure_azure_monitor y vaciar APPLICATIONINSIGHTS_CONNECTION_STRING en test.yml — emitida SIN sonda discriminante; descartada al medir. Registrada como violación de método, no de autoridad.",
+      "violation": "Propose antes de Diagnose (sin sonda ejecutada). Fue la pista falsa; costó ~40 min."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Tests que tocan _extract_auth llevan x-ms-token-aad-access-token en el scope (EasyAuth lo inyecta siempre en prod). Además: Azure Monitor real sobre TelemetryStub local en conftest (asignación explícita de la connection string, statsbeat/controlplane off) y dos tests de identidad de exportación/cierre."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-14T09:21:35Z",
+      "executed_at": "2026-09-14T09:21:35Z",
+      "description": "PR #209 squash 982aa925 a main (fix del invariante + abort por identidad + TelemetryStub). Aprobación = clic de merge."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Guardián del invariante en conftest (fixture autouse): _dev_acquire_user_token bajo pytest levanta AssertionError con el nombre del invariante en vez de abrir DeviceCodeCredential. Control negativo ejecutado: sin el header el test falla en ~1 s con INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (antes: cuelgue)."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "El step 'Run tests with coverage' imprime '29 passed in 1.76s' y no termina (33 min) en CI; local termina en segundos.",
+    "candidate_causes": [
+      "Worker no-daemon del exportador de Azure Monitor / QuickPulse esperando al servicio remoto en el cierre del intérprete",
+      "Teardown de asyncio con tarea colgante",
+      "DeviceCodeCredential interactivo alcanzado por algún test que llama _extract_auth sin token con APP_ENV=dev"
+    ],
+    "discriminating_probe": {
+      "class": "write-scratch",
+      "command_or_test": "git worktree add /tmp/wt HEAD && cd /tmp/wt/src/backend && uv sync --frozen && timeout -s ABRT 120 .venv/bin/python -X faulthandler -m pytest ../../src/tests/backend/v4/api/test_context_recovery_probe.py -q; echo exit=$?",
+      "cwd": "worktree limpio (sin .env). NO usar 'uv run': no reenvía SIGABRT y no hay volcado. El archivo que cuelga es el probe aislado, no test_app.py (que sí terminó).",
+      "env_requirements": [
+        "sin .env",
+        "sin MACAE_DEV_OBO_TOKEN",
+        "APP_ENV=dev (lo fija conftest)"
+      ],
+      "expected_signal_when_failing": "Volcado de faulthandler con frame en auth_utils._dev_acquire_user_token → DeviceCodeCredential.get_token → acquire_token_by_device_flow.",
+      "expected_signal_when_healthy": "pytest termina; exit code 0 antes del timeout; sin frames de credencial interactiva en ningún volcado."
+    },
+    "confirmed_cause": {
+      "statement": "Un test invoca _extract_auth sin x-ms-token-aad-access-token ni Authorization con APP_ENV=dev → auth_utils._dev_acquire_user_token → DeviceCodeCredential espera a un humano. Local no lo ve porque .env trae MACAE_DEV_OBO_TOKEN. Con -q pytest no imprime hasta el primer test, por eso el log parecía colgado 'entre comandos'.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "Volcado faulthandler en worktree sin .env: stack en acquire_token_by_device_flow; huella local vs CI difiere exactamente en MACAE_DEV_OBO_TOKEN."
+    },
+    "false_leads": [
+      {
+        "hypothesis": "Azure Monitor (exportador/QuickPulse) mantenía hilos no-daemon vivos al cerrar",
+        "discarded_by": "Volcado de faulthandler: el hilo principal estaba en MSAL device flow, sin frames del exportador; además bajo pytest Azure Monitor estaba neutralizado por _setup_azure_monitor_mock (no había exportadores que colgar).",
+        "side_effect_kept": "Validación hermética mejorada: SDK de Azure Monitor real sobre TelemetryStub local (conftest), asignación explícita de APPLICATIONINSIGHTS_CONNECTION_STRING (el .env real enviaba telemetría de tests a producción), statsbeat/controlplane apagados, force_flush por procesador, y dos tests que observan qué recibió el exportador y qué hilos no-daemon quedan tras shutdown. Mejora legítima; NO causa del hang."
+      },
+      {
+        "hypothesis": "Tarea asyncio colgante en teardown",
+        "discarded_by": "El volcado no mostró el loop de asyncio bloqueado; el hilo principal estaba en MSAL device flow.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "da29a711",
+      "commit_or_pr": "#209 (982aa925)",
+      "etag_or_dirty": "clean"
+    },
+    "changed_paths": [
+      "src/tests/backend/v4/api/test_context_recovery_probe.py",
+      "src/tests/backend/conftest.py",
+      "src/tests/backend/test_app.py"
+    ],
+    "new_functions_introduced": [
+      "_no_interactive_credential_under_pytest (fixture autouse)",
+      "TelemetryStub",
+      "telemetry_stub (fixture)",
+      "_flush_all_span_processors"
+    ],
+    "justification_if_new_functions": "El fix del invariante es sólo el header de token en el scope (probe). El guardián autouse lo convierte en fallo rápido con nombre (riesgo residual cerrado). TelemetryStub y sus tests son la mejora hermética derivada de la pista falsa y se registran como tal."
+  },
+  "validate": {
+    "closing_layer": "L1",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "Imports reales de backend.app y v4.api.router en el proceso aislado.",
+        "ref": "test.yml pasos aislados"
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "test_app.py 29→31 passed y TERMINA; test_telemetry_pipeline_exports_requests_to_local_stub observa envelope .Request con /config en el stub; test_telemetry_shutdown_completes_and_flushes_to_local_stub observa 'shutdown-probe' recibido y lista vacía de hilos no-daemon.",
+        "ref": "src/tests/backend/test_app.py"
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Probe aislado 10 passed y suite backend 902 passed; CI 'Test Workflow with Coverage' finaliza (ya no queda 33 min).",
+        "ref": "GitHub Actions post-#209"
+      },
+      "L3": {
+        "result": "n/a",
+        "observed": "Sin cambio de contrato de producto."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin cambio de integración externa; la telemetría en tests apunta a loopback."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin UI."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "Dominio tests: el techo alcanzable cierra en L2."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "No hay despliegue asociado."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Con el guardián: mismo test sin el header → AssertionError INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST en ~1 s (ejecutado 2026-09-14). Sin el guardián, en worktree sin .env: cuelgue bajo timeout -s ABRT con el mismo frame acquire_token_by_device_flow (ejecutado antes de #209)."
+    }
+  },
+  "lanes_not_covered": [
+    "OBO real y EasyAuth en ejecución: ningún test ejerce la cadena de credencial de producción; sigue siendo carril de canary."
+  ],
+  "residual_risk": [
+    "TelemetryStub vive en atexit; un abort duro del intérprete puede dejar el puerto efímero sin cerrar dentro del job."
+  ],
+  "learn": {
+    "retrieval_keys": [
+      "pytest summary printed process alive",
+      "CI hang after passed",
+      "DeviceCodeCredential in CI",
+      "faulthandler thread dump",
+      "worktree sin .env",
+      "MACAE_DEV_OBO_TOKEN",
+      "uv run no reenvía SIGABRT",
+      "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST"
+    ],
+    "executable_probe": {
+      "class": "write-scratch",
+      "command_or_test": "git worktree add /tmp/wt HEAD && cd /tmp/wt/src/backend && uv sync --frozen && timeout -s ABRT 120 .venv/bin/python -X faulthandler -m pytest ../../src/tests/backend/v4/api/test_context_recovery_probe.py -q; echo exit=$?",
+      "cwd": "worktree limpio (sin .env); python del venv, no 'uv run'",
+      "env_requirements": [
+        "sin .env",
+        "sin MACAE_DEV_OBO_TOKEN"
+      ],
+      "expected_signal_when_failing": "exit=134 con volcado en acquire_token_by_device_flow",
+      "expected_signal_when_healthy": "exit=0 antes del timeout"
+    },
+    "last_verified": "2026-09-14T22:21:09Z",
+    "expires_if_not_reverified_by": "2026-12-13T22:21:09Z",
+    "operational": true
+  }
+}
