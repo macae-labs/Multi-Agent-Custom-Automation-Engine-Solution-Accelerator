@@ -157,8 +157,12 @@ def main(argv):
         "per_page=1, el último commit de esa rama y dime su SHA corto (7 caracteres) y su mensaje."
     ))
     check("S2", "turno con tool: tool_activity presente, sin marcador, SHA real en la respuesta",
-          bool(r2["tools"]) and "[turn-log]" not in r2["text"] and (real and real in r2["text"]) and not r2["errors"],
-          f"tools={r2['tools'][:3]} errors={r2['errors']} ms={r2['ms']} text={r2['text'][:140]!r}")
+          any(
+              activity == "calling" and tool == "GitHub___list_commits"
+              for activity, tool, _server in r2["tools"]
+          )
+          and "[turn-log]" not in r2["text"] and (real and real in r2["text"])
+          and not r2["errors"],
 
     r3 = sse(cfg, tok, sid, "Sin consultar nada nuevo: ¿qué SHA corto me diste en tu respuesta anterior? Solo el SHA.")
     low3 = r3["text"].lower()
