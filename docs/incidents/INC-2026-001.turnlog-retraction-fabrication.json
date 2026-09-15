@@ -79,7 +79,7 @@
       "blast_radius": "own_scratch",
       "reversible": true,
       "human_required": false,
-      "description": "Probe E2E turnlog_probe_117.py contra backend local :8010 (APP_ENV=dev, az login) con oid real por header; sesiones de prueba locales."
+      "description": "Probe E2E turnlog_probe.py contra backend local :8010 (APP_ENV=dev, az login) con oid real por header; sesiones de prueba locales."
     },
     {
       "stage": "commit",
