@@ -1,0 +1,285 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-003",
+  "domain": "runtime",
+  "status": "closed",
+  "invariant": {
+    "id": "INV-ABORTED-TURN-LEAVES-NO-PERSISTED-TRACE",
+    "statement": "Un turno de chat abortado por el cliente (barge-in, continuación de voz, nuevo envío) no persiste ni el mensaje de usuario ni la respuesta, igual que la UI lo retira con dropLastExchange; el abort se declara por identidad de turno, nunca por transporte."
+  },
+  "signature": {
+    "family": "stale_state",
+    "id": "SIG-aborted-turn-persisted-after-client-abort",
+    "structural_match": {
+      "session_doc_consecutive_assistant_pairs": ">0",
+      "session_doc_consecutive_user_pairs": ">0",
+      "client_abort_observed": true,
+      "assistant_persisted_after_abort": true,
+      "ingress_probe_socket_cut_0ms_assistant_persisted": true
+    }
+  },
+  "env_fingerprint": {
+    "where": "prod",
+    "env_names_present": [
+      "APP_ENV",
+      "ENABLE_OBO",
+      "OBO_CLIENT_ID",
+      "COSMOSDB_ENDPOINT",
+      "MACAE_MCP_PUBLIC_ENDPOINT"
+    ],
+    "credential_mode": "easyauth_token",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed",
+    "replicas": 1,
+    "revision": "ca-pslc25991vme66zmins--0000118",
+    "git": {
+      "branch": "main",
+      "base_sha": "da29a711",
+      "dirty": false
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion",
+      "destructive",
+      "external_side_effect"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "description": "Log prod 05:42–05:44Z (turno 5 modifica sandbox/hello_workflow.py; turno 6 responde a un turno viejo) y documento de sesión 4bc9b68e (290 mensajes): 29 pares assistant→assistant y 29 user→user; [282] 'M.' / [283] fusionado / [284]+[285] dos respuestas."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": "2026-09-14T06:00:57Z",
+      "description": "Sondas desde el modelo sobre clones del doc de sesión: 16 sesiones 4bc9b68e-clon-* escritas en Cosmos de producción bajo el usuario real. Con las demás sondas (locales contra el MISMO Cosmos y app-only contra rev 117/118) el residuo total es de 32 sesiones (ver INC-2026-003.prod-test-sessions.json).",
+      "violation": "Excedió max_action_class_without_human (write-scratch) sin aprobación. Diagnose no es inocente."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Abort de transporte real (shutdown SHUT_RDWR) contra backend local, con y sin HealthCheckMiddleware: uvicorn directo SÍ cancela y no persiste. Pista falsa del middleware descartada por medición."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": "2026-09-14T04:55:00Z",
+      "description": "ingress_abort_probe contra rev 118 con token app-only: dos sesiones probe-ingress-abort-* con assistant vacío persistidas en Cosmos de producción.",
+      "violation": "Escritura en datos compartidos de producción sin aprobación previa; debió pedirse o usarse un espacio propio."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "turn_id acuñado por el composer; abortInFlightStream/abortInFlightChat llaman ChatService.abortTurn → POST /chat/turns/{turn_id}/abort → _ACTIVE_TURNS[(user_id, turn_id)]; el generador corta el bucle de agent.invoke y no persiste; user + assistant se persisten juntos al cierre (_persist_user_message)."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-14T09:21:35Z",
+      "executed_at": "2026-09-14T09:21:35Z",
+      "description": "PR #209 squash 982aa925. Aprobación = clic de merge."
+    },
+    {
+      "stage": "monitor",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_traffic",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": null,
+      "description": "Rev 119 (982aa925) creada 09:23:00Z a 0% y promovida a 100% por el usuario; hora exacta no registrada. No se ejecutó probe directo a la 119 antes de promover (ver lanes_not_covered)."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 5,
+    "used": 4,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Continuación de voz: el frontend aborta el fetch del fragmento y reenvía el enunciado fusionado; Cosmos conserva fragmento + dos respuestas del asistente; con 290 mensajes así el router responde a turnos viejos.",
+    "candidate_causes": [
+      "El frontend no aborta realmente la petición en vuelo",
+      "HealthCheckMiddleware (BaseHTTPMiddleware) impide que la desconexión llegue al generador",
+      "El ingress de Container Apps no propaga el cierre del cliente al contenedor",
+      "El backend persiste el mensaje de usuario al abrir el turno y la respuesta al cerrar, sin consultar si el cliente sigue"
+    ],
+    "discriminating_probe": {
+      "class": "write-shared",
+      "command_or_test": "python ingress_abort_probe.py ca-pslc25991vme66zmins--0000NNN  (prod)  |  python abort_probe local con shutdown(SHUT_RDWR) contra uvicorn directo",
+      "cwd": "docs/incidents/probes",
+      "env_requirements": [
+        "az login con acceso al secreto obo-client-secret (prod)",
+        "backend local :8010 (local)"
+      ],
+      "expected_signal_when_failing": "Prod: socket cortado a 0 ms y a los 20 s la sesión tiene assistant persistido (2/2). Local: el mismo corte no persiste.",
+      "expected_signal_when_healthy": "n/a para el transporte (el ingress no cambia); la salud se mide con abort_turn_probe (abort por identidad)."
+    },
+    "confirmed_cause": {
+      "statement": "El ingress de Container Apps no propaga el cierre del cliente al contenedor: el generador termina y persiste aunque el navegador abortó. En uvicorn directo el cierre sí cancela. No hay señal de transporte utilizable en producción; el backend persistía sin consultar ninguna identidad de abort.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "ingress_abort_probe rev 118: 2/2 'ASSISTANT PERSISTIDO'; abort local con SHUT_RDWR: 1 mensaje (user) y sin assistant, con y sin middleware; sesión 4bc9b68e [282]–[285] con [284] persistido a 05:42:29Z, 3 s después del abort del cliente."
+    },
+    "false_leads": [
+      {
+        "hypothesis": "HealthCheckMiddleware (BaseHTTPMiddleware) traga http.disconnect",
+        "discarded_by": "Misma app sin el middleware en :8011: el abort real cancela igual que con él.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "sock.close() del probe no cerraba el TCP (makefile abierto)",
+        "discarded_by": "Era un defecto del probe, no del sistema: con shutdown(SHUT_RDWR) el cierre llega; se corrigió el instrumento antes de concluir.",
+        "side_effect_kept": "Regla de instrumento: cerrar con shutdown(SHUT_RDWR), nunca close()."
+      },
+      {
+        "hypothesis": "request.is_disconnected() en el generador bastaría",
+        "discarded_by": "Depende del mismo transporte que el ingress no propaga; descartada por la medición de prod.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "da29a711",
+      "commit_or_pr": "#209 (rama 93c69cd4 → squash 982aa925)",
+      "etag_or_dirty": "clean"
+    },
+    "changed_paths": [
+      "src/backend/v4/api/router.py",
+      "src/backend/common/models/messages_af.py",
+      "src/frontend/src/services/ChatService.tsx",
+      "src/frontend/src/components/content/HomeInput.tsx",
+      "src/frontend/src/pages/PlanPage.tsx",
+      "src/frontend/src/models/chatMessage.tsx"
+    ],
+    "new_functions_introduced": [
+      "abort_chat_turn (endpoint)",
+      "_persist_user_message (anidada, reubica la llamada existente)",
+      "ChatService.abortTurn",
+      "_ACTIVE_TURNS (registro por proceso)"
+    ],
+    "justification_if_new_functions": "La causa lo exige: no existía ningún mecanismo de cancelación en el backend y el transporte no sirve de señal en producción. Se reusan abortInFlightStream/abortInFlightChat, add_message y ChatMessageRequest."
+  },
+  "validate": {
+    "closing_layer": "L4",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "ruff, mypy, tsc, eslint limpios."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "test_abort_marks_only_the_active_turn_of_the_same_user: marca sólo el turno activo del mismo usuario; otro usuario o turno inexistente → aborted=false.",
+        "ref": "src/tests/backend/v4/api/test_context_recovery_probe.py"
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Suite backend 902 passed; vitest 28 passed."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "Contrato HTTP del abort ejercitado por abort_turn_probe (POST /chat/turns/{id}/abort → {turn_id, aborted}).",
+        "ref": "docs/incidents/probes/abort_turn_probe.py"
+      },
+      "L4": {
+        "result": "pass",
+        "observed": "abort_turn_probe contra backend local con modelo real: A) abort tras el primer token → 'stopping generation', 'nothing persisted', sesión 404 a los 30 s; B) control → [user, assistant]. Reverificado 2026-09-14T22:21:09Z.",
+        "ref": "docs/incidents/probes/abort_turn_probe.py"
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin prueba de navegador del flujo de continuación de voz (ver lanes_not_covered)."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "Rev 119 promovida por el usuario sin probe directo previo del abort por FQDN."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "Sin verificación de telemetría de producción tras #209."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Sin la llamada de abort por identidad (sólo transporte), la sonda de ingress contra rev 118 persiste el assistant 2/2; con el abort por identidad (abort_turn_probe A) no se persiste nada."
+    }
+  },
+  "monitor": {
+    "new_revision_at_zero_traffic": true,
+    "direct_probe_by_fqdn": {
+      "class": "read-only",
+      "command_or_test": "GET /config y GET /healthz por FQDN de la rev 119 + logs",
+      "expected_signal_when_failing": "!= 200 o excepciones",
+      "expected_signal_when_healthy": "200 y arranque limpio"
+    },
+    "health_logs_latency_errors_checked": false,
+    "traffic_promoted_by_human_at": null
+  },
+  "lanes_not_covered": [
+    "Flujo real de continuación de voz en navegador contra la rev 119 (harness Playwright + relay): no ejecutado.",
+    "Fragmento cuya respuesta termina ANTES de que llegue la continuación: queda persistido (no hay borrado; no se inventó).",
+    "Registro _ACTIVE_TURNS por proceso: válido con 1 réplica; con >1 réplicas sin afinidad haría falta registro compartido."
+  ],
+  "residual_risk": [
+    "32 sesiones de prueba en Cosmos de PRODUCCIÓN bajo 5 identidades (inventario exacto y versionado: INC-2026-003.prod-test-sessions.json; no son 18: el backend local usa el mismo Cosmos que prod). Borrado = acción write-shared, shared_prod_data, destructiva, human_required, ejecutable sólo con aprobación explícita vía probes/cleanup_prod_test_sessions.py --approve, con verificación before/after de que ningún otro id desaparece. Pendiente.",
+    "Turnos duplicados históricos en la sesión 4bc9b68e siguen en el documento; no se migraron."
+  ],
+  "learn": {
+    "retrieval_keys": [
+      "assistant assistant consecutivos en sesión",
+      "user user consecutivos",
+      "fetch abortado sigue generando",
+      "ingress no propaga disconnect",
+      "turn_id abort",
+      "shutdown SHUT_RDWR no close"
+    ],
+    "executable_probe": {
+      "class": "write-scratch",
+      "command_or_test": "cd docs/incidents/probes && python abort_turn_probe.py http://localhost:8010",
+      "cwd": "docs/incidents/probes",
+      "env_requirements": [
+        "backend local :8010 (APP_ENV=dev, az login)"
+      ],
+      "expected_signal_when_failing": "A) sesión con mensajes tras el abort, o aborted=false",
+      "expected_signal_when_healthy": "A) aborted=true y sesión 404; B) [user, assistant]"
+    },
+    "last_verified": "2026-09-14T22:21:09Z",
+    "expires_if_not_reverified_by": "2026-12-13T22:21:09Z",
+    "operational": true
+  }
+}

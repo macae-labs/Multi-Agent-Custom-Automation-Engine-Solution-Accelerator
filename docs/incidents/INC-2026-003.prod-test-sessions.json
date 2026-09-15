@@ -1,0 +1,64 @@
+{
+  "incident_id": "INC-2026-003",
+  "purpose": "Inventario EXACTO de sesiones de prueba escritas en Cosmos de producción durante el diagnóstico/validación de INC-2026-001/002/003. Borrado = acción write-shared destructiva, human_required; sólo estos (user_id, session_id).",
+  "inventoried_at": "2026-09-15T00:00:00Z",
+  "labels": {
+    "d1f2b268-d4a3-4db9-972b-bb7445ba2508": "Winston (principal EasyAuth prod): clones del doc 4bc9b68e para muestreo del turno 6",
+    "3733f543-ef8b-4162-b7c1-bdfb8dd28c3e": "Winston (oid az login): turnlog_probe local con PROBE_UID",
+    "probe-turnlog-user": "probe local (turnlog / abort de transporte)",
+    "probe-abort-user": "probe local (abort por identidad, controles B)",
+    "eada2545-2ab2-4460-8273-07199e627bbc": "app-only (token client_credentials): probes contra rev 117/118"
+  },
+  "sessions_by_user": {
+    "d1f2b268-d4a3-4db9-972b-bb7445ba2508": [
+      "4bc9b68e-clon-ANTES-1789365719-0",
+      "4bc9b68e-clon-ANTES-1789365745-1",
+      "4bc9b68e-clon-ANTES-1789365771-2",
+      "4bc9b68e-clon-ANTES-1789365796-3",
+      "4bc9b68e-clon-ANTES-1789365827-4",
+      "4bc9b68e-clon-ANTES-1789366027-0",
+      "4bc9b68e-clon-ANTES-1789366068-1",
+      "4bc9b68e-clon-ANTES-1789366100-2",
+      "4bc9b68e-clon-ANTES-1789366131-3",
+      "4bc9b68e-clon-ANTES-1789366156-4",
+      "4bc9b68e-clon-DESPUES-1789366384-0",
+      "4bc9b68e-clon-DESPUES-1789366423-1",
+      "4bc9b68e-clon-DESPUES-1789366449-2",
+      "4bc9b68e-clon-DESPUES-1789366474-3",
+      "4bc9b68e-clon-DESPUES-1789366503-4",
+      "4bc9b68e-clon-a-060057"
+    ],
+    "3733f543-ef8b-4162-b7c1-bdfb8dd28c3e": [
+      "probe-turnlog-2b96bc7c",
+      "probe-turnlog-4a625faf",
+      "probe-turnlog-5139d465",
+      "probe-turnlog-51d8eba2",
+      "probe-turnlog-912707d3",
+      "probe-turnlog-b991aacd"
+    ],
+    "probe-turnlog-user": [
+      "probe-abort-1789367438",
+      "probe-abort-1789367620",
+      "probe-abort-1789367711",
+      "probe-abort-1789367762",
+      "probe-turnlog-ad3eac2f"
+    ],
+    "probe-abort-user": [
+      "probe-abort-B-9fd3d2",
+      "probe-abort-B-a7df82"
+    ],
+    "eada2545-2ab2-4460-8273-07199e627bbc": [
+      "probe-ingress-abort-1789367910-0",
+      "probe-ingress-abort-1789367931-1",
+      "probe-turnlog-d8f146a6"
+    ]
+  },
+  "total": 32,
+  "out_of_scope_for_decision": {
+    "note": "Bajo la identidad app-only hay 2 sesiones del 2026-09-08 de probes ANTERIORES a estos incidentes (no las causó INC-003). No entran en este borrado salvo decisión explícita.",
+    "eada2545-2ab2-4460-8273-07199e627bbc": [
+      "87b9e00d-3945-40f6-ae0c-a4f643798ff8",
+      "32bd45c6-1f59-4f92-8694-5f086969b23f"
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-004",
+  "domain": "tests",
+  "status": "open",
+  "invariant": {
+    "id": "INV-TEST-PACKAGES-NEVER-SHADOW-BACKEND-PACKAGES",
+    "statement": "Ningún directorio de tests se registra en sys.modules con el nombre de un paquete del backend (auth, v4, common…); los imports reales del backend resuelven al backend en cualquier lote."
+  },
+  "signature": {
+    "family": "stale_state",
+    "id": "SIG-sys-modules-package-shadowed-by-tests-dir",
+    "structural_match": {
+      "sys_modules_auth_file": "src/tests/backend/auth/__init__.py",
+      "import_auth_auth_utils": "ModuleNotFoundError en el lote completo, OK en archivos aislados",
+      "tests_dir_has_init": [
+        "src/tests/backend/auth/__init__.py"
+      ],
+      "parent_dirs_have_init": false,
+      "pytest_import_mode": "importlib"
+    }
+  },
+  "env_fingerprint": {
+    "where": "local",
+    "env_names_present": [
+      "PYTHONPATH",
+      "APP_ENV"
+    ],
+    "credential_mode": "none",
+    "dotenv_present": true,
+    "network_scope": "loopback_only",
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "524adfc5",
+      "dirty": true
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "description": "902 errors at setup en el lote completo con el guardián de INC-002 importando auth.auth_utils; en cmd1/cmd2 el mismo import funciona."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Test temporal que imprime sys.modules['auth'].__file__ dentro del lote: src/tests/backend/auth/__init__.py. Script aparte (conftest + backend.auth.auth_utils, sin pytest): import auth.auth_utils OK → el shadowing lo introduce la colección de pytest."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 2,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "En el lote completo, `import auth.auth_utils` falla con ModuleNotFoundError aunque el paquete real existe; test_router.py necesita stubbear sys.modules['auth'] y test.yml aísla test_app.py y el probe.",
+    "candidate_causes": [
+      "Mock dejado en sys.modules['auth'] por test_router.py",
+      "pytest (importlib mode, 9.1.1) registra src/tests/backend/auth como paquete `auth` porque tiene __init__.py y sus padres src/tests/backend y src/tests no",
+      "PYTHONPATH sin src/backend en el lote"
+    ],
+    "discriminating_probe": {
+      "class": "write-scratch",
+      "command_or_test": "test temporal en src/tests/backend/auth/: print(sys.modules['auth'].__file__)  →  uv run python -m pytest src/tests/backend/auth -s -k debug",
+      "cwd": "src/backend",
+      "expected_signal_when_failing": "src/tests/backend/auth/__init__.py (paquete de tests) o un Mock",
+      "expected_signal_when_healthy": "src/backend/auth/__init__.py"
+    },
+    "confirmed_cause": {
+      "statement": "pytest en modo importlib deriva el nombre de módulo desde el directorio más alto con __init__.py: src/tests/backend/auth → `auth.test_auth_utils`, e inserta `auth` (paquete de tests) en sys.modules antes de que nada importe el backend. El Mock de test_router.py es un síntoma derivado (parche local al mismo shadowing).",
+      "confirmed_by_signal": true,
+      "evidence_ref": "sys.modules['auth'].__file__ = src/tests/backend/auth/__init__.py dentro del lote; fuera de pytest el import resuelve a src/backend/auth."
+    },
+    "false_leads": [
+      {
+        "hypothesis": "Sólo el Mock de test_router.py",
+        "discarded_by": "El __file__ impreso es el paquete de tests, no un Mock; y el fallo ocurre en el primer test recogido, antes de test_router.py.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "lanes_not_covered": [
+    "Corrección estructural pendiente: hacer paquetes src/tests y src/tests/backend (pytest derivaría tests.backend.auth…) o quitar src/tests/backend/auth/__init__.py; requiere el lote completo y revisar si test.yml puede dejar de aislar archivos y test_router.py de stubbear sys.modules."
+  ],
+  "residual_risk": [
+    "Cualquier fixture o test que importe un paquete del backend por su nombre real en el lote completo puede resolver al paquete de tests homónimo."
+  ],
+  "learn": {
+    "retrieval_keys": [
+      "ModuleNotFoundError auth.auth_utils lote completo",
+      "sys.modules auth tests package",
+      "pytest importlib mode package name collision",
+      "test.yml isolation reason"
+    ],
+    "executable_probe": {
+      "class": "write-scratch",
+      "command_or_test": "test temporal print(sys.modules['auth'].__file__) en src/tests/backend/auth + uv run python -m pytest src/tests/backend/auth -s -k debug",
+      "cwd": "src/backend",
+      "expected_signal_when_failing": "src/tests/backend/auth/__init__.py",
+      "expected_signal_when_healthy": "src/backend/auth/__init__.py"
+    },
+    "last_verified": "2026-09-15T01:30:00Z",
+    "expires_if_not_reverified_by": "2026-12-14T01:30:00Z",
+    "operational": true
+  }
+}

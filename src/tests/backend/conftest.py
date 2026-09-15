@@ -305,6 +305,54 @@ def _patch_azure_ai_projects_models():
 
 # Set up environment and minimal mocks before any test imports
 _setup_environment_variables()
+
+
+@pytest.fixture(autouse=True)
+def _no_interactive_credential_under_pytest(monkeypatch):
+    """INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (INC-2026-002).
+
+    Con APP_ENV=dev, get_authenticated_user_details llama
+    _dev_acquire_user_token cuando la petición no trae access token, y sin
+    MACAE_DEV_OBO_TOKEN eso abre DeviceCodeCredential: un login interactivo que
+    espera a un humano. En CI quedó 33 min colgado. Aquí se convierte en un
+    fallo inmediato con nombre: el test debe llevar el token como lo inyecta
+    EasyAuth (x-ms-token-aad-access-token)."""
+    import importlib
+    import types
+    from pathlib import Path
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError(
+            "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST: la petición del test no "
+            "trae access token y la cadena de auth intentó DeviceCodeCredential. "
+            "Añade x-ms-token-aad-access-token (o Authorization) al scope."
+        )
+
+    backend_auth_pkg = (Path(__file__).resolve().parents[2] / "backend" / "auth" / "__init__.py")
+
+    def _is_backend_auth_pkg(mod) -> bool:
+        # Identidad del paquete: el `auth` del backend es el que vive en
+        # src/backend/auth. En el lote completo `sys.modules['auth']` puede ser
+        # OTRA cosa: el paquete de tests src/tests/backend/auth (pytest en modo
+        # importlib lo registra con ese nombre porque src/tests/backend no es
+        # paquete) o un Mock dejado por test_router.py. En ambos casos no hay
+        # módulo real que proteger y se omite POR IDENTIDAD, sin except
+        # genérico: un ImportError real del backend se propaga y se ve.
+        f = getattr(mod, "__file__", None)
+        return bool(f) and Path(f).resolve() == backend_auth_pkg
+
+    targets = []
+    auth_pkg = sys.modules.get("auth")
+    if auth_pkg is None or _is_backend_auth_pkg(auth_pkg):
+        targets.append(sys.modules.get("auth.auth_utils") or importlib.import_module("auth.auth_utils"))
+    # Tests que importan por paquete (backend.auth.auth_utils): otro objeto
+    # módulo; se parchea si ya está cargado.
+    mod2 = sys.modules.get("backend.auth.auth_utils")
+    if isinstance(mod2, types.ModuleType):
+        targets.append(mod2)
+    for mod in targets:
+        if isinstance(getattr(mod, "_dev_acquire_user_token", None), types.FunctionType):
+            monkeypatch.setattr(mod, "_dev_acquire_user_token", _fail)
 _setup_agent_framework_mock()
 _setup_azure_monitor_mock()
 
