@@ -117,6 +117,24 @@
       "reversible": true,
       "human_required": false,
       "description": "Guardián del invariante en conftest (fixture autouse): _dev_acquire_user_token bajo pytest levanta AssertionError con el nombre del invariante en vez de abrir DeviceCodeCredential. Control negativo ejecutado: sin el header el test falla en ~1 s con INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (antes: cuelgue)."
+    },
+    {
+      "stage": "validate",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-15T01:01:03Z",
+      "description": "Guardián autouse (806cf571) validado sólo contra el probe aislado (L1) y no contra el lote completo (L2): en el tercer lote otros módulos de tests dejan sys.modules['auth'] sustituido por un Mock y `import auth.auth_utils` del guardián falló en el setup de los 902 tests (CI run 34915546058; reproducido en local: 5 skipped, 902 errors).",
+      "violation": "Validate incompleto: se subió a commit sin re-ejecutar L2 tras cambiar código compartido por todos los tests (conftest). Regla: un cambio en conftest exige el lote completo, no sólo el archivo que motivó el cambio."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "description": "Guardián endurecido: parchea _dev_acquire_user_token en cada nombre cargado o importable (auth.auth_utils y backend.auth.auth_utils) sólo si es una función real; si el paquete está stubbeado por otro test, omite sin fallar. Verificado: cmd1 31, cmd2 10, cmd3 902 passed; control negativo sin header → AssertionError INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST."
     }
   ],
   "probe_budget": {
@@ -247,7 +265,10 @@
       "worktree sin .env",
       "MACAE_DEV_OBO_TOKEN",
       "uv run no reenvía SIGABRT",
-      "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST"
+      "INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST",
+      "902 errors at setup ModuleNotFoundError auth.auth_utils",
+      "conftest change requires full batch",
+      "sys.modules pollution auth Mock"
     ],
     "executable_probe": {
       "class": "write-scratch",

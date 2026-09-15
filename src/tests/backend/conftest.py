@@ -317,7 +317,8 @@ def _no_interactive_credential_under_pytest(monkeypatch):
     espera a un humano. En CI quedó 33 min colgado. Aquí se convierte en un
     fallo inmediato con nombre: el test debe llevar el token como lo inyecta
     EasyAuth (x-ms-token-aad-access-token)."""
-    import auth.auth_utils as auth_utils
+    import importlib
+    import types
 
     def _fail(*_args, **_kwargs):
         raise AssertionError(
@@ -326,7 +327,22 @@ def _no_interactive_credential_under_pytest(monkeypatch):
             "Añade x-ms-token-aad-access-token (o Authorization) al scope."
         )
 
-    monkeypatch.setattr(auth_utils, "_dev_acquire_user_token", _fail)
+    # El router importa `auth.auth_utils`; los tests que importan por paquete
+    # usan `backend.auth.auth_utils` (otro objeto módulo). Se parchea la
+    # función real en cada nombre que esté cargado o sea importable. Otros
+    # módulos de tests sustituyen `sys.modules['auth']` por un Mock y no lo
+    # restauran (la misma contaminación que aísla test_app.py en test.yml):
+    # en ese caso no hay función real que parchear y se omite, sin fallar.
+    for name in ("auth.auth_utils", "backend.auth.auth_utils"):
+        mod = sys.modules.get(name)
+        if mod is None:
+            try:
+                mod = importlib.import_module(name)
+            except Exception:  # paquete stubbeado o no importable en este proceso
+                continue
+        fn = getattr(mod, "_dev_acquire_user_token", None)
+        if isinstance(fn, types.FunctionType):
+            monkeypatch.setattr(mod, "_dev_acquire_user_token", _fail)
 _setup_agent_framework_mock()
 _setup_azure_monitor_mock()
 
