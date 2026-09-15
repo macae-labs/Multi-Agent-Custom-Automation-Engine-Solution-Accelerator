@@ -88,9 +88,9 @@ class MCPConnectionsService:
                 raise ValueError("COSMOSDB_ENDPOINT not configured")
 
             container_name = _get_container_name()
-            credential = config.get_azure_credentials()
-            credential = config.get_azure_credential_async(config.AZURE_CLIENT_ID)
-            self._client = CosmosClient(url=endpoint, credential=credential)
+            self._client = CosmosClient(
+                url=endpoint, credential=config.get_cosmos_credential_async()
+            )
             db = self._client.get_database_client(config.COSMOSDB_DATABASE)
 
             # Get or create the mcp_connections container

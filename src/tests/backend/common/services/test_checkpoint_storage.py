@@ -1,5 +1,5 @@
 """CosmosCheckpointStorage contra el framework REAL: un workflow mínimo con dos
-supersteps guarda checkpoints en un contenedor Cosmos falso en memoria (la
+supersteps guarda checkpoints en el contenedor Cosmos falso del conftest (la
 superficie exacta que usa el storage), otra instancia del mismo grafo se
 reanuda por checkpoint_id, y un grafo distinto es rechazado por el framework
 (graph_signature_hash): la precondición que el work item debe hacer explícita.
@@ -17,34 +17,6 @@ from agent_framework import (
 )
 
 from common.services.checkpoint_storage import CosmosCheckpointStorage
-
-
-class FakeContainer:
-    """Lo que CosmosCheckpointStorage usa de un ContainerProxy, en memoria."""
-
-    def __init__(self) -> None:
-        self.docs: dict[str, dict] = {}
-
-    async def upsert_item(self, body):
-        self.docs[body["id"]] = dict(body)
-        return body
-
-    async def delete_item(self, item, partition_key):
-        assert self.docs[item]["workflow_name"] == partition_key
-        del self.docs[item]
-
-    def query_items(self, query, parameters=None, partition_key=None):
-        params = {p["name"]: p["value"] for p in parameters or []}
-
-        async def _gen():
-            for doc in list(self.docs.values()):
-                if "@id" in params and doc["id"] != params["@id"]:
-                    continue
-                if "@workflow_name" in params and doc["workflow_name"] != params["@workflow_name"]:
-                    continue
-                yield {**doc, "_rid": "rid", "_etag": "etag", "_ts": 1}
-
-        return _gen()
 
 
 class Upper(Executor):
@@ -68,8 +40,8 @@ def _build(storage, changed_graph: bool = False):
 
 
 @pytest.fixture
-def container():
-    return FakeContainer()
+def container(fake_cosmos_container):
+    return fake_cosmos_container
 
 
 @pytest.fixture

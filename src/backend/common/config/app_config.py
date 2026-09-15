@@ -349,6 +349,17 @@ class AppConfig:
             )
         return self._ai_async_credential
 
+    def get_cosmos_credential_async(self):
+        """Credential for the async Cosmos clients: ``COSMOSDB_KEY`` in dev when
+        set (the prod account trusts a foreign tenant, so ``az login`` cannot
+        get a data-plane token), otherwise the process-scoped shared async
+        credential. It is BORROWED: callers close their ``CosmosClient`` only,
+        never this credential (``aclose_shared_resources`` closes it once).
+        """
+        if self.APP_ENV == "dev" and self.COSMOSDB_KEY:
+            return self.COSMOSDB_KEY
+        return self.get_shared_async_credential()
+
     async def aclose_shared_resources(self) -> None:
         """Close process-scoped async resources. Call once at app shutdown."""
         client = self._ai_project_client

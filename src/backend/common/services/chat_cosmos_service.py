@@ -57,10 +57,8 @@ class ChatCosmosService:
         endpoint = config.COSMOSDB_ENDPOINT
         # Allow key-based auth only in dev to avoid accidentally bypassing AAD in prod.
         credential = (
-            config.COSMOSDB_KEY
-            if config.APP_ENV == "dev" and config.COSMOSDB_KEY
-            else config.get_azure_credential_async(config.AZURE_CLIENT_ID)
-        )
+            config.get_cosmos_credential_async()
+        )  # prestada; se cierra sólo el cliente
         db_name = config.COSMOSDB_DATABASE
 
         if not endpoint or not db_name:
@@ -459,3 +457,11 @@ async def get_chat_cosmos_service() -> ChatCosmosService:
         _instance = ChatCosmosService()
         await _instance.initialize()
     return _instance
+
+
+async def aclose_chat_cosmos_service() -> None:
+    """Close the singleton's CosmosClient (not the borrowed credential); lifespan shutdown."""
+    global _instance
+    if _instance is not None and _instance._client is not None:
+        await _instance._client.close()
+    _instance = None

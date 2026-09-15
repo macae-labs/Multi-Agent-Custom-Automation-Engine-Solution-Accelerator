@@ -60,12 +60,10 @@ class CosmosCheckpointStorage:
             raise WorkflowCheckpointException(
                 "COSMOSDB_ENDPOINT / COSMOSDB_DATABASE no configurados: sin checkpoints durables"
             )
-        credential = (
-            config.COSMOSDB_KEY
-            if config.APP_ENV == "dev" and config.COSMOSDB_KEY
-            else config.get_azure_credential_async(config.AZURE_CLIENT_ID)
+        # Credencial prestada (config la cierra una sola vez); aquí se cierra sólo el cliente.
+        self._client = CosmosClient(
+            url=endpoint, credential=config.get_cosmos_credential_async()
         )
-        self._client = CosmosClient(url=endpoint, credential=credential)
         database = self._client.get_database_client(db_name)
         self._container = await database.create_container_if_not_exists(
             id=CHECKPOINTS_CONTAINER_NAME,

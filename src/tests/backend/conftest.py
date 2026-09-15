@@ -189,3 +189,37 @@ def mock_azure_services():
         'ai_project_client': Mock(),
         'credential': Mock(),
     }
+
+
+class FakeCosmosContainer:
+    """Doble en memoria de la superficie de ContainerProxy que usan los
+    servicios sobre Cosmos (upsert/delete/query por parámetros)."""
+
+    def __init__(self) -> None:
+        self.docs: dict = {}
+
+    async def upsert_item(self, body):
+        self.docs[body["id"]] = dict(body)
+        return body
+
+    async def delete_item(self, item, partition_key):
+        assert self.docs[item]["workflow_name"] == partition_key
+        del self.docs[item]
+
+    def query_items(self, query, parameters=None, partition_key=None):
+        params = {p["name"]: p["value"] for p in parameters or []}
+
+        async def _gen():
+            for doc in list(self.docs.values()):
+                if "@id" in params and doc["id"] != params["@id"]:
+                    continue
+                if "@workflow_name" in params and doc["workflow_name"] != params["@workflow_name"]:
+                    continue
+                yield {**doc, "_rid": "rid", "_etag": "etag", "_ts": 1}
+
+        return _gen()
+
+
+@pytest.fixture
+def fake_cosmos_container():
+    return FakeCosmosContainer()
