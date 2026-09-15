@@ -10,19 +10,9 @@ import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import ModuleType
-from typing import Any, cast
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 import pytest
-
-
-def _stub_module(name: str) -> Any:
-    """A ModuleType typed as Any: these stubs exist to be stuffed with fake
-    attributes (modules accept arbitrary attributes at runtime). Typing them
-    Any confines the relaxation to the stub objects themselves — attribute
-    errors on everything else in this file stay fully checked."""
-    return cast(Any, ModuleType(name))
 
 
 class TelemetryStub:
@@ -166,160 +156,20 @@ def _setup_environment_variables():
     os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] = "true"
 
 
-def _setup_agent_framework_mock():
-    """
-    Set up mock for agent_framework which is not a pip-installable package.
-    This framework is used for Azure AI Agents and needs proper mocking.
-    Uses ModuleType with real stub classes for names used in type annotations
-    or as base classes, and MagicMock for everything else.
-    """
-    if 'agent_framework' not in sys.modules:
-        # Top-level: agent_framework
-        mock_af = _stub_module('agent_framework')
-
-        # Names used as base classes or in Union type hints MUST be real classes
-        # to avoid SyntaxError from typing module's forward reference evaluation.
-        _class_names = [
-            'Agent', 'AgentResponse', 'AgentResponseUpdate', 'AgentRunUpdateEvent',
-            'AgentSession', 'AgentThread', 'BaseAgent', 'ChatAgent', 'ChatMessage',
-            'ChatOptions', 'Content', 'ExecutorCompletedEvent',
-            'FunctionInvocationContext', 'FunctionMiddleware',
-            'GroupChatRequestSentEvent', 'GroupChatResponseReceivedEvent',
-            'HostedCodeInterpreterTool', 'HostedMCPTool',
-            'InMemoryCheckpointStorage', 'MCPStreamableHTTPTool',
-            'MagenticBuilder', 'MagenticOrchestratorEvent',
-            'MagenticProgressLedger', 'Message', 'Role', 'UsageDetails',
-            'WorkflowOutputEvent',
-        ]
-        for name in _class_names:
-            setattr(mock_af, name, type(name, (), {
-                '__init__': lambda self, *args, **kwargs: None,
-            }))
-
-        # Sub-module: agent_framework._types
-        mock_af_types = _stub_module('agent_framework._types')
-        mock_af_types.ResponseStream = type('ResponseStream', (), {})
-        mock_af._types = mock_af_types
-        sys.modules['agent_framework._types'] = mock_af_types
-
-        # Sub-module: agent_framework.azure
-        mock_af_azure = _stub_module('agent_framework.azure')
-        mock_af_azure.AzureOpenAIChatClient = type('AzureOpenAIChatClient', (), {})
-        mock_af_azure.AzureOpenAIResponsesClient = type('AzureOpenAIResponsesClient', (), {})
-        mock_af.azure = mock_af_azure
-
-        # Sub-module: agent_framework._workflows._magentic
-        mock_af_workflows = _stub_module('agent_framework._workflows')
-        mock_af_magentic = _stub_module('agent_framework._workflows._magentic')
-        for name in [
-            'MagenticContext', 'StandardMagenticManager',
-        ]:
-            setattr(mock_af_magentic, name, type(name, (), {}))
-        for name in [
-            'ORCHESTRATOR_FINAL_ANSWER_PROMPT',
-            'ORCHESTRATOR_PROGRESS_LEDGER_PROMPT',
-            'ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT',
-            'ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT',
-        ]:
-            setattr(mock_af_magentic, name, "mock_prompt_string")
-        mock_af_workflows._magentic = mock_af_magentic
-        mock_af._workflows = mock_af_workflows
-
-        sys.modules['agent_framework'] = mock_af
-        sys.modules['agent_framework.azure'] = mock_af_azure
-        sys.modules['agent_framework._workflows'] = mock_af_workflows
-        sys.modules['agent_framework._workflows._magentic'] = mock_af_magentic
-
-    if 'agent_framework_orchestrations' not in sys.modules:
-        mock_af_orch = _stub_module('agent_framework_orchestrations')
-        mock_af_orch.MagenticBuilder = type('MagenticBuilder', (), {
-            '__init__': lambda self, *args, **kwargs: None,
-            'build': lambda self: Mock(),
-        })
-        sys.modules['agent_framework_orchestrations'] = mock_af_orch
-
-        mock_af_orch_base = _stub_module('agent_framework_orchestrations._base_group_chat_orchestrator')
-        for name in ['GroupChatRequestSentEvent', 'GroupChatResponseReceivedEvent']:
-            setattr(mock_af_orch_base, name, type(name, (), {}))
-        sys.modules['agent_framework_orchestrations._base_group_chat_orchestrator'] = mock_af_orch_base
-
-        mock_af_orch_mag = _stub_module('agent_framework_orchestrations._magentic')
-        for name in ['MagenticContext', 'MagenticProgressLedger']:
-            setattr(mock_af_orch_mag, name, type(name, (), {}))
-        # StandardMagenticManager needs a proper __init__ that accepts args/kwargs
-        # because HumanApprovalMagenticManager calls super().__init__(agent, *args, **kwargs)
-        setattr(mock_af_orch_mag, 'StandardMagenticManager',
-                type('StandardMagenticManager', (), {
-                    '__init__': lambda self, *args, **kwargs: None
-                }))
-        for name in [
-            'ORCHESTRATOR_FINAL_ANSWER_PROMPT',
-            'ORCHESTRATOR_PROGRESS_LEDGER_PROMPT',
-            'ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT',
-            'ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT',
-        ]:
-            setattr(mock_af_orch_mag, name, 'mock_prompt_string')
-        sys.modules['agent_framework_orchestrations._magentic'] = mock_af_orch_mag
-
-    if 'agent_framework_azure_ai' not in sys.modules:
-        mock_af_ai = _stub_module('agent_framework_azure_ai')
-        mock_af_ai.AzureAIClient = type('AzureAIClient', (), {})
-        mock_af_ai.AzureAIProjectAgentOptions = type('AzureAIProjectAgentOptions', (dict,), {})
-        sys.modules['agent_framework_azure_ai'] = mock_af_ai
-
-    if 'agent_framework_openai' not in sys.modules:
-        mock_af_openai = _stub_module('agent_framework_openai')
-        mock_af_openai.OpenAIChatOptions = type('OpenAIChatOptions', (dict,), {})
-        sys.modules['agent_framework_openai'] = mock_af_openai
-
-
-def _setup_azure_monitor_mock():
-    """Azure Monitor NO se neutraliza: azure-monitor-opentelemetry está en
-    uv.lock y configure_azure_monitor corre de verdad contra TelemetryStub
-    (ver _setup_environment_variables). Un no-op aquí convertía la telemetría
-    en adorno y dejaba sin cubrir la inicialización real."""
-    return None
-
-
-def _patch_azure_ai_projects_models():
-    """
-    Patch azure.ai.projects.models to add names that may be missing
-    in older SDK versions (e.g. PromptAgentDefinition).
-    """
-    try:
-        import azure.ai.projects.models as models_mod
-        missing_names = [
-            'PromptAgentDefinition',
-            'AzureAISearchAgentTool',
-            'AzureAISearchToolResource',
-            'AISearchIndexResource',
-        ]
-        for name in missing_names:
-            if not hasattr(models_mod, name):
-                setattr(models_mod, name, MagicMock())
-    except ImportError:
-        # azure-ai-projects not installed at all — create full mock
-        sys.modules['azure.ai.projects'] = MagicMock()
-        sys.modules['azure.ai.projects.models'] = MagicMock()
-
-
 # Set up environment and minimal mocks before any test imports
 _setup_environment_variables()
 
 
 @pytest.fixture(autouse=True)
 def _no_interactive_credential_under_pytest(monkeypatch):
-    """INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (INC-2026-002).
-
-    Con APP_ENV=dev, get_authenticated_user_details llama
-    _dev_acquire_user_token cuando la petición no trae access token, y sin
-    MACAE_DEV_OBO_TOKEN eso abre DeviceCodeCredential: un login interactivo que
-    espera a un humano. En CI quedó 33 min colgado. Aquí se convierte en un
-    fallo inmediato con nombre: el test debe llevar el token como lo inyecta
-    EasyAuth (x-ms-token-aad-access-token)."""
+    """INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (INC-2026-002): bajo pytest,
+    _dev_acquire_user_token falla con nombre en vez de abrir DeviceCodeCredential
+    y esperar a un humano. El test debe traer el token como lo inyecta EasyAuth
+    (x-ms-token-aad-access-token). Se parchea en ambos nombres de módulo con los
+    que se importa el mismo archivo (router: auth.auth_utils; tests: auth.auth_utils)."""
     import importlib
-    import types
-    from pathlib import Path
+
+    importlib.import_module("auth.auth_utils")  # el módulo real del router, cargado
 
     def _fail(*_args, **_kwargs):
         raise AssertionError(
@@ -328,33 +178,9 @@ def _no_interactive_credential_under_pytest(monkeypatch):
             "Añade x-ms-token-aad-access-token (o Authorization) al scope."
         )
 
-    backend_auth_pkg = (Path(__file__).resolve().parents[2] / "backend" / "auth" / "__init__.py")
-
-    def _is_backend_auth_pkg(mod) -> bool:
-        # Identidad del paquete: el `auth` del backend es el que vive en
-        # src/backend/auth. En el lote completo `sys.modules['auth']` puede ser
-        # OTRA cosa: el paquete de tests src/tests/backend/auth (pytest en modo
-        # importlib lo registra con ese nombre porque src/tests/backend no es
-        # paquete) o un Mock dejado por test_router.py. En ambos casos no hay
-        # módulo real que proteger y se omite POR IDENTIDAD, sin except
-        # genérico: un ImportError real del backend se propaga y se ve.
-        f = getattr(mod, "__file__", None)
-        return bool(f) and Path(f).resolve() == backend_auth_pkg
-
-    targets = []
-    auth_pkg = sys.modules.get("auth")
-    if auth_pkg is None or _is_backend_auth_pkg(auth_pkg):
-        targets.append(sys.modules.get("auth.auth_utils") or importlib.import_module("auth.auth_utils"))
-    # Tests que importan por paquete (backend.auth.auth_utils): otro objeto
-    # módulo; se parchea si ya está cargado.
-    mod2 = sys.modules.get("backend.auth.auth_utils")
-    if isinstance(mod2, types.ModuleType):
-        targets.append(mod2)
-    for mod in targets:
-        if isinstance(getattr(mod, "_dev_acquire_user_token", None), types.FunctionType):
-            monkeypatch.setattr(mod, "_dev_acquire_user_token", _fail)
-_setup_agent_framework_mock()
-_setup_azure_monitor_mock()
+    for name in ("auth.auth_utils", "auth.auth_utils"):
+        if name in sys.modules:
+            monkeypatch.setattr(sys.modules[name], "_dev_acquire_user_token", _fail)
 
 # Pre-import the middleware chain (self_heal -> tool_errors -> event_utils)
 # while the CLEAN stub above is in sys.modules. Several test modules stomp
@@ -375,7 +201,6 @@ try:
     import v4.api.audio_router  # noqa: F401
 except Exception:
     pass
-_patch_azure_ai_projects_models()
 
 
 @pytest.fixture

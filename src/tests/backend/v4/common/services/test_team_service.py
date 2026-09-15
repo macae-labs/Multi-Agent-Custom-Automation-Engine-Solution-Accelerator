@@ -13,18 +13,37 @@ This module contains extensive test coverage for:
 """
 
 import pytest
-import os
-import sys
 import asyncio
 import uuid
-import importlib.util
+import v4.common.services.team_service as team_service_module
+from v4.common.services.team_service import TeamService
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.common.services.team_service parcheados en SU namespace y sólo durante cada
+    test. Antes el módulo se cargaba por ruta de archivo con sus dependencias
+    sustituidas en sys.modules y se registraba así, con Mocks dentro, para
+    todo el proceso (INC-2026-004)."""
+    mod = team_service_module
+    for name, value in (
+        ('ClientAuthenticationError', mock_azure_core_exceptions.ClientAuthenticationError),
+        ('HttpResponseError', mock_azure_core_exceptions.HttpResponseError),
+        ('ResourceNotFoundError', mock_azure_core_exceptions.ResourceNotFoundError),
+        ('SearchIndexClient', mock_search_indexes.SearchIndexClient),
+        ('config', mock_config_module.config),
+        ('DatabaseBase', mock_database_base.DatabaseBase),
+        ('StartingTask', mock_messages_af.StartingTask),
+        ('TeamAgent', mock_messages_af.TeamAgent),
+        ('TeamConfiguration', mock_messages_af.TeamConfiguration),
+        ('UserCurrentTeam', mock_messages_af.UserCurrentTeam),
+        ('FoundryService', mock_foundry_service.FoundryService),
+    ):
+        monkeypatch.setattr(mod, name, value)
+
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timezone
 
-# Add the src directory to sys.path for proper import
-src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
-if src_path not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_path))
 
 # Mock Azure modules before importing the TeamService
 azure_ai_module = MagicMock()
@@ -40,10 +59,6 @@ azure_ai_module.projects = azure_ai_projects_module
 azure_ai_projects_module.aio = azure_ai_projects_aio_module
 
 # Inject the mocked modules
-sys.modules['azure'] = MagicMock()
-sys.modules['azure.ai'] = azure_ai_module
-sys.modules['azure.ai.projects'] = azure_ai_projects_module
-sys.modules['azure.ai.projects.aio'] = azure_ai_projects_aio_module
 
 # Mock Azure Search modules
 mock_azure_search = MagicMock()
@@ -73,18 +88,8 @@ mock_search_indexes.SearchIndexClient = MagicMock()
 mock_azure_search.documents = MagicMock()
 mock_azure_search.documents.indexes = mock_search_indexes
 
-sys.modules['azure.core'] = MagicMock()
-sys.modules['azure.core.exceptions'] = mock_azure_core_exceptions
-sys.modules['azure.search'] = mock_azure_search
-sys.modules['azure.search.documents'] = mock_azure_search.documents
-sys.modules['azure.search.documents.indexes'] = mock_search_indexes
 
 # Mock other problematic modules and imports
-sys.modules['common.models.messages_af'] = MagicMock()
-sys.modules['v4'] = MagicMock()
-sys.modules['v4.common'] = MagicMock()
-sys.modules['v4.common.services'] = MagicMock()
-sys.modules['v4.common.services.foundry_service'] = MagicMock()
 
 # Mock the config module
 mock_config_module = MagicMock()
@@ -96,11 +101,9 @@ mock_config.AZURE_OPENAI_DEPLOYMENT_NAME = 'gpt-4'
 mock_config.get_azure_credentials = MagicMock(return_value=MagicMock())
 
 mock_config_module.config = mock_config
-sys.modules['common.config.app_config'] = mock_config_module
 
 # Mock database modules
 mock_database_base = MagicMock()
-sys.modules['common.database.database_base'] = mock_database_base
 
 # Create mock data models
 
@@ -167,43 +170,13 @@ mock_messages_af.TeamAgent = MockTeamAgent
 mock_messages_af.StartingTask = MockStartingTask
 mock_messages_af.TeamConfiguration = MockTeamConfiguration
 mock_messages_af.UserCurrentTeam = MockUserCurrentTeam
-sys.modules['common.models.messages_af'] = mock_messages_af
 
 mock_database_base.DatabaseBase = MockDatabaseBase
 
 # Mock FoundryService
 mock_foundry_service = MagicMock()
-sys.modules['v4.common.services.foundry_service'] = mock_foundry_service
 
 # Now import the real TeamService using direct file import with proper mocking
-import importlib.util
-
-with patch.dict('sys.modules', {
-    'azure.core.exceptions': mock_azure_core_exceptions,
-    'azure.search.documents.indexes': mock_search_indexes,
-    'common.config.app_config': mock_config_module,
-    'common.database.database_base': mock_database_base,
-    'common.models.messages_af': mock_messages_af,
-    'v4.common.services.foundry_service': mock_foundry_service,
-}):
-    team_service_path = os.path.join(os.path.dirname(
-        __file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'team_service.py')
-    team_service_path = os.path.abspath(team_service_path)
-    spec = importlib.util.spec_from_file_location(
-        "backend.v4.common.services.team_service", team_service_path)
-    team_service_module = importlib.util.module_from_spec(spec)
-
-    # Set the proper module name for coverage tracking (matching --cov=backend pattern)
-    team_service_module.__name__ = "backend.v4.common.services.team_service"
-    team_service_module.__file__ = team_service_path
-
-    # Add to sys.modules BEFORE execution for coverage tracking (both variations)
-    sys.modules['backend.v4.common.services.team_service'] = team_service_module
-    sys.modules['src.backend.v4.common.services.team_service'] = team_service_module
-
-    spec.loader.exec_module(team_service_module)
-
-TeamService = team_service_module.TeamService
 
 
 class TestTeamServiceInitialization:
@@ -1190,4 +1163,4 @@ class TestIntegrationScenarios:
         """Test that logging is properly configured."""
         service = TeamService()
         assert service.logger is not None
-        assert service.logger.name == "backend.v4.common.services.team_service"
+        assert service.logger.name == "v4.common.services.team_service"

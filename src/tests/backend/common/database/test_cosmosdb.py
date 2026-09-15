@@ -2,37 +2,16 @@
 
 import datetime
 import logging
-import sys
-import os
 from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
-
-# Set required environment variables for testing
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "test_connection_string")
-os.environ.setdefault("APP_ENV", "dev")
 
 # Only mock external problematic dependencies - do NOT mock internal common.* modules
-sys.modules["azure"] = Mock()
-sys.modules["azure.cosmos"] = Mock()
-sys.modules["azure.cosmos.aio"] = Mock()
-sys.modules["azure.cosmos.aio._database"] = Mock()
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
 # Mock v4 modules that cosmosdb.py tries to import
-sys.modules["v4"] = Mock()
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock()
 
 # Import the REAL modules using backend.* paths for proper coverage tracking
-from backend.common.database.cosmosdb import CosmosDBClient
-from backend.common.models.messages_af import (
+from common.database.cosmosdb import CosmosDBClient
+from common.models.messages_af import (
     AgentMessage,
     AgentMessageData,
     BaseDataModel,
@@ -118,7 +97,7 @@ class TestCosmosDBClientInitializationProcess:
         mock_container = Mock()
 
         with patch(
-            "backend.common.database.cosmosdb.CosmosClient", return_value=mock_client
+            "common.database.cosmosdb.CosmosClient", return_value=mock_client
         ):
             mock_client.get_database_client.return_value = mock_database
             client._get_container = AsyncMock(return_value=mock_container)
@@ -134,7 +113,7 @@ class TestCosmosDBClientInitializationProcess:
     async def test_initialize_failure(self, client):
         """Test initialization failure handling."""
         with patch(
-            "backend.common.database.cosmosdb.CosmosClient",
+            "common.database.cosmosdb.CosmosClient",
             side_effect=Exception("Connection failed"),
         ):
             with pytest.raises(Exception, match="Connection failed"):
@@ -147,7 +126,7 @@ class TestCosmosDBClientInitializationProcess:
         mock_client = AsyncMock()
 
         with patch(
-            "backend.common.database.cosmosdb.CosmosClient", return_value=mock_client
+            "common.database.cosmosdb.CosmosClient", return_value=mock_client
         ) as mock_cosmos:
             await client.initialize()
 
@@ -1122,20 +1101,18 @@ class TestCosmosDBMiscellaneousOperations:
     @pytest.mark.asyncio
     async def test_get_mplan(self, client):
         """Test getting an mplan by plan ID."""
-        # v4.models.messages is replaced by a Mock() at module import, so the
-        # MPlan "class" here is a mock — assert on model_validate, not isinstance.
         raw = {"plan_id": "test_plan_id", "user_id": "u1"}
 
         async def async_gen():
             yield raw
 
         client.container.query_items = Mock(return_value=async_gen())
-        messages.MPlan.model_validate.reset_mock()
 
-        result = await client.get_mplan("test_plan_id")
+        with patch.object(messages.MPlan, "model_validate") as model_validate:
+            result = await client.get_mplan("test_plan_id")
 
-        assert result is messages.MPlan.model_validate.return_value
-        messages.MPlan.model_validate.assert_called_once_with(raw)
+        assert result is model_validate.return_value
+        model_validate.assert_called_once_with(raw)
         _, kwargs = client.container.query_items.call_args
         assert kwargs["query"] == (
             "SELECT * FROM c WHERE c.plan_id=@plan_id AND c.data_type=@data_type"

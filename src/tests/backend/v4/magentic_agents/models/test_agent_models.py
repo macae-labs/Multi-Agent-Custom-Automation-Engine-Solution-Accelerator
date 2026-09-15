@@ -1,4 +1,4 @@
-"""Unit tests for backend.v4.magentic_agents.models.agent_models module."""
+"""Unit tests for v4.magentic_agents.models.agent_models module."""
 import sys
 from unittest.mock import patch, MagicMock
 import pytest
@@ -8,12 +8,9 @@ import pytest
 mock_common = MagicMock()
 mock_config = MagicMock()
 mock_common.config.app_config.config = mock_config
-sys.modules['common'] = mock_common
-sys.modules['common.config'] = mock_common.config
-sys.modules['common.config.app_config'] = mock_common.config.app_config
 
 # Import the module under test
-from backend.v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
+from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
 
 
 class TestMCPConfig:
@@ -92,7 +89,7 @@ class TestMCPConfig:
         assert mcp_config.tenant_id is None
         assert mcp_config.client_id is None
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_success(self, mock_config_patch):
         """Test MCPConfig.from_env with all required environment variables."""
         # Set up mock config values
@@ -110,7 +107,7 @@ class TestMCPConfig:
         assert mcp_config.tenant_id == "env-tenant-789"
         assert mcp_config.client_id == "env-client-012"
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_url(self, mock_config_patch):
         """Test MCPConfig.from_env with missing MCP_SERVER_ENDPOINT."""
         mock_config_patch.MCP_SERVER_ENDPOINT = None
@@ -124,7 +121,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_name(self, mock_config_patch):
         """Test MCPConfig.from_env with missing MCP_SERVER_NAME."""
         mock_config_patch.MCP_SERVER_ENDPOINT = "https://env-mcp.example.com"
@@ -138,7 +135,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_description(self, mock_config_patch):
         """Test MCPConfig.from_env with missing MCP_SERVER_DESCRIPTION."""
         mock_config_patch.MCP_SERVER_ENDPOINT = "https://env-mcp.example.com"
@@ -152,7 +149,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_tenant_id(self, mock_config_patch):
         """Test MCPConfig.from_env with missing AZURE_TENANT_ID."""
         mock_config_patch.MCP_SERVER_ENDPOINT = "https://env-mcp.example.com"
@@ -166,7 +163,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_client_id(self, mock_config_patch):
         """Test MCPConfig.from_env with missing AZURE_CLIENT_ID."""
         mock_config_patch.MCP_SERVER_ENDPOINT = "https://env-mcp.example.com"
@@ -180,7 +177,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_all_missing(self, mock_config_patch):
         """Test MCPConfig.from_env with all environment variables missing."""
         mock_config_patch.MCP_SERVER_ENDPOINT = None
@@ -194,7 +191,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_empty_strings(self, mock_config_patch):
         """Test MCPConfig.from_env with empty string environment variables."""
         mock_config_patch.MCP_SERVER_ENDPOINT = ""
@@ -208,7 +205,7 @@ class TestMCPConfig:
         
         assert "MCPConfig Missing required environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_with_special_characters(self, mock_config_patch):
         """Test MCPConfig.from_env with special characters in values."""
         mock_config_patch.MCP_SERVER_ENDPOINT = "https://mcp-üñíçødé.example.com/path?query=value&param=123"
@@ -225,7 +222,7 @@ class TestMCPConfig:
         assert mcp_config.tenant_id == "tenant-with-dashes-and_underscores_123"
         assert mcp_config.client_id == "client.with.dots.and-dashes-456"
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_with_long_values(self, mock_config_patch):
         """Test MCPConfig.from_env with very long environment variable values."""
         long_url = "https://" + "a" * 1000 + ".example.com"
@@ -341,7 +338,7 @@ class TestSearchConfig:
         assert search_config.endpoint is None
         assert search_config.index_name is None
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_success(self, mock_config_patch):
         """Test SearchConfig.from_env with all required environment variables."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "EnvConnection"
@@ -353,7 +350,7 @@ class TestSearchConfig:
         assert search_config.endpoint == "https://env-search.example.com"
         assert search_config.index_name == "env-index"
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_connection_name(self, mock_config_patch):
         """Test SearchConfig.from_env with missing AZURE_AI_SEARCH_CONNECTION_NAME."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = None
@@ -364,7 +361,7 @@ class TestSearchConfig:
         
         assert "SearchConfig Missing required Azure Search environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_endpoint(self, mock_config_patch):
         """Test SearchConfig.from_env with missing AZURE_AI_SEARCH_ENDPOINT."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "EnvConnection"
@@ -375,7 +372,7 @@ class TestSearchConfig:
         
         assert "SearchConfig Missing required Azure Search environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_missing_index_name(self, mock_config_patch):
         """Test SearchConfig.from_env with missing index_name parameter."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "EnvConnection"
@@ -386,7 +383,7 @@ class TestSearchConfig:
         
         assert "SearchConfig Missing required Azure Search environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_empty_index_name(self, mock_config_patch):
         """Test SearchConfig.from_env with empty index_name parameter."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "EnvConnection"
@@ -397,7 +394,7 @@ class TestSearchConfig:
         
         assert "SearchConfig Missing required Azure Search environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_all_missing(self, mock_config_patch):
         """Test SearchConfig.from_env with all environment variables missing."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = None
@@ -408,7 +405,7 @@ class TestSearchConfig:
         
         assert "SearchConfig Missing required Azure Search environment variables" in str(exc_info.value)
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_with_special_characters(self, mock_config_patch):
         """Test SearchConfig.from_env with special characters in values."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "Connection (üñíçødé) #1"
@@ -420,7 +417,7 @@ class TestSearchConfig:
         assert search_config.endpoint == "https://search-üñíçødé.example.com/path?query=value"
         assert search_config.index_name == "index-üñíçødé-123"
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_with_long_values(self, mock_config_patch):
         """Test SearchConfig.from_env with very long values."""
         long_connection_name = "Connection" + "C" * 1000
@@ -477,7 +474,7 @@ class TestSearchConfig:
         assert "SearchConfig" in repr_str
         assert "TestConnection" in repr_str
 
-    @patch('backend.v4.magentic_agents.models.agent_models.config')
+    @patch('v4.magentic_agents.models.agent_models.config')
     def test_from_env_index_name_override(self, mock_config_patch):
         """Test that SearchConfig.from_env properly uses the provided index_name."""
         mock_config_patch.AZURE_AI_SEARCH_CONNECTION_NAME = "EnvConnection"

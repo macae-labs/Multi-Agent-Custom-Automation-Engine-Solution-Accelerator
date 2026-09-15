@@ -8,18 +8,11 @@ is mocked — no live Azure.
 """
 
 import json
-import os
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-src_backend = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "src", "backend"
-)
-if src_backend not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_backend))
 
 import credential_resolver as cr_module
 from credential_resolver import CredentialResolver

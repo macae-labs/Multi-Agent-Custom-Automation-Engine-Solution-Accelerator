@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from azure.ai.voicelive.models import ServerEventType
-from backend.v4.api import audio_router
+from v4.api import audio_router
 
 
 class _WebSocket:

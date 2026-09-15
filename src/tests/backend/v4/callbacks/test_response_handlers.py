@@ -1,59 +1,11 @@
 """Unit tests for response_handlers module."""
 
 import sys
-import os
 from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
-
-# Set required environment variables for testing
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "test_connection_string")
-os.environ.setdefault("APP_ENV", "dev")
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com/")
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "test_key")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT_NAME", "test_deployment")
-os.environ.setdefault("AZURE_AI_SUBSCRIPTION_ID", "test_subscription_id")
-os.environ.setdefault("AZURE_AI_RESOURCE_GROUP", "test_resource_group")
-os.environ.setdefault("AZURE_AI_PROJECT_NAME", "test_project_name")
-os.environ.setdefault("AZURE_AI_AGENT_ENDPOINT", "https://test.agent.azure.com/")
-os.environ.setdefault("AZURE_AI_PROJECT_ENDPOINT", "https://test.project.azure.com/")
-os.environ.setdefault("COSMOSDB_ENDPOINT", "https://test.documents.azure.com:443/")
-os.environ.setdefault("COSMOSDB_DATABASE", "test_database")
-os.environ.setdefault("COSMOSDB_CONTAINER", "test_container")
-os.environ.setdefault("AZURE_CLIENT_ID", "test_client_id")
-os.environ.setdefault("AZURE_TENANT_ID", "test_tenant_id")
-os.environ.setdefault("AZURE_OPENAI_RAI_DEPLOYMENT_NAME", "test_rai_deployment")
 
 # Mock external dependencies before importing our modules
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.agents"] = Mock()
-sys.modules["azure.ai.agents.aio"] = Mock(AgentsClient=Mock)
-sys.modules["azure.ai.projects"] = Mock()
-sys.modules["azure.ai.projects.aio"] = Mock(AIProjectClient=Mock)
-sys.modules["azure.ai.projects.models"] = Mock(MCPTool=Mock)
-sys.modules["azure.ai.projects.models._models"] = Mock()
-sys.modules["azure.ai.projects._client"] = Mock()
-sys.modules["azure.ai.projects.operations"] = Mock()
-sys.modules["azure.ai.projects.operations._patch"] = Mock()
-sys.modules["azure.ai.projects.operations._patch_datasets"] = Mock()
-sys.modules["azure.search"] = Mock()
-sys.modules["azure.search.documents"] = Mock()
-sys.modules["azure.search.documents.indexes"] = Mock()
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["azure.cosmos"] = Mock(CosmosClient=Mock)
-sys.modules["azure.monitor"] = Mock()
-sys.modules["azure.monitor.events"] = Mock()
-sys.modules["azure.monitor.events.extension"] = Mock()
-sys.modules["azure.monitor.opentelemetry"] = Mock()
-sys.modules["azure.monitor.opentelemetry.exporter"] = Mock()
 
 
 # Mock agent_framework dependencies
@@ -80,38 +32,12 @@ mock_agent_response_update = Mock()
 mock_agent_response_update.text = "Sample update text"
 mock_agent_response_update.contents = []
 
-sys.modules["agent_framework"] = Mock(
-    ChatMessage=mock_chat_message, Message=MockMessage
-)
-sys.modules["agent_framework._workflows"] = Mock()
-sys.modules["agent_framework._workflows._magentic"] = Mock(
-    AgentRunResponseUpdate=mock_agent_response_update
-)
-sys.modules["agent_framework.azure"] = Mock(AzureOpenAIChatClient=Mock())
-sys.modules["agent_framework._content"] = Mock()
-sys.modules["agent_framework._agents"] = Mock()
-sys.modules["agent_framework._agents._agent"] = Mock()
 
 # Mock common dependencies
-sys.modules["common"] = Mock()
-sys.modules["common.config"] = Mock()
-sys.modules["common.config.app_config"] = Mock(config=Mock())
-sys.modules["common.models"] = Mock()
-sys.modules["common.models.messages_af"] = Mock(TeamConfiguration=Mock())
-sys.modules["common.database"] = Mock()
-sys.modules["common.database.cosmosdb"] = Mock()
-sys.modules["common.database.database_factory"] = Mock()
-sys.modules["common.utils"] = Mock()
-sys.modules["common.utils.utils_af"] = Mock()
-sys.modules["common.utils.event_utils"] = Mock()
-sys.modules["common.utils.otlp_tracing"] = Mock()
 
 # Mock v4 config dependencies
 mock_connection_config = Mock()
 mock_connection_config.send_status_update_async = AsyncMock()
-sys.modules["v4"] = Mock()
-sys.modules["v4.config"] = Mock()
-sys.modules["v4.config.settings"] = Mock(connection_config=mock_connection_config)
 
 # Mock v4 models
 mock_websocket_message_type = Mock()
@@ -125,18 +51,9 @@ mock_agent_tool_call = Mock()
 mock_agent_tool_message = Mock()
 mock_agent_tool_message.tool_calls = []
 
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.models"] = Mock(MPlan=Mock(), PlanStatus=Mock())
-sys.modules["v4.models.messages"] = Mock(
-    AgentMessage=mock_agent_message,
-    AgentMessageStreaming=mock_agent_message_streaming,
-    AgentToolCall=mock_agent_tool_call,
-    AgentToolMessage=mock_agent_tool_message,
-    WebsocketMessageType=mock_websocket_message_type,
-)
 
 # Now import our module under test
-from backend.v4.callbacks.response_handlers import (  # noqa: E402
+from v4.callbacks.response_handlers import (  # noqa: E402
     clean_citations,
     _is_function_call_item,
     _extract_tool_calls_from_contents,
@@ -144,10 +61,22 @@ from backend.v4.callbacks.response_handlers import (  # noqa: E402
     streaming_agent_response_callback,
 )
 
-# Access mocked modules that we'll use in tests
-connection_config = sys.modules["v4.config.settings"].connection_config
-AgentMessage = sys.modules["v4.models.messages"].AgentMessage
-AgentMessageStreaming = sys.modules["v4.models.messages"].AgentMessageStreaming
+
+connection_config = mock_connection_config
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.callbacks.response_handlers parcheados en SU namespace y sólo durante cada
+    test. Antes eran Mocks instalados en sys.modules a nivel de módulo para
+    todo el proceso (INC-2026-004)."""
+    import importlib
+
+    mod = importlib.import_module("v4.callbacks.response_handlers")
+    for name, value in (
+        ("connection_config", connection_config),
+    ):
+        monkeypatch.setattr(mod, name, value)
 AgentToolCall = sys.modules["v4.models.messages"].AgentToolCall
 AgentToolMessage = sys.modules["v4.models.messages"].AgentToolMessage
 WebsocketMessageType = sys.modules["v4.models.messages"].WebsocketMessageType
@@ -320,7 +249,7 @@ class TestExtractToolCallsFromContents:
             del mock_item2.text
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentToolCall"
+            "v4.callbacks.response_handlers.AgentToolCall"
         ) as mock_agent_tool_call:
             mock_tool_call1 = Mock()
             mock_tool_call2 = Mock()
@@ -351,7 +280,7 @@ class TestExtractToolCallsFromContents:
         mock_text_item.text = "some text"
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentToolCall"
+            "v4.callbacks.response_handlers.AgentToolCall"
         ) as mock_agent_tool_call:
             mock_tool_call = Mock()
             mock_agent_tool_call.return_value = mock_tool_call
@@ -372,7 +301,7 @@ class TestExtractToolCallsFromContents:
         mock_item.arguments = {"arg": "value"}
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentToolCall"
+            "v4.callbacks.response_handlers.AgentToolCall"
         ) as mock_agent_tool_call:
             mock_tool_call = Mock()
             mock_agent_tool_call.return_value = mock_tool_call
@@ -392,7 +321,7 @@ class TestExtractToolCallsFromContents:
         mock_item.arguments = None
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentToolCall"
+            "v4.callbacks.response_handlers.AgentToolCall"
         ) as mock_agent_tool_call:
             mock_tool_call = Mock()
             mock_agent_tool_call.return_value = mock_tool_call
@@ -415,14 +344,14 @@ class TestAgentResponseCallback:
         mock_message.author_name = "TestAgent"
         mock_message.role = "assistant"
 
-        with patch("backend.v4.callbacks.response_handlers.logger") as mock_logger:
+        with patch("v4.callbacks.response_handlers.logger") as mock_logger:
             agent_response_callback("agent_123", mock_message, user_id=None)
             mock_logger.debug.assert_called_once_with(
                 "No user_id provided; skipping websocket send for final message."
             )
 
-    @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
-    @patch("backend.v4.callbacks.response_handlers.time.time")
+    @patch("v4.callbacks.response_handlers.asyncio.create_task")
+    @patch("v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_with_chat_message(
         self, mock_time, mock_create_task
     ):
@@ -439,7 +368,7 @@ class TestAgentResponseCallback:
         )
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessage"
+            "v4.callbacks.response_handlers.AgentMessage"
         ) as mock_agent_message:
             mock_agent_msg = Mock()
             mock_agent_message.return_value = mock_agent_msg
@@ -456,9 +385,9 @@ class TestAgentResponseCallback:
             # Verify asyncio.create_task was called
             mock_create_task.assert_called_once()
 
-    @patch("backend.v4.callbacks.response_handlers.connection_config")
-    @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
-    @patch("backend.v4.callbacks.response_handlers.time.time")
+    @patch("v4.callbacks.response_handlers.connection_config")
+    @patch("v4.callbacks.response_handlers.asyncio.create_task")
+    @patch("v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_fallback_message(
         self, mock_time, mock_create_task, mock_conn_config
     ):
@@ -477,7 +406,7 @@ class TestAgentResponseCallback:
             del mock_message.role
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessage"
+            "v4.callbacks.response_handlers.AgentMessage"
         ) as mock_agent_message:
             mock_agent_msg = Mock()
             mock_agent_message.return_value = mock_agent_msg
@@ -491,8 +420,8 @@ class TestAgentResponseCallback:
                 content="Fallback message text",
             )
 
-    @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
-    @patch("backend.v4.callbacks.response_handlers.time.time")
+    @patch("v4.callbacks.response_handlers.asyncio.create_task")
+    @patch("v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_no_text_attribute(
         self, mock_time, mock_create_task
     ):
@@ -507,7 +436,7 @@ class TestAgentResponseCallback:
         mock_message.author_name = "TestAgent"
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessage"
+            "v4.callbacks.response_handlers.AgentMessage"
         ) as mock_agent_message:
             mock_agent_msg = Mock()
             mock_agent_message.return_value = mock_agent_msg
@@ -519,9 +448,9 @@ class TestAgentResponseCallback:
                 agent_name="TestAgent", timestamp="1234567890.0", content=""
             )
 
-    @patch("backend.v4.callbacks.response_handlers.connection_config")
-    @patch("backend.v4.callbacks.response_handlers.logger")
-    @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
+    @patch("v4.callbacks.response_handlers.connection_config")
+    @patch("v4.callbacks.response_handlers.logger")
+    @patch("v4.callbacks.response_handlers.asyncio.create_task")
     def test_agent_response_callback_exception_handling(
         self, mock_create_task, mock_logger, mock_conn_config
     ):
@@ -540,16 +469,16 @@ class TestAgentResponseCallback:
         mock_message.text = "Test message"
         mock_message.author_name = "TestAgent"
 
-        with patch("backend.v4.callbacks.response_handlers.AgentMessage"):
+        with patch("v4.callbacks.response_handlers.AgentMessage"):
             agent_response_callback("agent_123", mock_message, user_id="user_456")
 
             # Verify error was logged
             mock_logger.error.assert_called_once()
 
-    @patch("backend.v4.callbacks.response_handlers.connection_config")
-    @patch("backend.v4.callbacks.response_handlers.logger")
-    @patch("backend.v4.callbacks.response_handlers.asyncio.create_task")
-    @patch("backend.v4.callbacks.response_handlers.time.time")
+    @patch("v4.callbacks.response_handlers.connection_config")
+    @patch("v4.callbacks.response_handlers.logger")
+    @patch("v4.callbacks.response_handlers.asyncio.create_task")
+    @patch("v4.callbacks.response_handlers.time.time")
     def test_agent_response_callback_successful_logging(
         self, mock_time, mock_create_task, mock_logger, mock_conn_config
     ):
@@ -565,7 +494,7 @@ class TestAgentResponseCallback:
         mock_message.author_name = "TestAgent"
         mock_message.role = "assistant"
 
-        with patch("backend.v4.callbacks.response_handlers.AgentMessage"):
+        with patch("v4.callbacks.response_handlers.AgentMessage"):
             agent_response_callback("agent_123", mock_message, user_id="user_456")
 
             # Verify info log was called with truncated message
@@ -602,7 +531,7 @@ class TestStreamingAgentResponseCallback:
         mock_update.contents = []
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+            "v4.callbacks.response_handlers.AgentMessageStreaming"
         ) as mock_streaming:
             mock_streaming_obj = Mock()
             mock_streaming.return_value = mock_streaming_obj
@@ -646,7 +575,7 @@ class TestStreamingAgentResponseCallback:
         mock_update.contents = [mock_content1, mock_content2, mock_content3]
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+            "v4.callbacks.response_handlers.AgentMessageStreaming"
         ) as mock_streaming:
             mock_streaming_obj = Mock()
             mock_streaming.return_value = mock_streaming_obj
@@ -674,7 +603,7 @@ class TestStreamingAgentResponseCallback:
 
         # Should not call AgentMessageStreaming since there's no text
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+            "v4.callbacks.response_handlers.AgentMessageStreaming"
         ) as mock_streaming:
             await streaming_agent_response_callback(
                 "agent_123", mock_update, False, user_id="user_456"
@@ -699,20 +628,20 @@ class TestStreamingAgentResponseCallback:
         connection_config.send_status_update_async.reset_mock()
 
         with patch(
-            "backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents"
+            "v4.callbacks.response_handlers._extract_tool_calls_from_contents"
         ) as mock_extract:
             mock_tool_call = Mock()
             mock_extract.return_value = [mock_tool_call]
 
             with patch(
-                "backend.v4.callbacks.response_handlers.AgentToolMessage"
+                "v4.callbacks.response_handlers.AgentToolMessage"
             ) as mock_tool_message:
                 mock_tool_msg = Mock()
                 mock_tool_msg.tool_calls = []
                 mock_tool_message.return_value = mock_tool_msg
 
                 with patch(
-                    "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+                    "v4.callbacks.response_handlers.AgentMessageStreaming"
                 ) as mock_streaming:
                     mock_streaming_obj = Mock()
                     mock_streaming.return_value = mock_streaming_obj
@@ -741,12 +670,12 @@ class TestStreamingAgentResponseCallback:
             del mock_update.contents
 
         with patch(
-            "backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents"
+            "v4.callbacks.response_handlers._extract_tool_calls_from_contents"
         ) as mock_extract:
             mock_extract.return_value = []
 
             with patch(
-                "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+                "v4.callbacks.response_handlers.AgentMessageStreaming"
             ) as mock_streaming:
                 mock_streaming_obj = Mock()
                 mock_streaming.return_value = mock_streaming_obj
@@ -771,12 +700,12 @@ class TestStreamingAgentResponseCallback:
         mock_update.contents = None
 
         with patch(
-            "backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents"
+            "v4.callbacks.response_handlers._extract_tool_calls_from_contents"
         ) as mock_extract:
             mock_extract.return_value = []
 
             with patch(
-                "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+                "v4.callbacks.response_handlers.AgentMessageStreaming"
             ) as mock_streaming:
                 mock_streaming_obj = Mock()
                 mock_streaming.return_value = mock_streaming_obj
@@ -800,8 +729,8 @@ class TestStreamingAgentResponseCallback:
             "Test exception"
         )
 
-        with patch("backend.v4.callbacks.response_handlers.logger") as mock_logger:
-            with patch("backend.v4.callbacks.response_handlers.AgentMessageStreaming"):
+        with patch("v4.callbacks.response_handlers.logger") as mock_logger:
+            with patch("v4.callbacks.response_handlers.AgentMessageStreaming"):
                 await streaming_agent_response_callback(
                     "agent_123", mock_update, False, user_id="user_456"
                 )
@@ -820,14 +749,14 @@ class TestStreamingAgentResponseCallback:
         mock_update.contents = []
 
         with patch(
-            "backend.v4.callbacks.response_handlers._extract_tool_calls_from_contents"
+            "v4.callbacks.response_handlers._extract_tool_calls_from_contents"
         ) as mock_extract:
             # Mock multiple tool calls
             mock_tool_calls = [Mock(), Mock(), Mock()]
             mock_extract.return_value = mock_tool_calls
 
             with patch(
-                "backend.v4.callbacks.response_handlers.AgentToolMessage"
+                "v4.callbacks.response_handlers.AgentToolMessage"
             ) as mock_tool_message:
                 mock_tool_msg = Mock()
                 mock_tool_msg.tool_calls = []
@@ -849,7 +778,7 @@ class TestStreamingAgentResponseCallback:
         mock_update.contents = []
 
         with patch(
-            "backend.v4.callbacks.response_handlers.AgentMessageStreaming"
+            "v4.callbacks.response_handlers.AgentMessageStreaming"
         ) as mock_streaming:
             mock_streaming_obj = Mock()
             mock_streaming.return_value = mock_streaming_obj

@@ -1,4 +1,4 @@
-"""Unit tests for backend.v4.magentic_agents.proxy_agent module."""
+"""Unit tests for v4.magentic_agents.proxy_agent module."""
 
 import asyncio
 import logging
@@ -9,12 +9,6 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
 # Mock the dependencies before importing the module under test
-sys.modules["agent_framework"] = Mock()
-sys.modules["v4"] = Mock()
-sys.modules["v4.config"] = Mock()
-sys.modules["v4.config.settings"] = Mock()
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock()
 
 # Create mock classes
 mock_base_agent = Mock()
@@ -38,30 +32,40 @@ mock_websocket_message_type.USER_CLARIFICATION_REQUEST = "USER_CLARIFICATION_REQ
 mock_websocket_message_type.TIMEOUT_NOTIFICATION = "TIMEOUT_NOTIFICATION"
 
 # Set up the mock modules
-sys.modules["agent_framework"].BaseAgent = mock_base_agent
-sys.modules["agent_framework"].AgentRunResponse = mock_agent_run_response
-sys.modules["agent_framework"].AgentRunResponseUpdate = mock_agent_run_response_update
-sys.modules["agent_framework"].ChatMessage = mock_chat_message
-sys.modules["agent_framework"].Role = mock_role
-sys.modules["agent_framework"].TextContent = mock_text_content
-sys.modules["agent_framework"].UsageContent = mock_usage_content
-sys.modules["agent_framework"].UsageDetails = mock_usage_details
-sys.modules["agent_framework"].AgentThread = mock_agent_thread
 
-sys.modules["v4.config.settings"].connection_config = mock_connection_config
-sys.modules["v4.config.settings"].orchestration_config = mock_orchestration_config
 
-sys.modules[
-    "v4.models.messages"
-].UserClarificationRequest = mock_user_clarification_request
-sys.modules[
-    "v4.models.messages"
-].UserClarificationResponse = mock_user_clarification_response
-sys.modules["v4.models.messages"].TimeoutNotification = mock_timeout_notification
-sys.modules["v4.models.messages"].WebsocketMessageType = mock_websocket_message_type
 
 # Now import the module under test
-import backend.v4.magentic_agents.proxy_agent as proxy_agent_module
+import v4.magentic_agents.proxy_agent as proxy_agent_module
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores del módulo bajo test parcheados en SU namespace y sólo durante
+    cada test (antes se mutaban los módulos REALES de agent_framework / v4 en
+    sys.modules a nivel de módulo y quedaban envenenados para todo el proceso)."""
+    import importlib
+
+    mod = importlib.import_module("v4.magentic_agents.proxy_agent")
+    for name, value in (
+        ('BaseAgent', mock_base_agent),
+        ('AgentRunResponse', mock_agent_run_response),
+        ('AgentRunResponseUpdate', mock_agent_run_response_update),
+        ('ChatMessage', mock_chat_message),
+        ('Role', mock_role),
+        ('TextContent', mock_text_content),
+        ('UsageContent', mock_usage_content),
+        ('UsageDetails', mock_usage_details),
+        ('AgentThread', mock_agent_thread),
+        ('connection_config', mock_connection_config),
+        ('orchestration_config', mock_orchestration_config),
+        ('UserClarificationRequest', mock_user_clarification_request),
+        ('UserClarificationResponse', mock_user_clarification_response),
+        ('TimeoutNotification', mock_timeout_notification),
+        ('WebsocketMessageType', mock_websocket_message_type),
+    ):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, value)
 
 
 def test_module_imports():
@@ -1111,10 +1115,10 @@ class TestCreateProxyAgentFactory:
     """Test cases for create_proxy_agent factory function."""
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.proxy_agent.ProxyAgent")
+    @patch("v4.magentic_agents.proxy_agent.ProxyAgent")
     async def test_create_proxy_agent_with_user_id(self, mock_proxy_class):
         """Test create_proxy_agent factory with user_id."""
-        from backend.v4.magentic_agents.proxy_agent import create_proxy_agent
+        from v4.magentic_agents.proxy_agent import create_proxy_agent
 
         mock_instance = Mock()
         mock_proxy_class.return_value = mock_instance
@@ -1125,10 +1129,10 @@ class TestCreateProxyAgentFactory:
         mock_proxy_class.assert_called_once_with(user_id="test-user")
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.proxy_agent.ProxyAgent")
+    @patch("v4.magentic_agents.proxy_agent.ProxyAgent")
     async def test_create_proxy_agent_without_user_id(self, mock_proxy_class):
         """Test create_proxy_agent factory without user_id."""
-        from backend.v4.magentic_agents.proxy_agent import create_proxy_agent
+        from v4.magentic_agents.proxy_agent import create_proxy_agent
 
         mock_instance = Mock()
         mock_proxy_class.return_value = mock_instance
@@ -1139,10 +1143,10 @@ class TestCreateProxyAgentFactory:
         mock_proxy_class.assert_called_once_with(user_id=None)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.proxy_agent.ProxyAgent")
+    @patch("v4.magentic_agents.proxy_agent.ProxyAgent")
     async def test_create_proxy_agent_with_none_user_id(self, mock_proxy_class):
         """Test create_proxy_agent factory with explicit None user_id."""
-        from backend.v4.magentic_agents.proxy_agent import create_proxy_agent
+        from v4.magentic_agents.proxy_agent import create_proxy_agent
 
         mock_instance = Mock()
         mock_proxy_class.return_value = mock_instance

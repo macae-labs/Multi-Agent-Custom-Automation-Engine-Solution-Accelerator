@@ -5,17 +5,15 @@ Working unit tests for auth_utils.py module compatible with pytest command.
 import pytest
 import base64
 import json
-import sys
 import os
 from unittest.mock import patch, MagicMock
 
 # Add the source root directory to the Python path for imports
 src_path = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 src_path = os.path.abspath(src_path)
-sys.path.insert(0, src_path)
 
 # Import the functions to test - using absolute import path that coverage can track
-from backend.auth.auth_utils import get_authenticated_user_details, get_tenantid  # noqa: E402
+from auth.auth_utils import get_authenticated_user_details, get_tenantid  # noqa: E402
 
 
 class TestGetAuthenticatedUserDetails:
@@ -126,7 +124,7 @@ class TestGetAuthenticatedUserDetails:
         # El test valida que headers vacíos no rompan la función,
         # no el comportamiento del dev token acquisition.
         with patch(
-            "backend.auth.auth_utils._dev_acquire_user_token",
+            "auth.auth_utils._dev_acquire_user_token",
             return_value=None,
         ):
             result = get_authenticated_user_details(empty_headers)
@@ -231,7 +229,7 @@ class TestGetTenantId:
             assert result == ""
 
             # Verify that the exception was logged
-            mock_get_logger.assert_called_once_with("backend.auth.auth_utils")
+            mock_get_logger.assert_called_once_with("auth.auth_utils")
             mock_logger.exception.assert_called_once()
 
             # Verify the exception argument is not None

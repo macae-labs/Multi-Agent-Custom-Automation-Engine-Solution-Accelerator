@@ -1,10 +1,10 @@
-"""Unit tests for backend.middleware.health_check module."""
+"""Unit tests for middleware.health_check module."""
 
 from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
 # Import the module under test
-from backend.middleware.health_check import (
+from middleware.health_check import (
     HealthCheckResult,
     HealthCheckSummary,
     HealthCheckMiddleware,
@@ -361,7 +361,7 @@ class TestHealthCheckMiddleware:
         checks = {"exception": exception_check}
         middleware = HealthCheckMiddleware(self.mock_app, checks)
 
-        with patch("backend.middleware.health_check.logging.error") as mock_logger:
+        with patch("middleware.health_check.logging.error") as mock_logger:
             result = await middleware.check()
 
             assert result.status is False
@@ -389,7 +389,7 @@ class TestHealthCheckMiddleware:
         checks = {"non_coroutine": non_coroutine_check}
         middleware = HealthCheckMiddleware(self.mock_app, checks)
 
-        with patch("backend.middleware.health_check.logging.error") as mock_logger:
+        with patch("middleware.health_check.logging.error") as mock_logger:
             result = await middleware.check()
 
             assert result.status is False
@@ -440,7 +440,7 @@ class TestHealthCheckMiddleware:
 
             # Mock PlainTextResponse
             with patch(
-                "backend.middleware.health_check.PlainTextResponse"
+                "middleware.health_check.PlainTextResponse"
             ) as mock_response:
                 mock_response_instance = Mock()
                 mock_response.return_value = mock_response_instance
@@ -500,7 +500,7 @@ class TestHealthCheckMiddleware:
             mock_check.return_value = mock_status
 
             with patch(
-                "backend.middleware.health_check.PlainTextResponse"
+                "middleware.health_check.PlainTextResponse"
             ) as mock_response:
                 mock_response_instance = Mock()
                 mock_response.return_value = mock_response_instance
@@ -533,10 +533,10 @@ class TestHealthCheckMiddleware:
             mock_check.return_value = mock_status
 
             with patch(
-                "backend.middleware.health_check.JSONResponse"
+                "middleware.health_check.JSONResponse"
             ) as mock_json_response:
                 with patch(
-                    "backend.middleware.health_check.jsonable_encoder"
+                    "middleware.health_check.jsonable_encoder"
                 ) as mock_encoder:
                     mock_response_instance = Mock()
                     mock_json_response.return_value = mock_response_instance

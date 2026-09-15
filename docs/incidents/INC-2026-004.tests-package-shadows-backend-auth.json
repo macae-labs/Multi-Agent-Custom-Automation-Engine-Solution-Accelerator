@@ -2,7 +2,7 @@
   "schema_version": "1",
   "incident_id": "INC-2026-004",
   "domain": "tests",
-  "status": "open",
+  "status": "closed",
   "invariant": {
     "id": "INV-TEST-PACKAGES-NEVER-SHADOW-BACKEND-PACKAGES",
     "statement": "Ningún directorio de tests se registra en sys.modules con el nombre de un paquete del backend (auth, v4, common…); los imports reales del backend resuelven al backend en cualquier lote."
@@ -14,10 +14,21 @@
       "sys_modules_auth_file": "src/tests/backend/auth/__init__.py",
       "import_auth_auth_utils": "ModuleNotFoundError en el lote completo, OK en archivos aislados",
       "tests_dir_has_init": [
-        "src/tests/backend/auth/__init__.py"
+        "src/tests/backend/auth/__init__.py",
+        "src/tests/backend/common/config/__init__.py",
+        "src/tests/backend/common/database/__init__.py",
+        "src/tests/backend/v4/magentic_agents/__init__.py",
+        "src/tests/backend/v4/magentic_agents/models/__init__.py",
+        "src/tests/backend/v4/orchestration/__init__.py"
       ],
       "parent_dirs_have_init": false,
-      "pytest_import_mode": "importlib"
+      "pytest_import_mode": "importlib",
+      "product_alias_package": "src/__init__.py + src/backend/__init__.py: los tests importan una SEGUNDA copia del producto como backend.v4.* (28 archivos, 442 strings de patch)",
+      "module_level_sys_modules_stub_files": 22,
+      "file_path_loaders_registering_sys_modules": 7,
+      "router_coverage_test_deletes_real_modules": true,
+      "module_level_env_or_syspath_mutation_files": 20,
+      "ci_isolated_invocations": 3
     }
   },
   "env_fingerprint": {
@@ -31,7 +42,7 @@
     "network_scope": "loopback_only",
     "git": {
       "branch": "stable/v4-baseline",
-      "base_sha": "524adfc5",
+      "base_sha": "69d34c39",
       "dirty": true
     }
   },
@@ -60,11 +71,48 @@
       "reversible": true,
       "human_required": false,
       "description": "Test temporal que imprime sys.modules['auth'].__file__ dentro del lote: src/tests/backend/auth/__init__.py. Script aparte (conftest + backend.auth.auth_utils, sin pytest): import auth.auth_utils OK → el shadowing lo introduce la colección de pytest."
+    },
+    {
+      "stage": "diagnose",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-15T03:44:29Z",
+      "description": "Sonda de identidad por test (module_identity_tracker, plugin -p): test_router.py::test_router_import_with_mocks BORRA v4.config.settings, common.config.app_config, v4.models.messages y v4.orchestration.orchestration_manager de sys.modules; test_settings.py falla 14/52 sólo en lote (52/52 aislado). Los cargadores por ruta (7 archivos) registraban módulos con Mocks dentro para todo el proceso."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-15T03:44:29Z",
+      "description": "Basura fuera, sin guardianes: (a) 6 __init__.py de tests borrados (auth + 5 más, misma trampa); (b) AST: sys.modules[...] = Mock a nivel de módulo fuera de 22 archivos (533 líneas); (c) alias backend.* → nombres del producto en 28 archivos y src/__init__.py + src/backend/__init__.py borrados; (d) test_router.py borrado (cobertura por importación bajo Mocks); (e) 7 cargadores por ruta → import real + fixture _collaborators_patched; (f) 5 archivos en cuarentena → fixtures con alcance de test y 19 tests reescritos contra las clases reales (Message, AgentResponseUpdate, GroupChat*Event, Agent real, contrato real de HumanApprovalMagenticManager); (g) os.environ/sys.path a nivel de módulo fuera de 20 archivos (conftest única fuente); (h) conftest sin _setup_agent_framework_mock, _stub_module, _patch_azure_ai_projects_models ni no-op de monitor; (i) test.yml una sola invocación; (j) skip 'v4 mockeado' de test_app.py fuera."
+    },
+    {
+      "stage": "validate",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-15T03:44:29Z",
+      "description": "Lote completo en un proceso: 987 passed, 4 skipped, 0 xfail; sonda de identidad: 0 señales; comando exacto de test.yml: cobertura 49.73% (main 48.15%, umbral 45); mypy/ruff/ruff format del backend en verde."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": null,
+      "description": "Commit y PR: click de Winston."
     }
   ],
   "probe_budget": {
     "max_probes": 3,
-    "used": 2,
+    "used": 3,
     "exhausted_outcome": null
   },
   "diagnose": {
@@ -82,7 +130,7 @@
       "expected_signal_when_healthy": "src/backend/auth/__init__.py"
     },
     "confirmed_cause": {
-      "statement": "pytest en modo importlib deriva el nombre de módulo desde el directorio más alto con __init__.py: src/tests/backend/auth → `auth.test_auth_utils`, e inserta `auth` (paquete de tests) en sys.modules antes de que nada importe el backend. El Mock de test_router.py es un síntoma derivado (parche local al mismo shadowing).",
+      "statement": "Cadena desde el nivel más alto: (1) src/__init__.py + src/backend/__init__.py dejaban importar el producto como backend.* — una segunda copia con singletons duplicados e isinstance roto entre copias; (2) como parchear la copia no alcanzaba al producto, los tests instalaban Mocks en sys.modules['v4.*'] antes de importar, cargaban módulos por ruta con dependencias falsas y test_router borraba módulos reales; (3) pytest en modo importlib deriva el nombre del paquete de tests desde el directorio más alto con __init__.py: src/tests/backend/auth → `auth`, sombreando al backend; (4) para sobrevivir, test.yml aislaba 3 invocaciones y test_app.py se saltaba a sí mismo. Todo era la misma basura, no cuatro problemas.",
       "confirmed_by_signal": true,
       "evidence_ref": "sys.modules['auth'].__file__ = src/tests/backend/auth/__init__.py dentro del lote; fuera de pytest el import resuelve a src/backend/auth."
     },
@@ -95,27 +143,152 @@
     ]
   },
   "lanes_not_covered": [
-    "Corrección estructural pendiente: hacer paquetes src/tests y src/tests/backend (pytest derivaría tests.backend.auth…) o quitar src/tests/backend/auth/__init__.py; requiere el lote completo y revisar si test.yml puede dejar de aislar archivos y test_router.py de stubbear sys.modules."
+    "src/tests/agents y src/tests/mcp_server no corren en test.yml (sólo src/tests/backend); test_foundry_integration.py importa src.backend.* (namespace package sin __init__; resuelve con la raíz en PYTHONPATH).",
+    "Lint heredado de src/tests fuera del gate (quality-gate.yml); en los archivos tocados sólo se verificó E9/F (F841/F402 preexistentes intactos)."
   ],
   "residual_risk": [
-    "Cualquier fixture o test que importe un paquete del backend por su nombre real en el lote completo puede resolver al paquete de tests homónimo."
+    "Un directorio nuevo de tests con __init__.py cuyo nombre coincida con un paquete del backend vuelve a sombrear en colección; la sonda de identidad no lo ve (actúa por test). Invariante verificable: find src/tests/backend -name __init__.py → vacío.",
+    "Las fixtures _collaborators_patched parchean nombres importados por el módulo bajo test; si el producto deja de importar un nombre, monkeypatch.setattr falla en ese test (señal deseada, no silenciosa)."
   ],
   "learn": {
     "retrieval_keys": [
       "ModuleNotFoundError auth.auth_utils lote completo",
       "sys.modules auth tests package",
       "pytest importlib mode package name collision",
-      "test.yml isolation reason"
+      "test.yml isolation reason",
+      "backend.v4 alias segunda copia del producto",
+      "isinstance falla entre backend.v4.models y v4.models",
+      "sys.modules Mock a nivel de módulo",
+      "spec_from_file_location tests",
+      "test_settings falla sólo en lote",
+      "module identity tracker MODTRACK",
+      "xfail cuarentena INC-2026-004",
+      "os.environ.update en tests sobrescribe conftest"
     ],
     "executable_probe": {
-      "class": "write-scratch",
-      "command_or_test": "test temporal print(sys.modules['auth'].__file__) en src/tests/backend/auth + uv run python -m pytest src/tests/backend/auth -s -k debug",
+      "class": "read-only",
       "cwd": "src/backend",
-      "expected_signal_when_failing": "src/tests/backend/auth/__init__.py",
-      "expected_signal_when_healthy": "src/backend/auth/__init__.py"
+      "command_or_test": "PYTHONPATH=$PWD/../../docs/incidents/probes:$PWD/../..:$PWD uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker 2>&1 | grep -c MODTRACK ; find ../tests/backend -name __init__.py | wc -l ; grep -rlE 'sys\\.path\\.(insert|append)' ../tests/backend | wc -l",
+      "expected_signal_when_failing": "≥1 línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO, o algún __init__.py bajo src/tests/backend",
+      "expected_signal_when_healthy": "0 líneas MODTRACK, 0 __init__.py y 0 sys.path.insert; lote en un proceso sin xfail"
     },
-    "last_verified": "2026-09-15T01:30:00Z",
-    "expires_if_not_reverified_by": "2026-12-14T01:30:00Z",
+    "last_verified": "2026-09-15T03:44:29Z",
+    "expires_if_not_reverified_by": "2026-12-14T03:44:29Z",
     "operational": true
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "69d34c39",
+      "commit_or_pr": "pendiente: árbol de trabajo sobre 69d34c39, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      ".github/workflows/test.yml",
+      "docs/incidents/probes/module_identity_tracker.py",
+      "src/__init__.py",
+      "src/backend/__init__.py",
+      "src/tests/backend/auth/__init__.py",
+      "src/tests/backend/auth/conftest.py",
+      "src/tests/backend/auth/test_auth_utils.py",
+      "src/tests/backend/common/config/__init__.py",
+      "src/tests/backend/common/config/test_app_config.py",
+      "src/tests/backend/common/database/__init__.py",
+      "src/tests/backend/common/database/test_cosmosdb.py",
+      "src/tests/backend/common/database/test_database_base.py",
+      "src/tests/backend/common/database/test_database_factory.py",
+      "src/tests/backend/common/utils/test_event_utils.py",
+      "src/tests/backend/common/utils/test_otlp_tracing.py",
+      "src/tests/backend/common/utils/test_utils_af.py",
+      "src/tests/backend/common/utils/test_utils_agents.py",
+      "src/tests/backend/common/utils/test_utils_date.py",
+      "src/tests/backend/conftest.py",
+      "src/tests/backend/middleware/test_health_check.py",
+      "src/tests/backend/test_app.py",
+      "src/tests/backend/v4/api/test_audio_router.py",
+      "src/tests/backend/v4/api/test_router.py",
+      "src/tests/backend/v4/api/test_router_decision.py",
+      "src/tests/backend/v4/api/test_tool_activity_describe.py",
+      "src/tests/backend/v4/callbacks/test_response_handlers.py",
+      "src/tests/backend/v4/common/services/test_agents_service.py",
+      "src/tests/backend/v4/common/services/test_base_api_service.py",
+      "src/tests/backend/v4/common/services/test_foundry_service.py",
+      "src/tests/backend/v4/common/services/test_generated_file_store.py",
+      "src/tests/backend/v4/common/services/test_mcp_service.py",
+      "src/tests/backend/v4/common/services/test_plan_service.py",
+      "src/tests/backend/v4/common/services/test_team_service.py",
+      "src/tests/backend/v4/config/test_agent_registry.py",
+      "src/tests/backend/v4/config/test_settings.py",
+      "src/tests/backend/v4/magentic_agents/__init__.py",
+      "src/tests/backend/v4/magentic_agents/common/test_lifecycle.py",
+      "src/tests/backend/v4/magentic_agents/models/__init__.py",
+      "src/tests/backend/v4/magentic_agents/models/test_agent_models.py",
+      "src/tests/backend/v4/magentic_agents/test_foundry_agent.py",
+      "src/tests/backend/v4/magentic_agents/test_magentic_agent_factory.py",
+      "src/tests/backend/v4/magentic_agents/test_proxy_agent.py",
+      "src/tests/backend/v4/orchestration/__init__.py",
+      "src/tests/backend/v4/orchestration/helper/test_plan_to_mplan_converter.py",
+      "src/tests/backend/v4/orchestration/test_human_approval_manager.py",
+      "src/tests/backend/v4/orchestration/test_orchestration_manager.py"
+    ],
+    "lines_changed": 3269,
+    "new_functions_introduced": [
+      "_collaborators_patched (fixture autouse, misma forma en 12 archivos de tests)",
+      "_base_manager_patched (fixture, test_human_approval_manager: doble ya existente sobre StandardMagenticManager)",
+      "module_identity_tracker (docs/incidents/probes, plugin -p de pytest)"
+    ],
+    "justification_if_new_functions": "Las fixtures con alcance de test sustituyen a los Mocks instalados en sys.modules para todo el proceso (misma forma que test_lifecycle); la sonda es el control de identidad que ningún test hacía. Ningún cambio de producto salvo borrar src/backend/__init__.py."
+  },
+  "validate": {
+    "closing_layer": "L3",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "El producto se importa por sus nombres reales (v4, common, auth, app) en el lote completo; sonda module_identity_tracker: 0 módulos o atributos clave reemplazados/borrados en 987 tests.",
+        "ref": "docs/incidents/probes/module_identity_tracker.py"
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "Una invocación: 987 passed, 4 skipped, 0 xfail, 0 errors (antes: 760 passed + 74 xfail en cuarentena + 3 invocaciones aisladas). Los 5 archivos en cuarentena corren contra el módulo real: 46/46, 31/31, 26/26, 44/44, cosmosdb 1 test reescrito.",
+        "ref": "uv run python -m pytest ../../src/tests/backend -q"
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Comando exacto de test.yml (--cov): 987 passed; cobertura 49.73% ≥ 45 (main 48.15%). orchestration_manager.py 73%, human_approval_manager.py 78% (con cuarentena eran 16% y 15%).",
+        "ref": ".github/workflows/test.yml"
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "Gates del backend: mypy 71 archivos sin errores, ruff check y ruff format --check en verde tras borrar src/backend/__init__.py.",
+        "ref": "quality-gate.yml"
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin cambio de integración externa; la telemetría en tests sigue en loopback (TelemetryStub)."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin UI."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "Dominio tests: el techo alcanzable cierra en L3."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "No hay despliegue asociado."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Dos controles ejecutados 2026-09-15: (1) restaurar src/tests/backend/auth/__init__.py → ERROR at setup del guardián de INC-002 en src/tests/backend/auth (auth resuelve al paquete de tests); retirado de nuevo → verde. (2) Con test_router.py presente la sonda de identidad señala test_router_import_with_mocks borrando v4.config.settings y 3 módulos más y test_settings.py falla 14/52 sólo en lote (52/52 aislado); sin test_router.py: 0 señales, 987 passed."
+    }
   }
 }

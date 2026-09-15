@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 # Environment variables are set by conftest.py
 # Import from backend - conftest.py handles path setup and external module mocking
-from backend.v4.config.settings import (
+from v4.config.settings import (
     AzureConfig,
     ConnectionConfig,
     MCPConfig,
@@ -23,7 +23,7 @@ from backend.v4.config.settings import (
 class TestAzureConfig(unittest.TestCase):
     """Test cases for AzureConfig class."""
 
-    @patch("backend.v4.config.settings.config")
+    @patch("v4.config.settings.config")
     def setUp(self, mock_config):
         """Set up test fixtures before each test method."""
         mock_config.return_value = Mock()
@@ -39,7 +39,7 @@ class TestAzureConfig(unittest.TestCase):
         self.assertIsNotNone(config.endpoint)
         self.assertIsNotNone(config.credential)
 
-    @patch("backend.v4.config.settings.ChatOptions")
+    @patch("v4.config.settings.ChatOptions")
     def test_create_execution_settings(self, mock_chat_options):
         """Test creating execution settings."""
 
@@ -54,7 +54,7 @@ class TestAzureConfig(unittest.TestCase):
             max_tokens=4000, temperature=0.3
         )
 
-    @patch("backend.v4.config.settings.config")
+    @patch("v4.config.settings.config")
     def test_ad_token_provider(self, mock_config):
         """Test AD token provider."""
         # Mock the credential and token
@@ -79,7 +79,7 @@ class TestAzureConfig(unittest.TestCase):
 class TestAzureConfigAsync(unittest.IsolatedAsyncioTestCase):
     """Async test cases for AzureConfig class."""
 
-    @patch("backend.v4.config.settings.AzureOpenAIChatClient")
+    @patch("v4.config.settings.AzureOpenAIChatClient")
     async def test_create_chat_completion_service_standard_model(
         self, mock_client_class
     ):
@@ -94,7 +94,7 @@ class TestAzureConfigAsync(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service, mock_client)
         mock_client_class.assert_called_once()
 
-    @patch("backend.v4.config.settings.AzureOpenAIChatClient")
+    @patch("v4.config.settings.AzureOpenAIChatClient")
     async def test_create_chat_completion_service_reasoning_model(
         self, mock_client_class
     ):
@@ -484,7 +484,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection)
 
-        with patch("backend.v4.config.settings.logger"):
+        with patch("v4.config.settings.logger"):
             await config.close_connection(process_id)
 
             connection.close.assert_called_once()
@@ -498,7 +498,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         process_id = "non-existent-process"
 
         with patch(
-            "backend.v4.config.settings.logger", spec=logging.Logger
+            "v4.config.settings.logger", spec=logging.Logger
         ) as mock_logger:
             await config.close_connection(process_id)
 
@@ -515,7 +515,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection)
 
-        with patch("backend.v4.config.settings.logger") as mock_logger:
+        with patch("v4.config.settings.logger") as mock_logger:
             await config.close_connection(process_id)
 
             connection.close.assert_called_once()
@@ -547,7 +547,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config = ConnectionConfig()
 
-        with patch("backend.v4.config.settings.logger") as mock_logger:
+        with patch("v4.config.settings.logger") as mock_logger:
             await config.send_status_update_async("message", "")
 
             mock_logger.warning.assert_called()
@@ -630,7 +630,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        with patch("backend.v4.config.settings.logger") as mock_logger:
+        with patch("v4.config.settings.logger") as mock_logger:
             await config.send_status_update_async(message, user_id)
 
             mock_logger.error.assert_called()
@@ -650,7 +650,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        with patch("backend.v4.config.settings.logger") as mock_logger:
+        with patch("v4.config.settings.logger") as mock_logger:
             await config.send_status_update_async("test", user_id)
 
             mock_logger.error.assert_called()
@@ -679,10 +679,10 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             return None
 
         with patch(
-            "backend.v4.config.settings.asyncio.create_task"
+            "v4.config.settings.asyncio.create_task"
         ) as mock_create_task:
             mock_create_task.side_effect = consume_coro
-            with patch("backend.v4.config.settings.logger") as mock_logger:
+            with patch("v4.config.settings.logger") as mock_logger:
                 # Add second connection for same user
                 config.add_connection(new_process_id, new_connection, user_id)
 
@@ -714,10 +714,10 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             raise Exception("Close error")
 
         with patch(
-            "backend.v4.config.settings.asyncio.create_task"
+            "v4.config.settings.asyncio.create_task"
         ) as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
-            with patch("backend.v4.config.settings.logger") as mock_logger:
+            with patch("v4.config.settings.logger") as mock_logger:
                 # Add second connection for same user
                 config.add_connection(new_process_id, new_connection, user_id)
 
@@ -744,10 +744,10 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             raise Exception("Close error")
 
         with patch(
-            "backend.v4.config.settings.asyncio.create_task"
+            "v4.config.settings.asyncio.create_task"
         ) as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
-            with patch("backend.v4.config.settings.logger") as mock_logger:
+            with patch("v4.config.settings.logger") as mock_logger:
                 # Add new connection for same process
                 config.add_connection(process_id, new_connection)
 
@@ -774,11 +774,11 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             raise Exception("Task creation error")
 
         with patch(
-            "backend.v4.config.settings.asyncio.create_task"
+            "v4.config.settings.asyncio.create_task"
         ) as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
 
-            with patch("backend.v4.config.settings.logger") as mock_logger:
+            with patch("v4.config.settings.logger") as mock_logger:
                 config.send_status_update(message, process_id)
 
                 mock_logger.error.assert_called()
@@ -797,7 +797,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         config.connections[process_id] = connection
 
         with patch(
-            "backend.v4.config.settings.asyncio.create_task"
+            "v4.config.settings.asyncio.create_task"
         ) as mock_create_task:
             # Consume coroutine to avoid warning
             mock_create_task.side_effect = lambda coro: coro.close()
@@ -813,8 +813,8 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         message = "Test message"
 
         # Mock create_task to avoid unawaited coroutine warning if called
-        with patch("backend.v4.config.settings.asyncio.create_task"):
-            with patch("backend.v4.config.settings.logger") as mock_logger:
+        with patch("v4.config.settings.asyncio.create_task"):
+            with patch("v4.config.settings.logger") as mock_logger:
                 config.send_status_update(message, process_id)
 
                 mock_logger.warning.assert_called()
@@ -825,7 +825,7 @@ class TestGlobalInstances(unittest.TestCase):
 
     def test_global_instances_exist(self):
         """Test that all global config instances exist and are of correct types."""
-        from backend.v4.config.settings import (
+        from v4.config.settings import (
             azure_config,
             connection_config,
             mcp_config,
@@ -841,7 +841,7 @@ class TestGlobalInstances(unittest.TestCase):
         self.assertIsNotNone(team_config)
 
         # Test correct types
-        from backend.v4.config.settings import (
+        from v4.config.settings import (
             AzureConfig,
             ConnectionConfig,
             MCPConfig,

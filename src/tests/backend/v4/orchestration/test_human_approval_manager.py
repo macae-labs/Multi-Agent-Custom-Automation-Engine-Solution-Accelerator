@@ -4,51 +4,11 @@ Comprehensive test cases covering HumanApprovalMagenticManager with proper mocki
 """
 
 import asyncio
-import os
-import sys
 import unittest
 from unittest.mock import Mock, AsyncMock, patch
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
-
-# Set up required environment variables before any imports
-os.environ.update(
-    {
-        "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=test-key",
-        "APP_ENV": "dev",
-        "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
-        "AZURE_OPENAI_API_KEY": "test_key",
-        "AZURE_OPENAI_DEPLOYMENT_NAME": "test_deployment",
-        "AZURE_AI_SUBSCRIPTION_ID": "test_subscription_id",
-        "AZURE_AI_RESOURCE_GROUP": "test_resource_group",
-        "AZURE_AI_PROJECT_NAME": "test_project_name",
-        "AZURE_AI_AGENT_ENDPOINT": "https://test.agent.azure.com/",
-        "AZURE_AI_PROJECT_ENDPOINT": "https://test.project.azure.com/",
-        "COSMOSDB_ENDPOINT": "https://test.documents.azure.com:443/",
-        "COSMOSDB_DATABASE": "test_database",
-        "COSMOSDB_CONTAINER": "test_container",
-        "AZURE_CLIENT_ID": "test_client_id",
-        "AZURE_TENANT_ID": "test_tenant_id",
-        "AZURE_OPENAI_RAI_DEPLOYMENT_NAME": "test_rai_deployment",
-    }
-)
 
 # Mock external Azure dependencies
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.agents"] = Mock()
-sys.modules["azure.ai.agents.aio"] = Mock(AgentsClient=Mock)
-sys.modules["azure.ai.projects"] = Mock()
-sys.modules["azure.ai.projects.aio"] = Mock(AIProjectClient=Mock)
-sys.modules["azure.ai.projects.models"] = Mock(MCPTool=Mock)
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["azure.cosmos"] = Mock(CosmosClient=Mock)
 
 
 # Mock agent_framework dependencies
@@ -125,48 +85,8 @@ ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT = "Task ledger plan prompt"
 ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT = "Task ledger plan update prompt"
 ORCHESTRATOR_PROGRESS_LEDGER_PROMPT = "Progress ledger prompt"
 
-sys.modules["agent_framework"] = Mock(
-    ChatMessage=MockChatMessage,
-    AgentResponse=Mock,
-    Message=MockChatMessage,
-)
-sys.modules["agent_framework._workflows"] = Mock()
-sys.modules["agent_framework._workflows._magentic"] = Mock(
-    MagenticContext=MockMagenticContext,
-    StandardMagenticManager=MockStandardMagenticManager,
-    ORCHESTRATOR_FINAL_ANSWER_PROMPT=ORCHESTRATOR_FINAL_ANSWER_PROMPT,
-    ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT=ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT,
-    ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT=ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT,
-    ORCHESTRATOR_PROGRESS_LEDGER_PROMPT=ORCHESTRATOR_PROGRESS_LEDGER_PROMPT,
-)
-sys.modules["agent_framework_orchestrations"] = Mock()
-sys.modules["agent_framework_orchestrations._magentic"] = Mock(
-    MagenticContext=MockMagenticContext,
-    StandardMagenticManager=MockStandardMagenticManager,
-    ORCHESTRATOR_FINAL_ANSWER_PROMPT=ORCHESTRATOR_FINAL_ANSWER_PROMPT,
-    ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT=ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT,
-    ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT=ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT,
-    ORCHESTRATOR_PROGRESS_LEDGER_PROMPT=ORCHESTRATOR_PROGRESS_LEDGER_PROMPT,
-)
-
 
 # Mock v4.models.messages
-class MockWebsocketMessageType:
-    """Mock WebsocketMessageType."""
-
-    PLAN_APPROVAL_REQUEST = "plan_approval_request"
-    PLAN_APPROVAL_RESPONSE = "plan_approval_response"
-    FINAL_RESULT_MESSAGE = "final_result_message"
-    TIMEOUT_NOTIFICATION = "timeout_notification"
-
-
-class MockPlanApprovalRequest:
-    """Mock PlanApprovalRequest."""
-
-    def __init__(self, plan=None, status="PENDING_APPROVAL", context=None):
-        self.plan = plan
-        self.status = status
-        self.context = context or {}
 
 
 class MockPlanApprovalResponse:
@@ -176,43 +96,6 @@ class MockPlanApprovalResponse:
         self.approved = approved
         self.m_plan_id = m_plan_id
 
-
-class MockFinalResultMessage:
-    """Mock FinalResultMessage."""
-
-    def __init__(self, content="", status="completed", summary=""):
-        self.content = content
-        self.status = status
-        self.summary = summary
-
-
-class MockTimeoutNotification:
-    """Mock TimeoutNotification."""
-
-    def __init__(
-        self,
-        timeout_type="approval",
-        request_id=None,
-        message="",
-        timestamp=0,
-        timeout_duration=30,
-    ):
-        self.timeout_type = timeout_type
-        self.request_id = request_id
-        self.message = message
-        self.timestamp = timestamp
-        self.timeout_duration = timeout_duration
-
-
-sys.modules["v4"] = Mock()
-sys.modules["v4.models"] = Mock()
-sys.modules["v4.models.messages"] = Mock(
-    WebsocketMessageType=MockWebsocketMessageType,
-    PlanApprovalRequest=MockPlanApprovalRequest,
-    PlanApprovalResponse=MockPlanApprovalResponse,  # This should use our custom class
-    FinalResultMessage=MockFinalResultMessage,
-    TimeoutNotification=MockTimeoutNotification,
-)
 
 # Mock v4.config.settings
 mock_connection_config = Mock()
@@ -227,12 +110,6 @@ mock_orchestration_config.set_approval_pending = Mock()
 mock_orchestration_config.wait_for_approval = AsyncMock(return_value=True)
 mock_orchestration_config.cleanup_approval = Mock()
 
-sys.modules["v4.config"] = Mock()
-sys.modules["v4.config.settings"] = Mock(
-    connection_config=mock_connection_config,
-    orchestration_config=mock_orchestration_config,
-)
-
 
 # Mock v4.models.models
 class MockMPlan:
@@ -243,32 +120,64 @@ class MockMPlan:
         self.user_id = None
 
 
-sys.modules["v4.models.models"] = Mock(MPlan=MockMPlan)
-
-
 # Mock v4.orchestration.helper.plan_to_mplan_converter
-class MockPlanToMPlanConverter:
-    """Mock PlanToMPlanConverter."""
 
-    @staticmethod
-    def convert(plan_text, facts, team, task):
-        plan = MockMPlan()
-        return plan
-
-
-sys.modules["v4.orchestration"] = Mock()
-sys.modules["v4.orchestration.helper"] = Mock()
-sys.modules["v4.orchestration.helper.plan_to_mplan_converter"] = Mock(
-    PlanToMPlanConverter=MockPlanToMPlanConverter
-)
 
 # Now import the module under test
-from backend.v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
+from agent_framework_orchestrations._magentic import StandardMagenticManager  # noqa: E402
+from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
+from v4.models.models import MPlan
+import pytest
 
-# Get mocked references for tests
-connection_config = sys.modules["v4.config.settings"].connection_config
-orchestration_config = sys.modules["v4.config.settings"].orchestration_config
-messages = sys.modules["v4.models.messages"]
+
+connection_config = mock_connection_config
+orchestration_config = mock_orchestration_config
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.orchestration.human_approval_manager parcheados en SU namespace y sólo durante cada
+    test. Antes eran Mocks instalados en sys.modules a nivel de módulo para
+    todo el proceso (INC-2026-004)."""
+    import importlib
+
+    mod = importlib.import_module("v4.orchestration.human_approval_manager")
+    for name, value in (
+        ("connection_config", connection_config),
+        ("orchestration_config", orchestration_config),
+    ):
+        monkeypatch.setattr(mod, name, value)
+
+
+@pytest.fixture(autouse=True)
+def _base_manager_patched(monkeypatch):
+    """Los métodos del StandardMagenticManager que invocan al modelo (plan,
+    replan, create_progress_ledger, prepare_final_answer) se sustituyen por el
+    doble ya existente MockStandardMagenticManager, en la clase base y sólo
+    durante cada test. Lo que se prueba es la extensión HITL del producto."""
+    base = MockStandardMagenticManager()
+
+    async def _plan(self, magentic_context):
+        message = await base.plan(magentic_context)
+        self.task_ledger = base.task_ledger
+        return message
+
+    async def _replan(self, magentic_context=None, **_kwargs):
+        return await base.replan(magentic_context)
+
+    async def _create_progress_ledger(self, magentic_context):
+        return await base.create_progress_ledger(magentic_context)
+
+    async def _prepare_final_answer(self, magentic_context):
+        return await base.prepare_final_answer(magentic_context)
+
+    for name, value in (
+        ("plan", _plan),
+        ("replan", _replan),
+        ("create_progress_ledger", _create_progress_ledger),
+        ("prepare_final_answer", _prepare_final_answer),
+    ):
+        monkeypatch.setattr(StandardMagenticManager, name, value)
 
 
 class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
@@ -299,8 +208,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         self.manager = HumanApprovalMagenticManager(
             user_id=self.user_id,
             agent=self.mock_agent,
-            chat_client=Mock(),
-            instructions="Test instructions",
         )
         self.test_context = MockMagenticContext()
 
@@ -311,38 +218,32 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         manager = HumanApprovalMagenticManager(
             user_id="test_user",
             agent=mock_agent,
-            chat_client=Mock(),
-            instructions="Test instructions",
         )
 
         self.assertEqual(manager.current_user_id, "test_user")
         self.assertTrue(manager.approval_enabled)
         self.assertIsNone(manager.magentic_plan)
 
-        # Verify parent was called with modified prompts
-        self.assertIsNotNone(manager.kwargs)
-
     def test_init_with_additional_kwargs(self):
-        """Test initialization with additional keyword arguments."""
+        """Los kwargs llegan al StandardMagenticManager real (su contrato)."""
         additional_kwargs = {
             "max_round_count": 5,
-            "temperature": 0.7,
-            "custom_param": "test_value",
+            "max_stall_count": 4,
+            "max_reset_count": 1,
         }
 
         mock_agent = Mock()
         manager = HumanApprovalMagenticManager(
             user_id="test_user",
             agent=mock_agent,
-            chat_client=Mock(),
             **additional_kwargs,
         )
 
         self.assertEqual(manager.current_user_id, "test_user")
         # Verify kwargs were passed through
-        self.assertIn("max_round_count", manager.kwargs)
-        self.assertIn("temperature", manager.kwargs)
-        self.assertIn("custom_param", manager.kwargs)
+        self.assertEqual(manager.max_round_count, 5)
+        self.assertEqual(manager.max_stall_count, 4)
+        self.assertEqual(manager.max_reset_count, 1)
 
     async def test_plan_success_approved(self):
         """Test successful plan creation and approval."""
@@ -394,7 +295,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         # Setup - simulate task_ledger being None after super().plan()
         with patch.object(self.manager, "plan", wraps=self.manager.plan):
             with patch(
-                "backend.v4.orchestration.human_approval_manager.StandardMagenticManager.plan"
+                "v4.orchestration.human_approval_manager.StandardMagenticManager.plan"
             ) as mock_super_plan:
                 mock_super_plan.return_value = MockChatMessage("Test plan")
                 # Don't set task_ledger to simulate the error condition
@@ -492,7 +393,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
 
         # Patch the PlanApprovalResponse directly
         with patch(
-            "backend.v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
+            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
             MockPlanApprovalResponse,
         ):
             orchestration_config.wait_for_approval = AsyncMock(return_value=True)
@@ -515,7 +416,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
 
         # Patch the PlanApprovalResponse directly
         with patch(
-            "backend.v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
+            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
             MockPlanApprovalResponse,
         ):
             orchestration_config.wait_for_approval = AsyncMock(return_value=False)
@@ -532,7 +433,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         """Test _wait_for_user_approval with no plan ID."""
         # Patch the PlanApprovalResponse directly
         with patch(
-            "backend.v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
+            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
             MockPlanApprovalResponse,
         ):
             result = await self.manager._wait_for_user_approval(None)
@@ -625,7 +526,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
 
         # Patch the PlanApprovalResponse directly
         with patch(
-            "backend.v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
+            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
             MockPlanApprovalResponse,
         ):
             orchestration_config.wait_for_approval = AsyncMock(return_value=True)
@@ -659,7 +560,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         result = self.manager.plan_to_obj(self.test_context, ledger)
 
         # Verify
-        self.assertIsInstance(result, MockMPlan)
+        self.assertIsInstance(result, MPlan)
 
     def test_plan_to_obj_invalid_ledger_none(self):
         """Test plan_to_obj with None ledger."""
@@ -704,7 +605,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         result = self.manager.plan_to_obj(context, ledger)
 
         # Verify
-        self.assertIsInstance(result, MockMPlan)
+        self.assertIsInstance(result, MPlan)
 
     async def test_plan_context_without_participant_descriptions(self):
         """Test plan method with context missing participant_descriptions."""
@@ -714,8 +615,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
 
         # Mock the plan_to_obj method to handle missing attribute gracefully
         with patch.object(self.manager, "plan_to_obj") as mock_plan_to_obj:
-            mock_plan = MockMPlan()
-            mock_plan.id = "test-plan-id"
+            mock_plan = MPlan(id="test-plan-id")
             mock_plan_to_obj.return_value = mock_plan
 
             orchestration_config.wait_for_approval.return_value = True
@@ -744,7 +644,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         """Test that approval_enabled is True by default."""
         mock_agent = Mock()
         manager = HumanApprovalMagenticManager(
-            user_id="test_user", agent=mock_agent, chat_client=Mock()
+            user_id="test_user", agent=mock_agent
         )
 
         self.assertTrue(manager.approval_enabled)
@@ -753,7 +653,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         """Test that magentic_plan is None by default."""
         mock_agent = Mock()
         manager = HumanApprovalMagenticManager(
-            user_id="test_user", agent=mock_agent, chat_client=Mock()
+            user_id="test_user", agent=mock_agent
         )
 
         self.assertIsNone(manager.magentic_plan)
@@ -761,7 +661,7 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
     async def test_replan_with_none_message(self):
         """Test replan method when super().replan returns None."""
         with patch(
-            "backend.v4.orchestration.human_approval_manager.StandardMagenticManager.replan",
+            "v4.orchestration.human_approval_manager.StandardMagenticManager.replan",
             return_value=None,
         ):
             result = await self.manager.replan(self.test_context)

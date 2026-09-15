@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from weakref import WeakSet
 
 # Environment variables and paths are set by conftest.py
-from backend.v4.config.agent_registry import AgentRegistry, agent_registry
+from v4.config.agent_registry import AgentRegistry, agent_registry
 
 
 class MockAgent:
@@ -115,7 +115,7 @@ class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
         metadata = self.registry._agent_metadata[agent_id]
         self.assertEqual(metadata['name'], 'Unknown')
 
-    @patch('backend.v4.config.agent_registry.logging.getLogger')
+    @patch('v4.config.agent_registry.logging.getLogger')
     def test_register_agent_logging(self, mock_get_logger):
         """Test logging during agent registration."""
         mock_logger = MagicMock()
@@ -155,7 +155,7 @@ class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
         # But metadata might be updated
         self.assertEqual(len(self.registry._agent_metadata), 1)
 
-    @patch('backend.v4.config.agent_registry.logging.getLogger')
+    @patch('v4.config.agent_registry.logging.getLogger')
     def test_register_agent_exception_handling(self, mock_get_logger):
         """Test exception handling during agent registration."""
         mock_logger = MagicMock()
@@ -196,7 +196,7 @@ class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.registry._all_agents), 0)
         self.assertEqual(len(self.registry._agent_metadata), 0)
 
-    @patch('backend.v4.config.agent_registry.logging.getLogger')
+    @patch('v4.config.agent_registry.logging.getLogger')
     def test_unregister_agent_logging(self, mock_get_logger):
         """Test logging during agent unregistration."""
         mock_logger = MagicMock()
@@ -216,7 +216,7 @@ class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Unregistered agent", log_message)
         self.assertIn("MockAgent", log_message)
 
-    @patch('backend.v4.config.agent_registry.logging.getLogger')
+    @patch('v4.config.agent_registry.logging.getLogger')
     def test_unregister_agent_exception_handling(self, mock_get_logger):
         """Test exception handling during agent unregistration."""
         mock_logger = MagicMock()
@@ -498,7 +498,7 @@ class TestGlobalAgentRegistry(unittest.TestCase):
     def test_global_registry_singleton_behavior(self):
         """Test that the global registry behaves as expected."""
         # Import the global instance
-        from backend.v4.config.agent_registry import agent_registry as global_registry
+        from v4.config.agent_registry import agent_registry as global_registry
         
         # Should be the same instance
         self.assertIs(agent_registry, global_registry)

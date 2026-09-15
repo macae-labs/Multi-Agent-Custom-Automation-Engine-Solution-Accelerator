@@ -1,108 +1,22 @@
-"""Unit tests for backend.v4.magentic_agents.foundry_agent module."""
+"""Unit tests for v4.magentic_agents.foundry_agent module."""
 
-import sys
-import os
 from unittest.mock import Mock, patch, AsyncMock
 import pytest
 
-# Add the backend directory to the Python path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend")
-)
 
-# Set required environment variables for testing
-os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "test_connection_string")
-os.environ.setdefault("APP_ENV", "dev")
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com/")
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "test_key")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT_NAME", "test_deployment")
-os.environ.setdefault("AZURE_AI_SUBSCRIPTION_ID", "test_subscription_id")
-os.environ.setdefault("AZURE_AI_RESOURCE_GROUP", "test_resource_group")
-os.environ.setdefault("AZURE_AI_PROJECT_NAME", "test_project_name")
-os.environ.setdefault("AZURE_AI_AGENT_ENDPOINT", "https://test.agent.azure.com/")
-os.environ.setdefault("AZURE_AI_PROJECT_ENDPOINT", "https://test.project.azure.com/")
-os.environ.setdefault("COSMOSDB_ENDPOINT", "https://test.documents.azure.com:443/")
-os.environ.setdefault("COSMOSDB_DATABASE", "test_database")
-os.environ.setdefault("COSMOSDB_CONTAINER", "test_container")
-os.environ.setdefault("AZURE_CLIENT_ID", "test_client_id")
-os.environ.setdefault("AZURE_TENANT_ID", "test_tenant_id")
-os.environ.setdefault("AZURE_OPENAI_RAI_DEPLOYMENT_NAME", "test_rai_deployment")
-
-# Mock external dependencies before importing our modules
-sys.modules["azure"] = Mock()
-sys.modules["azure.ai"] = Mock()
-sys.modules["azure.ai.agents"] = Mock()
-sys.modules["azure.ai.agents.aio"] = Mock(AgentsClient=Mock)
-sys.modules["azure.ai.projects"] = Mock()
-sys.modules["azure.ai.projects.aio"] = Mock(AIProjectClient=Mock)
-sys.modules["azure.ai.projects.models"] = Mock(MCPTool=Mock, ConnectionType=Mock)
-sys.modules["azure.ai.projects.models._models"] = Mock()
-sys.modules["azure.ai.projects._client"] = Mock()
-sys.modules["azure.ai.projects.operations"] = Mock()
-sys.modules["azure.ai.projects.operations._patch"] = Mock()
-sys.modules["azure.ai.projects.operations._patch_datasets"] = Mock()
-sys.modules["azure.search"] = Mock()
-sys.modules["azure.search.documents"] = Mock()
-sys.modules["azure.search.documents.indexes"] = Mock()
-sys.modules["azure.core"] = Mock()
-sys.modules["azure.core.exceptions"] = Mock()
-sys.modules["azure.identity"] = Mock()
-sys.modules["azure.identity.aio"] = Mock()
-sys.modules["azure.cosmos"] = Mock(CosmosClient=Mock)
-sys.modules["agent_framework"] = Mock(
-    Agent=Mock, Message=Mock, ChatOptions=Mock, ChatMessage=Mock, Role=Mock,
-    # self_heal_middleware subclasses FunctionMiddleware — it must be a CLASS
-    # (an auto-created Mock attribute is an instance and breaks `class X(...)`).
-    FunctionMiddleware=Mock, FunctionInvocationContext=Mock,
-)
-sys.modules["agent_framework_azure_ai"] = Mock(AzureAIClient=Mock)
-
-# Mock additional Azure modules that may be needed
-sys.modules["azure.monitor"] = Mock()
-# tool_errors -> event_utils imports azure.monitor.events.extension; with
-# azure.monitor stubbed as a plain Mock (not a package) the submodule can't
-# resolve unless stubbed explicitly too.
-sys.modules["azure.monitor.events"] = Mock()
-sys.modules["azure.monitor.events.extension"] = Mock(track_event=Mock())
-sys.modules["azure.monitor.opentelemetry"] = Mock()
-sys.modules["azure.monitor.opentelemetry.exporter"] = Mock()
-sys.modules["opentelemetry"] = Mock()
-sys.modules["opentelemetry.sdk"] = Mock()
-sys.modules["opentelemetry.sdk.trace"] = Mock()
-sys.modules["opentelemetry.sdk.trace.export"] = Mock()
-sys.modules["opentelemetry.trace"] = Mock()
-
-# Mock the specific problematic modules
-sys.modules["common.database.database_base"] = Mock(DatabaseBase=Mock)
-sys.modules["common.models.messages_af"] = Mock(
-    TeamConfiguration=Mock, AgentMessageType=Mock
-)
-sys.modules["v4.models.messages"] = Mock()
-sys.modules["v4.common.services.team_service"] = Mock(TeamService=Mock)
-sys.modules["v4.config.agent_registry"] = Mock(agent_registry=Mock)
-sys.modules["v4.magentic_agents.common.lifecycle"] = Mock(AzureAgentBase=Mock)
-sys.modules["v4.magentic_agents.models.agent_models"] = Mock(
-    MCPConfig=Mock, SearchConfig=Mock
-)
-
-# Mock the ConnectionType enum
-from azure.ai.projects.models import ConnectionType
-
-ConnectionType.AZURE_AI_SEARCH = "AZURE_AI_SEARCH"
-
-# Import the modules under test after setting up mocks
+# Import the module under test with its collaborators parcheados (scoped)
 with (
-    patch("backend.v4.magentic_agents.foundry_agent.config"),
-    patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger"),
-    patch("backend.v4.magentic_agents.foundry_agent.DatabaseBase"),
-    patch("backend.v4.magentic_agents.foundry_agent.TeamConfiguration"),
-    patch("backend.v4.magentic_agents.foundry_agent.TeamService"),
-    patch("backend.v4.magentic_agents.foundry_agent.agent_registry"),
-    patch("backend.v4.magentic_agents.foundry_agent.AzureAgentBase"),
-    patch("backend.v4.magentic_agents.foundry_agent.MCPConfig"),
-    patch("backend.v4.magentic_agents.foundry_agent.SearchConfig"),
+    patch("v4.magentic_agents.foundry_agent.config"),
+    patch("v4.magentic_agents.foundry_agent.logging.getLogger"),
+    patch("v4.magentic_agents.foundry_agent.DatabaseBase"),
+    patch("v4.magentic_agents.foundry_agent.TeamConfiguration"),
+    patch("v4.magentic_agents.foundry_agent.TeamService"),
+    patch("v4.magentic_agents.foundry_agent.agent_registry"),
+    patch("v4.magentic_agents.foundry_agent.AzureAgentBase"),
+    patch("v4.magentic_agents.foundry_agent.MCPConfig"),
+    patch("v4.magentic_agents.foundry_agent.SearchConfig"),
 ):
-    from backend.v4.magentic_agents.foundry_agent import FoundryAgentTemplate
+    from v4.magentic_agents.foundry_agent import FoundryAgentTemplate
 
 
 # Define the classes we'll need for testing
@@ -183,8 +97,8 @@ def mock_memory_store():
 class TestFoundryAgentTemplate:
     """Test cases for FoundryAgentTemplate class."""
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_init_with_minimal_params(self, mock_get_logger, mock_config):
         """Test FoundryAgentTemplate initialization with minimal required parameters."""
         mock_logger = Mock()
@@ -211,8 +125,8 @@ class TestFoundryAgentTemplate:
         assert agent._azure_server_agent_id is None
         assert agent._use_azure_search is False
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_init_with_all_params(
         self,
         mock_get_logger,
@@ -254,8 +168,8 @@ class TestFoundryAgentTemplate:
             agent._use_azure_search is True
         )  # Because mock_search_config has index_name
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_init_with_search_config_no_index(
         self, mock_get_logger, mock_config, mock_search_config_no_index
     ):
@@ -278,8 +192,8 @@ class TestFoundryAgentTemplate:
     def test_is_azure_search_requested_no_search_config(self):
         """Test _is_azure_search_requested when no search config is provided."""
         with (
-            patch("backend.v4.magentic_agents.foundry_agent.config"),
-            patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger"),
+            patch("v4.magentic_agents.foundry_agent.config"),
+            patch("v4.magentic_agents.foundry_agent.logging.getLogger"),
         ):
             agent = FoundryAgentTemplate(
                 agent_name="TestAgent",
@@ -292,8 +206,8 @@ class TestFoundryAgentTemplate:
 
             assert agent._is_azure_search_requested() is False
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_is_azure_search_requested_with_valid_index(
         self, mock_get_logger, mock_config, mock_search_config
     ):
@@ -319,8 +233,8 @@ class TestFoundryAgentTemplate:
             "test-index",
         )
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_is_azure_search_requested_no_index_name(
         self, mock_get_logger, mock_config, mock_search_config_no_index
     ):
@@ -342,8 +256,8 @@ class TestFoundryAgentTemplate:
         assert result is False
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_collect_tools_with_code_interpreter(
         self, mock_get_logger, mock_config
     ):
@@ -374,8 +288,8 @@ class TestFoundryAgentTemplate:
         mock_logger.info.assert_any_call("Total tools collected (MCP path): %d", 0)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_collect_tools_code_interpreter_server_side(
         self, mock_get_logger, mock_config
     ):
@@ -405,8 +319,8 @@ class TestFoundryAgentTemplate:
         )
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_collect_tools_with_mcp_tool(self, mock_get_logger, mock_config):
         """Test _collect_tools with MCP tool from base class."""
         mock_logger = Mock()
@@ -434,8 +348,8 @@ class TestFoundryAgentTemplate:
         mock_logger.info.assert_any_call("Total tools collected (MCP path): %d", 1)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_collect_tools_no_tools(self, mock_get_logger, mock_config):
         """Test _collect_tools when no tools are available."""
         mock_logger = Mock()
@@ -462,9 +376,9 @@ class TestFoundryAgentTemplate:
     @pytest.mark.skip(
         reason="Method signature changed - no longer accepts existing_client argument"
     )
-    @patch("backend.v4.magentic_agents.foundry_agent.AzureAIClient")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.AzureAIClient")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_create_azure_search_enabled_client_with_existing_client(
         self, mock_get_logger, mock_config, mock_azure_client_class
     ):
@@ -476,8 +390,8 @@ class TestFoundryAgentTemplate:
         pass
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_create_azure_search_enabled_client_no_search_config(
         self, mock_get_logger, mock_config
     ):
@@ -500,9 +414,9 @@ class TestFoundryAgentTemplate:
         mock_logger.error.assert_called_with("Search configuration missing.")
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.AzureAIClient")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.AzureAIClient")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_create_azure_search_enabled_client_no_index_name(
         self,
         mock_get_logger,
@@ -537,9 +451,9 @@ class TestFoundryAgentTemplate:
     @pytest.mark.skip(
         reason="Connection enumeration removed - method now uses connection_name directly from search_config"
     )
-    @patch("backend.v4.magentic_agents.foundry_agent.AzureAIClient")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.AzureAIClient")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_create_azure_search_enabled_client_connection_enumeration_error(
         self, mock_get_logger, mock_config, mock_azure_client_class, mock_search_config
     ):
@@ -554,11 +468,11 @@ class TestFoundryAgentTemplate:
     @pytest.mark.skip(
         reason="Mock framework corruption - AttributeError: _mock_methods"
     )
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
-    @patch("backend.v4.magentic_agents.foundry_agent.AzureAIClient")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.AzureAIClient")
+    @patch("v4.magentic_agents.foundry_agent.config")
     @patch(
-        "backend.v4.magentic_agents.foundry_agent.AzureAgentBase.__init__",
+        "v4.magentic_agents.foundry_agent.AzureAgentBase.__init__",
         return_value=None,
     )  # Mock base class init
     async def test_create_azure_search_enabled_client_success(
@@ -643,11 +557,11 @@ class TestFoundryAgentTemplate:
     @pytest.mark.skip(
         reason="Mock framework corruption - AttributeError: _mock_methods"
     )
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
-    @patch("backend.v4.magentic_agents.foundry_agent.AzureAIClient")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.AzureAIClient")
+    @patch("v4.magentic_agents.foundry_agent.config")
     @patch(
-        "backend.v4.magentic_agents.foundry_agent.AzureAgentBase.__init__",
+        "v4.magentic_agents.foundry_agent.AzureAgentBase.__init__",
         return_value=None,
     )  # Mock base class init
     async def test_create_azure_search_enabled_client_agent_creation_error(
@@ -721,10 +635,10 @@ class TestFoundryAgentTemplate:
         # Verify error was logged (removed specific assertion due to mock corruption issues)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.Agent")
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.Agent")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_reasoning_mode_azure_search(
         self,
         mock_get_logger,
@@ -769,9 +683,9 @@ class TestFoundryAgentTemplate:
         mock_registry.register_agent.assert_called_once_with(agent)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_foundry_mode_mcp(
         self, mock_get_logger, mock_config, mock_registry
     ):
@@ -809,10 +723,10 @@ class TestFoundryAgentTemplate:
         mock_registry.register_agent.assert_called_once_with(agent)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.Agent")
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.Agent")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_azure_search_setup_failure(
         self,
         mock_get_logger,
@@ -845,10 +759,10 @@ class TestFoundryAgentTemplate:
         assert "Azure AI Search mode requested but setup failed." in str(exc_info.value)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.Agent")
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.Agent")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_chat_agent_creation_error(
         self, mock_get_logger, mock_config, mock_registry, mock_chat_agent_class
     ):
@@ -882,10 +796,10 @@ class TestFoundryAgentTemplate:
         )
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.Agent")
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.Agent")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_registry_failure(
         self, mock_get_logger, mock_config, mock_registry, mock_chat_agent_class
     ):
@@ -925,9 +839,9 @@ class TestFoundryAgentTemplate:
         )
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.Message")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.Message")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_invoke_success(
         self, mock_get_logger, mock_config, mock_message_class
     ):
@@ -969,8 +883,8 @@ class TestFoundryAgentTemplate:
         mock_message_class.assert_called_once_with(role="user", text="Test prompt")
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_invoke_agent_not_initialized(self, mock_get_logger, mock_config):
         """Test invoke method when agent is not initialized."""
         mock_logger = Mock()
@@ -995,8 +909,8 @@ class TestFoundryAgentTemplate:
         assert "Agent not initialized; call open() first." in str(exc_info.value)
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_close_with_azure_server_agent(
         self, mock_get_logger, mock_config, mock_search_config
     ):
@@ -1053,8 +967,8 @@ class TestFoundryAgentTemplate:
         )
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_close_azure_agent_deletion_error(
         self, mock_get_logger, mock_config, mock_search_config
     ):
@@ -1114,8 +1028,8 @@ class TestFoundryAgentTemplate:
         )
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_close_without_azure_server_agent(self, mock_get_logger, mock_config):
         """Test close method without Azure server agent."""
         mock_logger = Mock()
@@ -1148,8 +1062,8 @@ class TestFoundryAgentTemplate:
         mock_super_close.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_close_no_use_azure_search(self, mock_get_logger, mock_config):
         """Test close method when not using Azure search."""
         mock_logger = Mock()
@@ -1185,9 +1099,9 @@ class TestFoundryAgentTemplate:
     # ── Hybrid responses_client path tests (commit 758204a6) ──
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_with_tools_uses_responses_client(
         self, mock_get_logger, mock_config, mock_registry
     ):
@@ -1221,9 +1135,9 @@ class TestFoundryAgentTemplate:
         agent._register_in_foundry.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_after_open_without_tools_uses_chat_client(
         self, mock_get_logger, mock_config, mock_registry
     ):
@@ -1255,9 +1169,9 @@ class TestFoundryAgentTemplate:
         agent._register_in_foundry.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("backend.v4.magentic_agents.foundry_agent.agent_registry")
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     async def test_ephemeral_agent_skips_foundry_registration(
         self, mock_get_logger, mock_config, mock_registry
     ):
@@ -1290,8 +1204,8 @@ class TestFoundryAgentTemplate:
         agent.get_responses_client.assert_called_once()
         agent._register_in_foundry.assert_not_called()
 
-    @patch("backend.v4.magentic_agents.foundry_agent.config")
-    @patch("backend.v4.magentic_agents.foundry_agent.logging.getLogger")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
     def test_ephemeral_default_is_false(self, mock_get_logger, mock_config):
         """By default, agents are NOT ephemeral."""
         mock_get_logger.return_value = Mock()

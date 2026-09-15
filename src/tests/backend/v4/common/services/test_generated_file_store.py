@@ -6,33 +6,11 @@ the router uses it — save never raises, load misses return None so the
 caller can fall back to the live-Foundry read path.
 """
 
-import os
-import sys
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-# Load the module under test by FILE PATH (house pattern): earlier test
-# modules stomp sys.modules['v4.*'] with Mocks, so the package route is
-# unreliable. Registered under backend.* for coverage tracking.
-import importlib.util  # noqa: E402
-
-_svc_path = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__), '..', '..', '..', '..', '..',
-        'backend', 'v4', 'common', 'services', 'generated_file_store.py',
-    )
-)
-_spec = importlib.util.spec_from_file_location(
-    "backend.v4.common.services.generated_file_store", _svc_path
-)
-assert _spec is not None and _spec.loader is not None
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules["backend.v4.common.services.generated_file_store"] = _mod
-_spec.loader.exec_module(_mod)
-
-GeneratedFileStore = _mod.GeneratedFileStore
-_CONTAINER = _mod._CONTAINER
+from v4.common.services.generated_file_store import GeneratedFileStore, _CONTAINER
 
 
 def _store_with(svc: Mock) -> GeneratedFileStore:
@@ -53,29 +31,6 @@ def _reset_singleton():
     GeneratedFileStore._instance = None
     yield
     GeneratedFileStore._instance = None
-
-
-@pytest.fixture(autouse=True)
-def _real_azure_core_exceptions():
-    """Other test modules stomp sys.modules['azure.core.exceptions'] with a
-    bare Mock for the whole session; the service's lazy typed `except` then
-    receives a non-exception and TypeErrors. Restore the REAL module for the
-    duration of these tests, then put the stomps back untouched."""
-    saved = {
-        k: sys.modules.get(k)
-        for k in ("azure", "azure.core", "azure.core.exceptions")
-    }
-    for k in saved:
-        sys.modules.pop(k, None)
-    import azure.core.exceptions  # noqa: F401  (re-imports the real one)
-
-    yield
-
-    for k, v in saved.items():
-        if v is not None:
-            sys.modules[k] = v
-        else:
-            sys.modules.pop(k, None)
 
 
 class TestGeneratedFileStoreSave:

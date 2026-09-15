@@ -10,17 +10,25 @@ This module contains extensive test coverage for:
 """
 
 import pytest
-import os
-import sys
 import asyncio
-import importlib.util
+import v4.common.services.mcp_service as mcp_service_module
+from v4.common.services.mcp_service import MCPService
+
+
+@pytest.fixture(autouse=True)
+def _collaborators_patched(monkeypatch):
+    """Colaboradores de v4.common.services.mcp_service parcheados en SU namespace y sólo durante cada
+    test. Antes el módulo se cargaba por ruta de archivo con sus dependencias
+    sustituidas en sys.modules y se registraba así, con Mocks dentro, para
+    todo el proceso (INC-2026-004)."""
+    mod = mcp_service_module
+    for name, value in (
+    ):
+        monkeypatch.setattr(mod, name, value)
+
 from unittest.mock import patch, MagicMock
 from aiohttp import ClientError
 
-# Add the src directory to sys.path for proper import
-src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
-if src_path not in sys.path:
-    sys.path.insert(0, os.path.abspath(src_path))
 
 # Mock Azure modules before importing the MCPService
 azure_ai_module = MagicMock()
@@ -36,17 +44,8 @@ azure_ai_module.projects = azure_ai_projects_module
 azure_ai_projects_module.aio = azure_ai_projects_aio_module
 
 # Inject the mocked modules
-sys.modules['azure'] = MagicMock()
-sys.modules['azure.ai'] = azure_ai_module
-sys.modules['azure.ai.projects'] = azure_ai_projects_module
-sys.modules['azure.ai.projects.aio'] = azure_ai_projects_aio_module
 
 # Mock other problematic modules and imports
-sys.modules['common.models.messages_af'] = MagicMock()
-sys.modules['v4'] = MagicMock()
-sys.modules['v4.common'] = MagicMock()
-sys.modules['v4.common.services'] = MagicMock()
-sys.modules['v4.common.services.team_service'] = MagicMock()
 
 # Mock the services module to avoid circular import
 mock_services_module = MagicMock()
@@ -54,7 +53,6 @@ mock_services_module.MCPService = MagicMock()
 mock_services_module.BaseAPIService = MagicMock()
 mock_services_module.AgentsService = MagicMock()
 mock_services_module.FoundryService = MagicMock()
-sys.modules['backend.v4.common.services'] = mock_services_module
 
 # Mock the config module
 mock_config_module = MagicMock()
@@ -66,52 +64,17 @@ mock_config.MCP_SERVER_ENDPOINT_WITH_AUTH = 'https://auth.mcp.endpoint.com'
 mock_config.MISSING_MCP_ENDPOINT = None
 
 mock_config_module.config = mock_config
-sys.modules['common.config.app_config'] = mock_config_module
 
 # First, load BaseAPIService separately to avoid circular imports
-base_api_service_path = os.path.join(os.path.dirname(
-    __file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'base_api_service.py')
-base_api_service_path = os.path.abspath(base_api_service_path)
-base_spec = importlib.util.spec_from_file_location(
-    "base_api_service_module", base_api_service_path)
-base_api_service_module = importlib.util.module_from_spec(base_spec)
-base_spec.loader.exec_module(base_api_service_module)
 
 # Add BaseAPIService to the services mock module
-mock_services_module.BaseAPIService = base_api_service_module.BaseAPIService
 
 # Now import the real MCPService using direct file import but register for coverage
-import importlib.util
 # Now import the real MCPService using direct file import with proper mocking
-import importlib.util
 
 # First, load BaseAPIService to make it available for MCPService
-base_api_service_path = os.path.join(os.path.dirname(
-    __file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'base_api_service.py')
-base_api_service_path = os.path.abspath(base_api_service_path)
 
 # Mock the relative import for BaseAPIService during MCPService loading
-with patch.dict('sys.modules', {
-    'backend.v4.common.services.base_api_service': base_api_service_module,
-}):
-    mcp_service_path = os.path.join(os.path.dirname(
-        __file__), '..', '..', '..', '..', '..', 'backend', 'v4', 'common', 'services', 'mcp_service.py')
-    mcp_service_path = os.path.abspath(mcp_service_path)
-    spec = importlib.util.spec_from_file_location(
-        "backend.v4.common.services.mcp_service", mcp_service_path)
-    mcp_service_module = importlib.util.module_from_spec(spec)
-
-    # Set the proper module name for coverage tracking (matching --cov=backend pattern)
-    mcp_service_module.__name__ = "backend.v4.common.services.mcp_service"
-    mcp_service_module.__file__ = mcp_service_path
-
-    # Add to sys.modules BEFORE execution for coverage tracking (both variations)
-    sys.modules['backend.v4.common.services.mcp_service'] = mcp_service_module
-    sys.modules['src.backend.v4.common.services.mcp_service'] = mcp_service_module
-
-    spec.loader.exec_module(mcp_service_module)
-
-MCPService = mcp_service_module.MCPService
 
 
 class TestMCPService:
