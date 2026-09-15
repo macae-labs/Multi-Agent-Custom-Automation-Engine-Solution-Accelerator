@@ -38,11 +38,9 @@ class DatabaseFactory:
             cosmos_db_client = CosmosDBClient(
                 endpoint=config.COSMOSDB_ENDPOINT,
                 # Allow key-based auth only in dev to avoid accidentally bypassing AAD in prod.
-                credential=(
-                    config.COSMOSDB_KEY
-                    if config.APP_ENV == "dev" and config.COSMOSDB_KEY
-                    else config.get_azure_credentials()
-                ),
+                # Prestada y ASYNC: el cliente es azure.cosmos.aio; una credencial
+                # síncrona la envuelve el SDK y get_token bloquea el loop (INC-2026-005).
+                credential=config.get_cosmos_credential_async(),
                 database_name=config.COSMOSDB_DATABASE,
                 container_name=config.COSMOSDB_CONTAINER,
                 session_id="",

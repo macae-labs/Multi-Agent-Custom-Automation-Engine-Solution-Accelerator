@@ -403,6 +403,32 @@ class TestAppConfigCredentials:
             )
             assert result == mock_credential
 
+    def test_get_cosmos_credential_async_uses_key_in_dev(self):
+        """En dev con COSMOSDB_KEY la credencial de Cosmos es la clave (tenant ajeno)."""
+        env = self._get_minimal_env()
+        env["APP_ENV"] = "dev"
+        env["COSMOSDB_KEY"] = "dev-key"
+        with patch.dict(os.environ, env):
+            config = AppConfig()
+            assert config.get_cosmos_credential_async() == "dev-key"
+
+    @patch("common.config.app_config.DefaultAzureCredentialAsync")
+    def test_get_cosmos_credential_async_borrows_the_shared_credential(
+        self, mock_default_credential_async
+    ):
+        """Sin clave, es la credencial compartida del proceso: un solo objeto,
+        el mismo que get_shared_async_credential, creado una sola vez (INC-2026-005)."""
+        mock_default_credential_async.return_value = MagicMock()
+        env = self._get_minimal_env()
+        env["APP_ENV"] = "dev"
+        env.pop("COSMOSDB_KEY", None)
+        with patch.dict(os.environ, env, clear=True):
+            config = AppConfig()
+            first = config.get_cosmos_credential_async()
+            assert first is config.get_cosmos_credential_async()
+            assert first is config.get_shared_async_credential()
+            mock_default_credential_async.assert_called_once()
+
 
 class TestAppConfigClientMethods:
     """Test cases for client creation methods in AppConfig class."""
