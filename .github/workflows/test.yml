@@ -78,8 +78,8 @@ jobs:
           # varios tests sustituían paquetes reales (v4.*, auth.*, azure.*) en
           # sys.modules al importarse y src/tests/backend/auth/__init__.py hacía
           # que pytest registrara el paquete de tests como `auth`. Esa basura se
-          # retiró (INC-2026-004); los tests escritos contra Mocks globales están
-          # en cuarentena visible (xfail, INC-2026-005) hasta reescribirlos.
+          # retiró (INC-2026-004): la suite importa el producto por sus nombres
+          # reales y parchea colaboradores por test; sin xfail ni aislamiento.
           uv run python -m pytest ../../src/tests/backend \
             --cov=. --cov-report=term --cov-report=xml \
             --cov-config=../../.coveragerc -q

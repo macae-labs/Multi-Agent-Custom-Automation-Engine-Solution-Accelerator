@@ -7,7 +7,6 @@ This module handles proper test isolation and minimal external module mocking.
 import atexit
 import json
 import os
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock
@@ -165,11 +164,11 @@ def _no_interactive_credential_under_pytest(monkeypatch):
     """INV-NO-INTERACTIVE-CREDENTIAL-UNDER-PYTEST (INC-2026-002): bajo pytest,
     _dev_acquire_user_token falla con nombre en vez de abrir DeviceCodeCredential
     y esperar a un humano. El test debe traer el token como lo inyecta EasyAuth
-    (x-ms-token-aad-access-token). Se parchea en ambos nombres de módulo con los
-    que se importa el mismo archivo (router: auth.auth_utils; tests: auth.auth_utils)."""
+    (x-ms-token-aad-access-token). Se parchea en el módulo real que usa el
+    router (auth.auth_utils); ya no existe un segundo nombre para ese archivo."""
     import importlib
 
-    importlib.import_module("auth.auth_utils")  # el módulo real del router, cargado
+    auth_utils = importlib.import_module("auth.auth_utils")
 
     def _fail(*_args, **_kwargs):
         raise AssertionError(
@@ -178,29 +177,7 @@ def _no_interactive_credential_under_pytest(monkeypatch):
             "Añade x-ms-token-aad-access-token (o Authorization) al scope."
         )
 
-    for name in ("auth.auth_utils", "auth.auth_utils"):
-        if name in sys.modules:
-            monkeypatch.setattr(sys.modules[name], "_dev_acquire_user_token", _fail)
-
-# Pre-import the middleware chain (self_heal -> tool_errors -> event_utils)
-# while the CLEAN stub above is in sys.modules. Several test modules stomp
-# sys.modules['agent_framework'] with their own partial Mocks at import time;
-# if this chain first loads under one of those (suite order), subclassing
-# FunctionMiddleware hits a Mock instance and the import dies (surfacing as
-# "module ... has no attribute 'foundry_agent'"). Importing it here caches the
-# real modules so later stomps can't re-execute them.
-try:
-    import v4.magentic_agents.common.self_heal_middleware  # noqa: F401
-except Exception:
-    # Never fail collection over an optional warm-up import.
-    pass
-try:
-    import azure.ai.voicelive  # noqa: F401
-    import azure.ai.voicelive.aio  # noqa: F401
-    import azure.ai.voicelive.models  # noqa: F401
-    import v4.api.audio_router  # noqa: F401
-except Exception:
-    pass
+    monkeypatch.setattr(auth_utils, "_dev_acquire_user_token", _fail)
 
 
 @pytest.fixture
