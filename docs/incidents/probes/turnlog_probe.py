@@ -168,6 +168,7 @@ def main(argv):
     low3 = r3["text"].lower()
     check("S3", "historial conserva la prosa (SHA), sin marcador, y SIN retractación fabricada",
           (real and real in r3["text"]) and "[turn-log]" not in r3["text"]
+          and not any(tool != "reasoning" for _, tool, _ in r3["tools"])
           and not any(m in low3 for m in RETRACTION_MARKERS) and not r3["errors"],
           f"tools={len(r3['tools'])} errors={r3['errors']} ms={r3['ms']} text={r3['text'][:120]!r}")
 
