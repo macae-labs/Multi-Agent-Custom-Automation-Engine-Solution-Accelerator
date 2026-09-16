@@ -182,7 +182,11 @@ class MockAgentMessageResponse:
 def _approval(plan_id=None, m_plan_id="", approved=True, feedback=None, decision=None):
     """El modelo real del contrato (dataclass), no un doble: lo que valida el router."""
     return real_messages.PlanApprovalResponse(
-        m_plan_id=m_plan_id, approved=approved, feedback=feedback, plan_id=plan_id, decision=decision
+        m_plan_id=m_plan_id,
+        approved=approved,
+        feedback=feedback,
+        plan_id=plan_id,
+        decision=decision,
     )
 
 
