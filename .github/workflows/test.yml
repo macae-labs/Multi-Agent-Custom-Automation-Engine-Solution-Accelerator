@@ -72,7 +72,7 @@ jobs:
         if: steps.check_tests.outputs.run == 'true'
         working-directory: src/backend
         env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src/backend
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src/backend:${{ github.workspace }}/docs/incidents/probes
         run: |
           # Un solo proceso. Antes hacían falta tres invocaciones aisladas porque
           # varios tests sustituían paquetes reales (v4.*, auth.*, azure.*) en
@@ -80,7 +80,11 @@ jobs:
           # que pytest registrara el paquete de tests como `auth`. Esa basura se
           # retiró (INC-2026-004): la suite importa el producto por sus nombres
           # reales y parchea colaboradores por test; sin xfail ni aislamiento.
+          # -p module_identity_tracker: la sonda de INC-2026-004 como gate; con una
+          # sola señal MODTRACK (módulo del producto reemplazado o borrado por un
+          # test) la sesión termina en rojo aunque todos los tests pasen.
           uv run python -m pytest ../../src/tests/backend \
+            -p module_identity_tracker \
             --cov=. --cov-report=term --cov-report=xml \
             --cov-config=../../.coveragerc -q
 

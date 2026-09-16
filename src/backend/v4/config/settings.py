@@ -15,7 +15,7 @@ from fastapi import WebSocket
 
 from common.config.app_config import config
 from common.models.messages_af import TeamConfiguration
-from v4.models.messages import MPlan, WebsocketMessageType
+from v4.models.messages import WebsocketMessageType
 
 logger = logging.getLogger(__name__)
 
@@ -95,27 +95,16 @@ class OrchestrationConfig:
         self.agent_wrappers: Dict[
             str, List[Any]
         ] = {}  # user_id -> list of lifecycle-managed agent wrappers (for proper close)
-        self.plans: Dict[str, MPlan] = {}  # plan_id -> plan details
-        self.approvals: Dict[
-            str, Optional[bool]
-        ] = {}  # m_plan_id -> approval status (None pending)
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
         self.max_rounds: int = 5  # Maximum replanning rounds
 
-        # Event-driven notification system for approvals. Clarifications no
-        # longer wait in-process: ProxyAgent emits a Content marked
-        # user_input_request=True, the framework raises request_info, the
-        # pending request lives in the checkpoint and the answer resumes the
-        # workflow (OrchestrationManager.resume_orchestration).
-        self._approval_events: Dict[str, asyncio.Event] = {}
+        # No in-process waits for humans. Plan review and clarification are
+        # native request_info events: the workflow goes idle, the pending
+        # request lives in the checkpoint, ``Plan.waiting_for`` points at it and
+        # the answer resumes the workflow (OrchestrationManager.resume_orchestration).
 
-        # Default timeout (seconds) for waiting operations
+        # Default timeout (seconds) for machine waiting operations
         self.default_timeout: float = 1800.0
-
-        # Human-scale window: approval blocks on a HUMAN reading and typing —
-        # 200s kills plans before anyone can answer. Machine operations keep
-        # default_timeout.
-        self.approval_timeout: float = 1800.0
 
         # Sessions with an orchestration run currently in flight (created /
         # awaiting approval / executing). Makes resume_plan idempotent: a plan
@@ -138,84 +127,6 @@ class OrchestrationConfig:
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
         return self.orchestrations.get(user_id, None)
-
-    def set_approval_pending(self, plan_id: str) -> None:
-        """Mark approval pending and create/reset its event."""
-        self.approvals[plan_id] = None
-        if plan_id not in self._approval_events:
-            self._approval_events[plan_id] = asyncio.Event()
-        else:
-            self._approval_events[plan_id].clear()
-
-    def set_approval_result(self, plan_id: str, approved: bool) -> None:
-        """Set approval decision and trigger its event."""
-        self.approvals[plan_id] = approved
-        if plan_id in self._approval_events:
-            self._approval_events[plan_id].set()
-
-    async def wait_for_approval(
-        self, plan_id: str, timeout: Optional[float] = None
-    ) -> bool:
-        """
-        Wait for an approval decision with timeout.
-
-        Args:
-            plan_id: The plan ID to wait for
-            timeout: Timeout in seconds (defaults to approval_timeout)
-
-        Returns:
-            The approval decision (True/False)
-
-        Raises:
-            asyncio.TimeoutError: If timeout is exceeded
-            KeyError: If plan_id is not found in approvals
-        """
-        logger.info(f"Waiting for approval: {plan_id}")
-        if timeout is None:
-            timeout = self.approval_timeout
-
-        if plan_id not in self.approvals:
-            raise KeyError(f"Plan ID {plan_id} not found in approvals")
-
-        # Already decided
-        approval_result = self.approvals[plan_id]
-        if approval_result is not None:
-            return approval_result
-
-        if plan_id not in self._approval_events:
-            self._approval_events[plan_id] = asyncio.Event()
-
-        try:
-            # wait_for enforces the resolved timeout — a bare event.wait()
-            # blocks the orchestration BackgroundTask forever when no approval
-            # ever arrives (docstring and callers expect TimeoutError).
-            await asyncio.wait_for(
-                self._approval_events[plan_id].wait(), timeout=timeout
-            )
-            logger.info(f"Approval received: {plan_id}")
-            # After event.wait(), the value is guaranteed to be set (not None)
-            result = self.approvals[plan_id]
-            assert result is not None, (
-                f"Approval result for {plan_id} should not be None after event"
-            )
-            return result
-        except asyncio.TimeoutError:
-            logger.warning("Approval wait for %s timed out after %ss", plan_id, timeout)
-            raise
-        except asyncio.CancelledError:
-            logger.debug("Approval request %s was cancelled", plan_id)
-            raise
-        except Exception as e:
-            logger.error("Unexpected error waiting for approval %s: %s", plan_id, e)
-            raise
-        finally:
-            if plan_id in self.approvals and self.approvals[plan_id] is None:
-                self.cleanup_approval(plan_id)
-
-    def cleanup_approval(self, plan_id: str) -> None:
-        """Remove approval tracking data and event."""
-        self.approvals.pop(plan_id, None)
-        self._approval_events.pop(plan_id, None)
 
 
 class ConnectionConfig:

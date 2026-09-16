@@ -7,6 +7,8 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import Annotated, Any, Optional, cast
 
+from agent_framework import Content
+from agent_framework_orchestrations._magentic import MagenticPlanReviewResponse
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import (
     APIRouter,
@@ -68,6 +70,7 @@ from v4.config.settings import (
     team_config,
 )
 from v4.models.messages import WebsocketMessageType
+from v4.models.models import MPlan
 from v4.orchestration.orchestration_manager import OrchestrationManager
 
 from .tool_activity import describe_tool_call
@@ -278,29 +281,30 @@ async def start_comms(
         track_event_if_configured("WebSocket_Connected", ws_props)
 
         # Re-send any pending plan approval that was missed before WS connected
-        # (fixes race condition: backend sends PLAN_APPROVAL_REQUEST before frontend connects WS)
+        # (race: backend parks on plan review before the frontend connects the WS).
+        # Durable source: the user's plan whose waiting_for is a plan_review.
         try:
-            for m_plan_id, mplan in orchestration_config.plans.items():
-                if (
-                    getattr(mplan, "user_id", None) == user_id
-                    and orchestration_config.approvals.get(m_plan_id) is None
-                ):
-                    approval_message = messages.PlanApprovalRequest(
-                        plan=mplan,
+            _ws_store = await DatabaseFactory.get_database(user_id=user_id)
+            _parked = await _plan_waiting_for(_ws_store, kind="plan_review")
+            if _parked is not None and (_parked.waiting_for or {}).get("m_plan"):
+                _wf = _parked.waiting_for or {}
+                await connection_config.send_status_update_async(
+                    message=messages.PlanApprovalRequest(
+                        plan=MPlan.model_validate(_wf["m_plan"]),
                         status=messages.PlanStatus.PENDING_APPROVAL,
-                        context={},
-                    )
-                    await connection_config.send_status_update_async(
-                        message=approval_message,
-                        user_id=user_id,
-                        message_type=messages.WebsocketMessageType.PLAN_APPROVAL_REQUEST,
-                    )
-                    logging.info(
-                        "Re-sent pending PLAN_APPROVAL_REQUEST for plan %s to user %s",
-                        m_plan_id,
-                        user_id,
-                    )
-                    break  # one pending plan at a time per user
+                        context={
+                            "request_id": _wf.get("request_id"),
+                            "is_stalled": bool(_wf.get("is_stalled")),
+                        },
+                    ),
+                    user_id=user_id,
+                    message_type=messages.WebsocketMessageType.PLAN_APPROVAL_REQUEST,
+                )
+                logging.info(
+                    "Re-sent pending PLAN_APPROVAL_REQUEST for plan %s to user %s",
+                    _parked.plan_id,
+                    user_id,
+                )
         except Exception as e:
             logging.warning("Failed to re-send pending approval on WS connect: %s", e)
 
@@ -3812,14 +3816,14 @@ async def chat_message_stream(
         )
         await _persist_user_message()
         # The answer resumes the parked workflow from its checkpoint (no in-process wait).
-        await _schedule_clarification_resume(
+        await _schedule_resume(
             background_tasks,
             user_id=user_id,
             user_access_token=user_access_token,
             memory_store=memory_store,
             plan=pending_plan,
             request_id=pending_request_id,
-            answer=chat_request.message,
+            response=Content.from_text(text=chat_request.message),
         )
         # Persist the exchange to the single chat history.
         try:
@@ -5040,7 +5044,9 @@ async def resume_plan(
 
 @app_v4.post("/plan_approval")
 async def plan_approval(
-    human_feedback: messages.PlanApprovalResponse, request: Request
+    background_tasks: BackgroundTasks,
+    human_feedback: messages.PlanApprovalResponse,
+    request: Request,
 ):
     """
     Endpoint to receive plan approval or rejection from the user.
@@ -5090,7 +5096,7 @@ async def plan_approval(
       500:
         description: Internal server error
     """
-    user_id, tenant_id = _extract_auth(request)
+    user_id, tenant_id, user_access_token = _extract_auth_with_token(request)
 
     # Attach session_id to span if plan_id is available and capture for events
     session_id = None
@@ -5110,110 +5116,96 @@ async def plan_approval(
         except Exception:
             pass  # Don't fail request if span attribute fails
 
-    # Set the approval in the orchestration config
+    if not (user_id and human_feedback.m_plan_id):
+        raise HTTPException(status_code=400, detail="m_plan_id is required")
+
+    memory_store = await DatabaseFactory.get_database(
+        user_id=user_id, tenant_id=tenant_id
+    )
+    plan = await _plan_waiting_for(
+        memory_store,
+        kind="plan_review",
+        m_plan_id=human_feedback.m_plan_id,
+        plan_id=human_feedback.plan_id or None,
+    )
+    if plan is None:
+        logging.warning(
+            "No parked plan review for m_plan_id: %s", human_feedback.m_plan_id
+        )
+        raise HTTPException(status_code=404, detail="No active plan found for approval")
+    request_id = (plan.waiting_for or {})["request_id"]
+    if human_feedback.plan_id is None:
+        human_feedback.plan_id = plan.plan_id
+
     try:
-        if user_id and human_feedback.m_plan_id:
-            if (
-                orchestration_config
-                and human_feedback.m_plan_id in orchestration_config.approvals
-            ):
-                orchestration_config.set_approval_result(
-                    human_feedback.m_plan_id, human_feedback.approved
-                )
-                print("Plan approval received:", human_feedback)
-
-                try:
-                    result = await PlanService.handle_plan_approval(
-                        human_feedback, user_id
-                    )
-                    print("Plan approval processed:", result)
-
-                except ValueError as ve:
-                    logger.error(f"ValueError processing plan approval: {ve}")
-                    await connection_config.send_status_update_async(
-                        {
-                            "type": WebsocketMessageType.ERROR_MESSAGE,
-                            "data": {
-                                "content": "Approval failed due to invalid input.",
-                                "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
-                            },
-                        },
-                        user_id,
-                        message_type=WebsocketMessageType.ERROR_MESSAGE,
-                    )
-
-                except Exception:
-                    logger.error("Error processing plan approval", exc_info=True)
-                    await connection_config.send_status_update_async(
-                        {
-                            "type": WebsocketMessageType.ERROR_MESSAGE,
-                            "data": {
-                                "content": "An unexpected error occurred while processing the approval.",
-                                "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
-                            },
-                        },
-                        user_id,
-                        message_type=WebsocketMessageType.ERROR_MESSAGE,
-                    )
-
-                # Use dynamic event name based on approval status
-                approval_status = "Approved" if human_feedback.approved else "Rejected"
-                event_name = f"Plan_{approval_status}"
-                event_props = {
-                    "plan_id": human_feedback.plan_id,
-                    "m_plan_id": human_feedback.m_plan_id,
-                    "approved": human_feedback.approved,
-                    "user_id": user_id,
-                    "feedback": human_feedback.feedback,
-                }
-                if session_id:
-                    event_props["session_id"] = session_id
-                track_event_if_configured(event_name, event_props)
-
-                return {"status": "approval recorded"}
-            else:
-                logging.warning(
-                    "No orchestration or plan found for plan_id: %s",
-                    human_feedback.m_plan_id,
-                )
-                raise HTTPException(
-                    status_code=404, detail="No active plan found for approval"
-                )
-    except Exception as e:
-        logging.error(f"Error processing plan approval: {e}")
-        try:
-            await connection_config.send_status_update_async(
-                {
-                    "type": WebsocketMessageType.ERROR_MESSAGE,
-                    "data": {
-                        "content": "An error occurred while processing your approval request.",
-                        "status": "error",
-                        "timestamp": asyncio.get_event_loop().time(),
-                    },
+        result = await PlanService.handle_plan_approval(human_feedback, user_id)
+        logger.info("Plan approval processed: %s", result)
+    except ValueError as ve:
+        logger.error("ValueError processing plan approval: %s", ve)
+        await connection_config.send_status_update_async(
+            {
+                "type": WebsocketMessageType.ERROR_MESSAGE,
+                "data": {
+                    "content": "Approval failed due to invalid input.",
+                    "status": "error",
+                    "timestamp": asyncio.get_event_loop().time(),
                 },
-                user_id,
-                message_type=WebsocketMessageType.ERROR_MESSAGE,
-            )
-        except Exception as ws_error:
-            # Don't let WebSocket send failure break the HTTP response
-            logging.warning(f"Failed to send WebSocket error: {ws_error}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+            },
+            user_id,
+            message_type=WebsocketMessageType.ERROR_MESSAGE,
+        )
 
-    return None
+    if not human_feedback.approved:
+        # Rejected: nothing to resume. ``approved`` is the only discriminator;
+        # the frontend also sends ``feedback`` on a cancellation.
+        await OrchestrationManager().cancel_parked(user_id, plan.plan_id, request_id)
+        track_event_if_configured(
+            "Plan_Rejected",
+            {
+                "plan_id": plan.plan_id,
+                "m_plan_id": human_feedback.m_plan_id,
+                "user_id": user_id,
+                "session_id": plan.session_id,
+            },
+        )
+        return {"status": "approval recorded"}
+
+    await _schedule_resume(
+        background_tasks,
+        user_id=user_id,
+        user_access_token=user_access_token,
+        memory_store=memory_store,
+        plan=plan,
+        request_id=request_id,
+        response=MagenticPlanReviewResponse.approve(),
+    )
+    track_event_if_configured(
+        "Plan_Approved",
+        {
+            "plan_id": plan.plan_id,
+            "m_plan_id": human_feedback.m_plan_id,
+            "approved": human_feedback.approved,
+            "user_id": user_id,
+            "feedback": human_feedback.feedback,
+            "session_id": plan.session_id,
+        },
+    )
+    return {"status": "approval recorded"}
 
 
 async def _plan_waiting_for(
     memory_store: DatabaseBase,
     *,
+    kind: str = "clarification",
     request_id: Optional[str] = None,
     session_id: Optional[str] = None,
     plan_id: Optional[str] = None,
+    m_plan_id: Optional[str] = None,
 ) -> Optional[Plan]:
-    """The plan parked on a clarification: by plan_id when the client sends it,
-    otherwise the user's plan whose ``waiting_for`` carries this request_id or
-    belongs to this chat session. Durable state; no in-process registry."""
+    """The plan parked on a request_info of ``kind`` (clarification /
+    plan_review): by plan_id when the client sends it, otherwise the user's plan
+    whose ``waiting_for`` carries this request_id / m_plan_id or belongs to this
+    chat session. Durable state; no in-process registry."""
     if plan_id:
         found = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
         candidates = [found] if found is not None else []
@@ -5221,9 +5213,11 @@ async def _plan_waiting_for(
         candidates = await memory_store.get_all_plans()
     for plan in candidates:
         waiting_for = plan.waiting_for or {}
-        if waiting_for.get("kind") != "clarification":
+        if waiting_for.get("kind") != kind:
             continue
         if request_id is not None and waiting_for.get("request_id") != request_id:
+            continue
+        if m_plan_id is not None and waiting_for.get("m_plan_id") != m_plan_id:
             continue
         if session_id is not None and plan.session_id != session_id:
             continue
@@ -5231,7 +5225,7 @@ async def _plan_waiting_for(
     return None
 
 
-async def _schedule_clarification_resume(
+async def _schedule_resume(
     background_tasks: BackgroundTasks,
     *,
     user_id: str,
@@ -5239,9 +5233,10 @@ async def _schedule_clarification_resume(
     memory_store: DatabaseBase,
     plan: Plan,
     request_id: str,
-    answer: str,
+    response: Any,
 ) -> None:
-    """Resume the parked workflow from its checkpoint with the human answer.
+    """Resume the parked workflow from its checkpoint with the human response
+    (``Content`` for a clarification, ``MagenticPlanReviewResponse`` for a review).
 
     Same wiring as ``process_request``: the team must be the one the plan was
     built with (the checkpoint graph depends on its participants) and one run
@@ -5282,7 +5277,7 @@ async def _schedule_clarification_resume(
     async def _resume_task() -> None:
         try:
             await OrchestrationManager().resume_orchestration(
-                user_id, session_id, plan_id, request_id, answer
+                user_id, session_id, plan_id, request_id, response
             )
         finally:
             orchestration_config.clear_run_active(session_id)
@@ -5462,14 +5457,14 @@ async def user_clarification(
                 event_props["session_id"] = session_id
             track_event_if_configured("Human_Clarification_Received", event_props)
             # The answer resumes the parked workflow from its checkpoint.
-            await _schedule_clarification_resume(
+            await _schedule_resume(
                 background_tasks,
                 user_id=user_id,
                 user_access_token=user_access_token,
                 memory_store=memory_store,
                 plan=plan,
                 request_id=human_feedback.request_id,
-                answer=human_feedback.answer,
+                response=Content.from_text(text=human_feedback.answer or ""),
             )
             return {
                 "status": "clarification recorded",

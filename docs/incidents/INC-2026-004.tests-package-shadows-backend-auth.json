@@ -117,6 +117,15 @@
       "human_required": false,
       "executed_at": "2026-09-15T05:16:32Z",
       "description": "Revisión de Winston sobre #211: (1) comentario de test.yml apuntaba a una cuarentena xfail e INC-2026-005 inexistentes; (2) el guardián iteraba ('auth.auth_utils','auth.auth_utils') con docstring de 'ambos nombres' (residuo del alias); (3) warm-up de conftest con try/except: pass que describía los stubs ya retirados y tragaría ImportError reales. Los tres fuera. F841 en test_mcp_service: __aenter__ real llama a _ensure_session → el test ahora lo afirma (assert_awaited_once). Invocación única con ABRT+faulthandler+sonda: 987 passed, exit 0, 0 MODTRACK, 49.73%."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-16T07:10:52Z",
+      "description": "module_identity_tracker pasa de imprimir a gate: registra las señales y termina la sesión de pytest con exit 1 (pytest_sessionfinish) aunque todos los tests pasen; test.yml lo carga con -p y PYTHONPATH incluye docs/incidents/probes. Control negativo: un test temporal que sustituye v4.config.settings en sys.modules deja la sesión en rojo con la señal MODTRACK; sin él, exit 0."
     }
   ],
   "probe_budget": {
@@ -178,10 +187,10 @@
       "class": "read-only",
       "cwd": "src/backend",
       "command_or_test": "PYTHONPATH=$PWD/../../docs/incidents/probes:$PWD/../..:$PWD uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker 2>&1 | grep -c MODTRACK ; find ../tests/backend -name __init__.py | wc -l ; grep -rlE 'sys\\.path\\.(insert|append)' ../tests/backend | wc -l",
-      "expected_signal_when_failing": "≥1 línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO, o algún __init__.py bajo src/tests/backend",
+      "expected_signal_when_failing": "≥1 línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO y sesión de pytest en exit 1 (en CI, el job test en rojo), o algún __init__.py bajo src/tests/backend",
       "expected_signal_when_healthy": "0 líneas MODTRACK, 0 __init__.py y 0 sys.path.insert; lote en un proceso sin xfail"
     },
-    "last_verified": "2026-09-15T05:16:32Z",
+    "last_verified": "2026-09-16T07:10:52Z",
     "expires_if_not_reverified_by": "2026-12-14T03:44:29Z",
     "operational": true
   },

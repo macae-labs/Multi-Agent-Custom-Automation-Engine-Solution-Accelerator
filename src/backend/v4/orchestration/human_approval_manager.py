@@ -205,88 +205,50 @@ Never present invented figures, statistics or research as findings.
         )
 
     async def plan(self, magentic_context: MagenticContext) -> Any:
-        """
-        Override the plan method to create the plan first, then ask for approval before execution.
-        Returns the original plan ChatMessage if approved, otherwise raises.
+        """Create the plan and its structured ``MPlan``; never wait here.
+
+        The approval gate is the framework's native plan review
+        (``MagenticBuilder(enable_plan_review=True)``): right after this
+        returns, the orchestrator emits a ``request_info`` carrying a
+        ``MagenticPlanReviewRequest`` and the workflow goes idle on a
+        checkpoint. ``OrchestrationManager._park_on_request_info`` sends
+        PLAN_APPROVAL_REQUEST with ``self.magentic_plan`` and the answer
+        (approve / revise) resumes from the checkpoint.
         """
         self._apply_pending_history(magentic_context)
 
-        # Normalize task text
         task_text = getattr(magentic_context.task, "text", str(magentic_context.task))
 
         logger.info("\n Human-in-the-Loop Magentic Manager Creating Plan:")
         logger.info("   Task: %s", task_text)
         logger.info("-" * 60)
 
-        logger.info(" Creating execution plan...")
         plan_message = await super().plan(magentic_context)
         logger.info(
             " Plan created (assistant message length=%d)",
             len(plan_message.text) if plan_message and plan_message.text else 0,
         )
 
-        # Build structured MPlan from task ledger
         if self.task_ledger is None:
             raise RuntimeError("task_ledger not set after plan()")
 
         self.magentic_plan = self.plan_to_obj(magentic_context, self.task_ledger)
-        self.magentic_plan.user_id = self.current_user_id  # annotate with user
-
-        approval_message = messages.PlanApprovalRequest(
-            plan=self.magentic_plan,
-            status=messages.PlanStatus.PENDING_APPROVAL,
-            context=(
-                {
-                    "task": task_text,
-                    "participant_descriptions": magentic_context.participant_descriptions,
-                }
-                if hasattr(magentic_context, "participant_descriptions")
-                else {}
-            ),
-        )
-
-        try:
-            orchestration_config.plans[self.magentic_plan.id] = self.magentic_plan
-        except Exception as e:
-            logger.error("Error processing plan approval: %s", e)
-
-        # Send approval request
-        await connection_config.send_status_update_async(
-            message=approval_message,
-            user_id=self.current_user_id,
-            message_type=messages.WebsocketMessageType.PLAN_APPROVAL_REQUEST,
-        )
-
-        # Await user response
-        approval_response = await self._wait_for_user_approval(approval_message.plan.id)
-
-        if approval_response and approval_response.approved:
-            logger.info("Plan approved - proceeding with execution...")
-            return plan_message
-        else:
-            logger.debug("Plan execution cancelled by user")
-            await connection_config.send_status_update_async(
-                {
-                    "type": messages.WebsocketMessageType.PLAN_APPROVAL_RESPONSE,
-                    "data": approval_response,
-                },
-                user_id=self.current_user_id,
-                message_type=messages.WebsocketMessageType.PLAN_APPROVAL_RESPONSE,
-            )
-            raise Exception("Plan execution cancelled by user")
+        self.magentic_plan.user_id = self.current_user_id
+        return plan_message
 
     async def replan(
         self, magentic_context: MagenticContext, feedback: Optional[str] = None
     ) -> Any:
-        """
-        Override to add websocket messages for replanning events.
-        """
+        """Replan (native plan review ``revise`` or stall) and refresh ``magentic_plan``."""
         logger.info("\nHuman-in-the-Loop Magentic Manager replanned:")
         replan_message = await super().replan(magentic_context=magentic_context)
         logger.info(
             "Replanned message length: %d",
             len(replan_message.text) if replan_message and replan_message.text else 0,
         )
+        if self.task_ledger is not None:
+            self.magentic_plan = self.plan_to_obj(magentic_context, self.task_ledger)
+            self.magentic_plan.user_id = self.current_user_id
         return replan_message
 
     async def create_progress_ledger(self, magentic_context: MagenticContext):
@@ -402,83 +364,6 @@ Never present invented figures, statistics or research as findings.
                 responded.add(author)
 
         return [name for name in all_agents if name not in responded]
-
-    async def _wait_for_user_approval(
-        self, m_plan_id: Optional[str] = None
-    ) -> Optional[messages.PlanApprovalResponse]:
-        """
-        Wait for user approval response using event-driven pattern with timeout handling.
-        """
-        logger.info("Waiting for user approval for plan: %s", m_plan_id)
-
-        if not m_plan_id:
-            logger.error("No plan ID provided for approval")
-            return messages.PlanApprovalResponse(
-                approved=False, m_plan_id=m_plan_id or ""
-            )
-
-        orchestration_config.set_approval_pending(m_plan_id)
-
-        try:
-            approved = await orchestration_config.wait_for_approval(m_plan_id)
-            logger.info("Approval received for plan %s: %s", m_plan_id, approved)
-            return messages.PlanApprovalResponse(approved=approved, m_plan_id=m_plan_id)
-
-        except asyncio.TimeoutError:
-            logger.debug(
-                "Approval timeout for plan %s - notifying user and terminating process",
-                m_plan_id,
-            )
-
-            timeout_message = messages.TimeoutNotification(
-                timeout_type="approval",
-                request_id=m_plan_id,
-                message=f"Plan approval request timed out after {orchestration_config.approval_timeout} seconds. Please try again.",
-                timestamp=asyncio.get_event_loop().time(),
-                timeout_duration=orchestration_config.default_timeout,
-            )
-
-            try:
-                await connection_config.send_status_update_async(
-                    message=timeout_message,
-                    user_id=self.current_user_id,
-                    message_type=messages.WebsocketMessageType.TIMEOUT_NOTIFICATION,
-                )
-                logger.info(
-                    "Timeout notification sent to user %s for plan %s",
-                    self.current_user_id,
-                    m_plan_id,
-                )
-            except Exception as e:
-                logger.error("Failed to send timeout notification: %s", e)
-
-            orchestration_config.cleanup_approval(m_plan_id)
-            return None
-
-        except KeyError as e:
-            logger.debug("Plan ID not found: %s - terminating process silently", e)
-            return None
-
-        except asyncio.CancelledError:
-            logger.debug("Approval request %s was cancelled", m_plan_id)
-            orchestration_config.cleanup_approval(m_plan_id)
-            return None
-
-        except Exception as e:
-            logger.debug(
-                "Unexpected error waiting for approval: %s - terminating process silently",
-                e,
-            )
-            orchestration_config.cleanup_approval(m_plan_id)
-            return None
-
-        finally:
-            if (
-                m_plan_id in orchestration_config.approvals
-                and orchestration_config.approvals[m_plan_id] is None
-            ):
-                logger.debug("Final cleanup for pending approval plan %s", m_plan_id)
-                orchestration_config.cleanup_approval(m_plan_id)
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
         """

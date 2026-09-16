@@ -6,12 +6,16 @@ eso es exactamente lo que hacían los tests que instalaban Mocks en
 sys.modules, borraban módulos reales o cargaban el producto por ruta de
 archivo bajo un segundo nombre. Señal sana: ninguna línea MODTRACK.
 
+Es gate: con una o más señales la sesión de pytest termina con exit 1 aunque
+todos los tests pasen (test.yml lo carga con -p). Sana: ninguna línea MODTRACK.
+
 Uso (desde src/backend):
   PYTHONPATH=$PWD/../../docs/incidents/probes:$PWD/../..:$PWD \\
-    uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker 2>&1 | grep MODTRACK
+    uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker
 """
 
 import sys
+import types
 
 import pytest
 
@@ -45,6 +49,9 @@ def _snapshot():
     return snap
 
 
+VIOLATIONS: list[str] = []
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol(item, nextitem):
     before = _snapshot()
@@ -52,6 +59,25 @@ def pytest_runtest_protocol(item, nextitem):
     after = _snapshot()
     for key in sorted(set(before) | set(after)):
         if key in before and key in after and before[key] != after[key]:
-            print(f"\nMODTRACK {item.nodeid}: {key} REEMPLAZADO", file=sys.stderr)
+            VIOLATIONS.append(f"{item.nodeid}: {key} REEMPLAZADO")
         elif key in before and key not in after:
-            print(f"\nMODTRACK {item.nodeid}: {key} BORRADO", file=sys.stderr)
+            VIOLATIONS.append(f"{item.nodeid}: {key} BORRADO")
+        elif key in after and key in MODS and not isinstance(sys.modules.get(key), types.ModuleType):
+            # Un módulo del producto que aparece por primera vez y NO es un módulo:
+            # alguien lo instaló como Mock antes de que el producto lo importara.
+            VIOLATIONS.append(f"{item.nodeid}: {key} INSTALADO COMO {type(sys.modules.get(key)).__name__}")
+        else:
+            continue
+        print(f"\nMODTRACK {VIOLATIONS[-1]}", file=sys.stderr)
+
+
+def pytest_terminal_summary(terminalreporter):
+    if VIOLATIONS:
+        terminalreporter.section("MODTRACK: módulos del producto reemplazados o borrados durante el lote")
+        for line in VIOLATIONS:
+            terminalreporter.write_line(line)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if VIOLATIONS and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

@@ -3,10 +3,8 @@
 Comprehensive test cases covering all configuration classes with proper mocking.
 """
 
-import asyncio
 import json
 import unittest
-from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 # Environment variables are set by conftest.py
@@ -50,9 +48,7 @@ class TestAzureConfig(unittest.TestCase):
         settings = config.create_execution_settings()
 
         self.assertEqual(settings, mock_settings)
-        mock_chat_options.assert_called_once_with(
-            max_tokens=4000, temperature=0.3
-        )
+        mock_chat_options.assert_called_once_with(max_tokens=4000, temperature=0.3)
 
     @patch("v4.config.settings.config")
     def test_ad_token_provider(self, mock_config):
@@ -212,19 +208,33 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
 
         # Test initialization
         self.assertIsInstance(config.orchestrations, dict)
-        self.assertIsInstance(config.plans, dict)
-        self.assertIsInstance(config.approvals, dict)
+        self.assertFalse(hasattr(config, "plans"))  # no in-process plan registry
         self.assertIsInstance(config.sockets, dict)
         # Operator knob (upstream default was 5, this fork tunes it per run).
         # Sanity-check the type/floor instead of a literal so re-tuning it does
         # not fail the suite — a plan needs at least one round to execute.
         self.assertIsInstance(config.max_rounds, int)
         self.assertGreaterEqual(config.max_rounds, 1)
-        self.assertIsInstance(config._approval_events, dict)
         self.assertEqual(config.default_timeout, 1800.0)
-        # and typing — these must never regress to machine-scale timeouts.
-        self.assertEqual(config.approval_timeout, 1800.0)
         self.assertIsInstance(config.active_runs, set)
+
+    def test_no_in_process_human_waits(self):
+        """Approval and clarification are native request_info events parked in
+        the checkpoint (Plan.waiting_for); the config keeps no wait registry."""
+        config = OrchestrationConfig()
+        for name in (
+            "approvals",
+            "_approval_events",
+            "approval_timeout",
+            "set_approval_pending",
+            "set_approval_result",
+            "wait_for_approval",
+            "cleanup_approval",
+            "clarifications",
+            "_clarification_events",
+            "wait_for_clarification",
+        ):
+            self.assertFalse(hasattr(config, name), name)
 
     def test_get_current_orchestration(self):
         """Test getting current orchestration."""
@@ -243,95 +253,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         # Test getting existing orchestration
         result = config.get_current_orchestration(user_id)
         self.assertEqual(result, orchestration)
-
-    def test_approval_workflow(self):
-        """Test approval workflow."""
-
-        config = OrchestrationConfig()
-        plan_id = "test-plan"
-
-        # Test set approval pending
-        config.set_approval_pending(plan_id)
-        self.assertIn(plan_id, config.approvals)
-        self.assertIsNone(config.approvals[plan_id])
-
-        # Test set approval result
-        config.set_approval_result(plan_id, True)
-        self.assertTrue(config.approvals[plan_id])
-
-        # Test cleanup
-        config.cleanup_approval(plan_id)
-        self.assertNotIn(plan_id, config.approvals)
-
-
-    async def test_wait_for_approval_already_decided(self):
-        """Test waiting for approval when already decided."""
-
-        config = OrchestrationConfig()
-        plan_id = "test-plan"
-
-        # Set approval first
-        config.set_approval_pending(plan_id)
-        config.set_approval_result(plan_id, True)
-
-        # Wait should return immediately
-        result = await config.wait_for_approval(plan_id)
-        self.assertTrue(result)
-
-
-    async def test_wait_for_approval_timeout(self):
-        """Test waiting for approval with timeout."""
-
-        config = OrchestrationConfig()
-        plan_id = "test-plan"
-
-        # Set approval pending but don't provide result
-        config.set_approval_pending(plan_id)
-
-        # Wait should timeout
-        with self.assertRaises(asyncio.TimeoutError):
-            await config.wait_for_approval(plan_id, timeout=0.1)
-
-        # Approval should be cleaned up
-        self.assertNotIn(plan_id, config.approvals)
-
-
-    async def test_wait_for_approval_cancelled(self):
-        """Test waiting for approval when cancelled."""
-
-        config = OrchestrationConfig()
-        plan_id = "test-plan"
-
-        config.set_approval_pending(plan_id)
-
-        async def cancel_task():
-            await asyncio.sleep(0.05)
-            task.cancel()
-
-        task = asyncio.create_task(config.wait_for_approval(plan_id, timeout=1.0))
-        cancel_task_handle = asyncio.create_task(cancel_task())
-
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-
-        await cancel_task_handle
-
-
-    def test_cleanup_approval(self):
-        """Test cleanup approval."""
-
-        config = OrchestrationConfig()
-        plan_id = "test-plan"
-
-        # Set approval and event
-        config.set_approval_pending(plan_id)
-        self.assertIn(plan_id, config.approvals)
-        self.assertIn(plan_id, config._approval_events)
-
-        # Cleanup
-        config.cleanup_approval(plan_id)
-        self.assertNotIn(plan_id, config.approvals)
-        self.assertNotIn(plan_id, config._approval_events)
 
 
 class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
@@ -412,9 +333,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         config = ConnectionConfig()
         process_id = "non-existent-process"
 
-        with patch(
-            "v4.config.settings.logger", spec=logging.Logger
-        ) as mock_logger:
+        with patch("v4.config.settings.logger", spec=logging.Logger) as mock_logger:
             await config.close_connection(process_id)
 
             # Should log warning but not fail
@@ -593,9 +512,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             coro.close()
             return None
 
-        with patch(
-            "v4.config.settings.asyncio.create_task"
-        ) as mock_create_task:
+        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
             mock_create_task.side_effect = consume_coro
             with patch("v4.config.settings.logger") as mock_logger:
                 # Add second connection for same user
@@ -628,9 +545,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             coro.close()
             raise Exception("Close error")
 
-        with patch(
-            "v4.config.settings.asyncio.create_task"
-        ) as mock_create_task:
+        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
             with patch("v4.config.settings.logger") as mock_logger:
                 # Add second connection for same user
@@ -658,9 +573,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             coro.close()
             raise Exception("Close error")
 
-        with patch(
-            "v4.config.settings.asyncio.create_task"
-        ) as mock_create_task:
+        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
             with patch("v4.config.settings.logger") as mock_logger:
                 # Add new connection for same process
@@ -688,9 +601,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
             coro.close()
             raise Exception("Task creation error")
 
-        with patch(
-            "v4.config.settings.asyncio.create_task"
-        ) as mock_create_task:
+        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
             mock_create_task.side_effect = consume_and_raise
 
             with patch("v4.config.settings.logger") as mock_logger:
@@ -711,9 +622,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         # Add connection directly to avoid triggering close logic
         config.connections[process_id] = connection
 
-        with patch(
-            "v4.config.settings.asyncio.create_task"
-        ) as mock_create_task:
+        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
             # Consume coroutine to avoid warning
             mock_create_task.side_effect = lambda coro: coro.close()
             config.send_status_update(message, process_id)
@@ -769,73 +678,3 @@ class TestGlobalInstances(unittest.TestCase):
         self.assertIsInstance(orchestration_config, OrchestrationConfig)
         self.assertIsInstance(connection_config, ConnectionConfig)
         self.assertIsInstance(team_config, TeamConfig)
-
-
-class TestApprovalAndClarificationEdgeCases(IsolatedAsyncioTestCase):
-    """Test cases for approval and clarification edge cases."""
-
-    async def test_wait_for_approval_key_error(self):
-        """Test waiting for approval with non-existent plan_id raises KeyError."""
-        config = OrchestrationConfig()
-
-        with self.assertRaises(KeyError) as context:
-            await config.wait_for_approval("non_existent_plan", timeout=1.0)
-
-        self.assertIn("non_existent_plan", str(context.exception))
-
-    async def test_wait_for_approval_success(self):
-        """Test waiting for approval succeeds when approval is set."""
-        config = OrchestrationConfig()
-        plan_id = "test-plan-success"
-
-        config.set_approval_pending(plan_id)
-
-        async def approve_task():
-            await asyncio.sleep(0.05)
-            config.set_approval_result(plan_id, True)
-
-        approve_task_handle = asyncio.create_task(approve_task())
-        result = await config.wait_for_approval(plan_id, timeout=1.0)
-
-        self.assertTrue(result)
-        _ = await approve_task_handle
-
-    async def test_wait_for_approval_rejected(self):
-        """Test waiting for approval when plan is rejected."""
-        config = OrchestrationConfig()
-        plan_id = "test-plan-rejected"
-
-        config.set_approval_pending(plan_id)
-
-        async def reject_task():
-            await asyncio.sleep(0.05)
-            config.set_approval_result(plan_id, False)
-
-        reject_task_handle = asyncio.create_task(reject_task())
-        result = await config.wait_for_approval(plan_id, timeout=1.0)
-
-        self.assertFalse(result)
-        _ = await reject_task_handle
-
-
-    async def test_wait_for_approval_creates_new_event(self):
-        """Test that waiting for approval creates event if not exists."""
-        config = OrchestrationConfig()
-        plan_id = "test-plan-new-event"
-
-        # Set pending but don't create the event manually
-        config.approvals[plan_id] = None
-
-        async def approve_task():
-            await asyncio.sleep(0.05)
-            config.set_approval_result(plan_id, True)
-
-        approve_task_handle = asyncio.create_task(approve_task())
-        result = await config.wait_for_approval(plan_id, timeout=1.0)
-
-        self.assertTrue(result)
-        _ = await approve_task_handle
-
-
-if __name__ == "__main__":
-    unittest.main()

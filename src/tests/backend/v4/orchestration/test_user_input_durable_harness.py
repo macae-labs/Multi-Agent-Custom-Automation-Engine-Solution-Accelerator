@@ -272,8 +272,9 @@ async def test_reset_keeps_the_session_so_the_anchor_is_cleared_by_the_agent_not
     assert log2[1]["state"] == {"turns": 2}  # misma sesión tras el reset: el contador continúa, sin ancla pendiente
 
 
-def test_no_in_process_clarification_wait_remains_in_backend():
-    """La tanda deja cero ocurrencias del API de espera en proceso: sin guardas ni compatibilidad."""
+def test_no_in_process_human_wait_remains_in_backend():
+    """Clarificación y aprobación: cero ocurrencias del API de espera en proceso en src/backend,
+    sin guardas ni compatibilidad. La espera humana es estado (waiting_for + checkpoint)."""
     import pathlib
     import re
 
@@ -283,6 +284,8 @@ def test_no_in_process_clarification_wait_remains_in_backend():
         r"_clarification_events|wait_for_clarification|set_clarification_pending|cleanup_clarification"
         r"|get_pending_clarification_for_session|_wait_for_user_clarification|clarification_timeout"
         r"|set_clarification_result|\.clarifications\b"
+        r"|_approval_events|wait_for_approval|set_approval_pending|set_approval_result|cleanup_approval"
+        r"|approval_timeout|\.approvals\b|_wait_for_user_approval"
     )
     hits = [
         f"{path.relative_to(root)}:{number}"
