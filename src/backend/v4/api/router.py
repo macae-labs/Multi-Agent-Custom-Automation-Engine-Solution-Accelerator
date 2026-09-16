@@ -5070,12 +5070,19 @@ async def plan_approval(
               m_plan_id:
                 type: string
                 description: The internal m_plan id for the plan (required)
+              decision:
+                type: string
+                enum: [approve, revise, reject]
+                description: >-
+                  Explicit decision. approve resumes the plan; revise sends
+                  feedback to the manager (replan + new approval request);
+                  reject cancels. Falls back to approved when omitted.
               approved:
                 type: boolean
-                description: Whether the plan is approved (true) or rejected (false)
+                description: Legacy boolean (approve/reject) used only when decision is omitted
               feedback:
                 type: string
-                description: Optional feedback or comment from the user
+                description: Feedback for the manager (required for revise)
               plan_id:
                 type: string
                 description: Optional user-facing plan_id
@@ -5089,6 +5096,8 @@ async def plan_approval(
               properties:
                 status:
                   type: string
+      400:
+        description: m_plan_id missing, or revise without feedback
       401:
         description: Missing or invalid user information
       404:
@@ -5155,9 +5164,13 @@ async def plan_approval(
             message_type=WebsocketMessageType.ERROR_MESSAGE,
         )
 
-    if not human_feedback.approved:
-        # Rejected: nothing to resume. ``approved`` is the only discriminator;
-        # the frontend also sends ``feedback`` on a cancellation.
+    decision = human_feedback.resolved_decision()
+    feedback = (human_feedback.feedback or "").strip()
+    if decision == "revise" and not feedback:
+        raise HTTPException(status_code=400, detail="revise requires feedback")
+    if decision == "reject":
+        # Nothing to resume. Only the explicit decision discriminates: the
+        # frontend also sends ``feedback`` on a cancellation.
         await OrchestrationManager().cancel_parked(user_id, plan.plan_id, request_id)
         track_event_if_configured(
             "Plan_Rejected",
@@ -5177,10 +5190,14 @@ async def plan_approval(
         memory_store=memory_store,
         plan=plan,
         request_id=request_id,
-        response=MagenticPlanReviewResponse.approve(),
+        response=(
+            MagenticPlanReviewResponse.revise(feedback)
+            if decision == "revise"
+            else MagenticPlanReviewResponse.approve()
+        ),
     )
     track_event_if_configured(
-        "Plan_Approved",
+        "Plan_Approved" if decision == "approve" else "Plan_Revision_Requested",
         {
             "plan_id": plan.plan_id,
             "m_plan_id": human_feedback.m_plan_id,

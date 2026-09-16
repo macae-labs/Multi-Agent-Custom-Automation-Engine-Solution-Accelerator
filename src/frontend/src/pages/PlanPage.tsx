@@ -227,6 +227,7 @@ const PlanPage: React.FC = () => {
         await apiService.approvePlan({
           m_plan_id: planApprovalRequest.id,
           plan_id: planData?.plan?.id,
+          decision: 'reject',
           approved: false,
           feedback: 'Plan cancelled by user navigation',
         });
@@ -439,6 +440,7 @@ const PlanPage: React.FC = () => {
           dispatch(setApprovalRequest(mPlanData));
           setWaitingForPlan(false);
           setShowProcessingPlanSpinner(false);
+          setShowApprovalButtons(true); // also after a revise -> replan
           scrollToBottom();
         } else {
           console.error('❌ Failed to parse plan data', approvalRequest);
@@ -900,6 +902,7 @@ const PlanPage: React.FC = () => {
       await apiService.approvePlan({
         m_plan_id: planApprovalRequest.id,
         plan_id: planData?.plan?.id,
+        decision: 'approve',
         approved: true,
         feedback: 'Plan approved by user',
       });
@@ -922,6 +925,43 @@ const PlanPage: React.FC = () => {
     showToast,
   ]);
 
+  // Handle plan revision: the manager replans with the feedback and a new
+  // PLAN_APPROVAL_REQUEST arrives (same durable park/resume as approve).
+  const handleRevisePlan = useCallback(
+    async (feedback: string) => {
+      if (!planApprovalRequest) return;
+      const text = feedback.trim();
+      if (!text) {
+        showToast('Describe what should change in the plan', 'error');
+        return;
+      }
+
+      dispatch(setProcessingApproval(true));
+      let id = showToast('Submitting revision', 'progress');
+
+      try {
+        await apiService.approvePlan({
+          m_plan_id: planApprovalRequest.id,
+          plan_id: planData?.plan?.id,
+          decision: 'revise',
+          approved: false,
+          feedback: text,
+        });
+
+        dismissToast(id);
+        setShowProcessingPlanSpinner(true);
+        setShowApprovalButtons(false);
+      } catch (error) {
+        dismissToast(id);
+        showToast('Failed to submit revision', 'error');
+        console.error('❌ Failed to request plan revision:', error);
+      } finally {
+        dispatch(setProcessingApproval(false));
+      }
+    },
+    [dispatch, dismissToast, planApprovalRequest, planData?.plan?.id, showToast]
+  );
+
   // Handle plan rejection
   const handleRejectPlan = useCallback(async () => {
     if (!planApprovalRequest) return;
@@ -932,6 +972,7 @@ const PlanPage: React.FC = () => {
       await apiService.approvePlan({
         m_plan_id: planApprovalRequest.id,
         plan_id: planData?.plan?.id,
+        decision: 'reject',
         approved: false,
         feedback: 'Plan rejected by user',
       });
@@ -1369,6 +1410,7 @@ const PlanPage: React.FC = () => {
                   planApprovalRequest={planApprovalRequest}
                   OnChatSubmit={handleOnchatSubmit}
                   handleApprovePlan={handleApprovePlan}
+                  handleRevisePlan={handleRevisePlan}
                   handleRejectPlan={handleRejectPlan}
                   attachedFiles={attachedFiles}
                   generatedFiles={generatedFiles}

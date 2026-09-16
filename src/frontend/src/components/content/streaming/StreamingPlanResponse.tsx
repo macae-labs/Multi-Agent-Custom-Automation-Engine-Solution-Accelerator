@@ -4,6 +4,7 @@ import {
     Text,
     Body1,
     Tag,
+    Textarea,
     makeStyles,
     tokens
 } from "@fluentui/react-components";
@@ -166,6 +167,12 @@ const useStyles = makeStyles({
         gap: '12px',
         alignItems: 'center',
         marginTop: '20px'
+    },
+    reviseContainer: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        marginTop: '12px'
     }
 });
 
@@ -281,6 +288,7 @@ const getFactsPreview = (content: string): string => {
 interface RenderPlanResponseProps {
     planApprovalRequest: MPlanData | null;
     handleApprovePlan: () => void;
+    handleRevisePlan: (feedback: string) => void;
     handleRejectPlan: () => void;
     processingApproval: boolean;
     showApprovalButtons: boolean;
@@ -290,12 +298,20 @@ interface RenderPlanResponseProps {
 const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
     planApprovalRequest,
     handleApprovePlan,
+    handleRevisePlan,
     handleRejectPlan,
     processingApproval,
     showApprovalButtons
 }) => {
     const styles = useStyles();
     const [isFactsExpanded, setIsFactsExpanded] = useState(false);
+    const [isRevising, setIsRevising] = useState(false);
+    const [reviseFeedback, setReviseFeedback] = useState('');
+    const submitRevision = () => {
+        handleRevisePlan(reviseFeedback);
+        setIsRevising(false);
+        setReviseFeedback('');
+    };
 
     if (!planApprovalRequest) return null;
 
@@ -433,12 +449,53 @@ const RenderPlanResponse: React.FC<RenderPlanResponseProps> = ({
                         <Button
                             appearance="secondary"
                             size="medium"
+                            onClick={() => setIsRevising((v) => !v)}
+                            disabled={processingApproval}
+                            aria-label="Revise task plan"
+                            aria-expanded={isRevising}
+                        >
+                            Revise
+                        </Button>
+                        <Button
+                            appearance="secondary"
+                            size="medium"
                             onClick={handleRejectPlan}
                             disabled={processingApproval}
                             aria-label="Cancel task plan"
                         >
                             Cancel
                         </Button>
+                    </div>
+                )}
+                {showApprovalButtons && !isCreatingPlan && isRevising && (
+                    <div className={styles.reviseContainer}>
+                        <Textarea
+                            value={reviseFeedback}
+                            onChange={(_, data) => setReviseFeedback(data.value)}
+                            placeholder="What should change in this plan?"
+                            aria-label="Plan revision feedback"
+                            resize="vertical"
+                            disabled={processingApproval}
+                        />
+                        <div className={styles.buttonContainer} style={{ marginTop: 0 }}>
+                            <Button
+                                appearance="primary"
+                                size="medium"
+                                onClick={submitRevision}
+                                disabled={processingApproval || !reviseFeedback.trim()}
+                                aria-label="Send plan revision"
+                            >
+                                Send revision
+                            </Button>
+                            <Button
+                                appearance="subtle"
+                                size="medium"
+                                onClick={() => { setIsRevising(false); setReviseFeedback(''); }}
+                                disabled={processingApproval}
+                            >
+                                Back
+                            </Button>
+                        </div>
                     </div>
                 )}
             </div>
