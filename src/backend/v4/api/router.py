@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 import v4.models.messages as messages
 from auth.auth_utils import get_authenticated_user_details
+from common.database.database_base import DatabaseBase
 from common.database.database_factory import DatabaseFactory
 from common.models.messages_af import (
     ChatMessageRequest,
@@ -3797,21 +3798,29 @@ async def chat_message_stream(
     # previous_intent=="task" broke the loop: once any turn went to direct
     # response it persisted intent="conversational", so the next answer skipped
     # this guard and went to direct response again.
-    pending_request_id = orchestration_config.get_pending_clarification_for_session(
-        chat_request.session_id,
-        user_id,
+    pending_plan = await _plan_waiting_for(
+        memory_store,
+        session_id=chat_request.session_id,
+        plan_id=chat_request.plan_id or None,
     )
-    if pending_request_id:
+    if pending_plan is not None:
+        pending_request_id = (pending_plan.waiting_for or {})["request_id"]
         logger.info(
             "Routing message as clarification answer for request_id=%s session=%s",
             pending_request_id,
             chat_request.session_id,
         )
-        # Deliver the answer to the waiting orchestration.
-        orchestration_config.set_clarification_result(
-            pending_request_id, chat_request.message
-        )
         await _persist_user_message()
+        # The answer resumes the parked workflow from its checkpoint (no in-process wait).
+        await _schedule_clarification_resume(
+            background_tasks,
+            user_id=user_id,
+            user_access_token=user_access_token,
+            memory_store=memory_store,
+            plan=pending_plan,
+            request_id=pending_request_id,
+            answer=chat_request.message,
+        )
         # Persist the exchange to the single chat history.
         try:
             await chat_svc.add_message(
@@ -5195,9 +5204,98 @@ async def plan_approval(
     return None
 
 
+async def _plan_waiting_for(
+    memory_store: DatabaseBase,
+    *,
+    request_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    plan_id: Optional[str] = None,
+) -> Optional[Plan]:
+    """The plan parked on a clarification: by plan_id when the client sends it,
+    otherwise the user's plan whose ``waiting_for`` carries this request_id or
+    belongs to this chat session. Durable state; no in-process registry."""
+    if plan_id:
+        found = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+        candidates = [found] if found is not None else []
+    else:
+        candidates = await memory_store.get_all_plans()
+    for plan in candidates:
+        waiting_for = plan.waiting_for or {}
+        if waiting_for.get("kind") != "clarification":
+            continue
+        if request_id is not None and waiting_for.get("request_id") != request_id:
+            continue
+        if session_id is not None and plan.session_id != session_id:
+            continue
+        return plan
+    return None
+
+
+async def _schedule_clarification_resume(
+    background_tasks: BackgroundTasks,
+    *,
+    user_id: str,
+    user_access_token: Optional[str],
+    memory_store: DatabaseBase,
+    plan: Plan,
+    request_id: str,
+    answer: str,
+) -> None:
+    """Resume the parked workflow from its checkpoint with the human answer.
+
+    Same wiring as ``process_request``: the team must be the one the plan was
+    built with (the checkpoint graph depends on its participants) and one run
+    per session. The orchestration is reused when alive and rebuilt after a
+    restart; the framework validates the graph signature on resume.
+    """
+    user_current_team = await memory_store.get_current_team(user_id=user_id)
+    team_id = user_current_team.team_id if user_current_team else None
+    if not team_id or (plan.team_id and team_id != plan.team_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Plan {plan.plan_id} was built with team '{plan.team_id}'; "
+                f"current team is '{team_id}'. Resume needs the same team."
+            ),
+        )
+    team = await memory_store.get_team_by_id(team_id=team_id)
+    if not team:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Team configuration '{team_id}' not found or access denied",
+        )
+    session_id = plan.session_id
+    if orchestration_config.is_run_active(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="An orchestration run is already in flight for this session.",
+        )
+    await OrchestrationManager.get_current_or_new_orchestration(
+        user_id=user_id,
+        team_config=team,
+        team_switched=False,
+        team_service=TeamService(memory_store),
+        user_access_token=user_access_token,
+    )
+    plan_id = plan.plan_id
+
+    async def _resume_task() -> None:
+        try:
+            await OrchestrationManager().resume_orchestration(
+                user_id, session_id, plan_id, request_id, answer
+            )
+        finally:
+            orchestration_config.clear_run_active(session_id)
+
+    orchestration_config.mark_run_active(session_id)
+    background_tasks.add_task(_resume_task)
+
+
 @app_v4.post("/user_clarification")
 async def user_clarification(
-    human_feedback: messages.UserClarificationResponse, request: Request
+    background_tasks: BackgroundTasks,
+    human_feedback: messages.UserClarificationResponse,
+    request: Request,
 ):
     """
     Endpoint to receive user clarification responses for clarification requests sent by the system.
@@ -5244,7 +5342,7 @@ async def user_clarification(
         description: Internal server error
     """
 
-    user_id, tenant_id = _extract_auth(request)
+    user_id, tenant_id, user_access_token = _extract_auth_with_token(request)
 
     # Attach session_id to span if plan_id is available and capture for events
     session_id = None
@@ -5319,14 +5417,13 @@ async def user_clarification(
                     },
                 )
 
-        if (
-            orchestration_config
-            and human_feedback.request_id in orchestration_config.clarifications
-        ):
-            # Use the new event-driven method to set clarification result
-            orchestration_config.set_clarification_result(
-                human_feedback.request_id, human_feedback.answer
-            )
+        plan = await _plan_waiting_for(
+            memory_store,
+            request_id=human_feedback.request_id,
+            plan_id=human_feedback.plan_id or None,
+        )
+        if plan is not None:
+            session_id = plan.session_id
             try:
                 result = await PlanService.handle_human_clarification(
                     human_feedback, user_id
@@ -5364,6 +5461,16 @@ async def user_clarification(
             if session_id:
                 event_props["session_id"] = session_id
             track_event_if_configured("Human_Clarification_Received", event_props)
+            # The answer resumes the parked workflow from its checkpoint.
+            await _schedule_clarification_resume(
+                background_tasks,
+                user_id=user_id,
+                user_access_token=user_access_token,
+                memory_store=memory_store,
+                plan=plan,
+                request_id=human_feedback.request_id,
+                answer=human_feedback.answer,
+            )
             return {
                 "status": "clarification recorded",
             }

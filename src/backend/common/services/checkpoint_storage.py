@@ -146,22 +146,29 @@ class CosmosCheckpointStorage:
         ]
 
 
-_storage: Optional[CosmosCheckpointStorage] = None
+_storage: Optional[CheckpointStorage] = None
 
 
 def get_checkpoint_storage() -> CheckpointStorage:
-    """Cosmos cuando hay ``COSMOSDB_ENDPOINT``; sin él, en memoria (como antes)."""
+    """Cosmos cuando hay ``COSMOSDB_ENDPOINT``; sin él, en memoria.
+
+    Una instancia por proceso en ambos modos: la reanudación
+    (``workflow.run(checkpoint_id=..., responses=...)``) debe leer del mismo
+    storage con el que se construyó el workflow.
+    """
     global _storage
-    if not config.COSMOSDB_ENDPOINT:
-        return InMemoryCheckpointStorage()
     if _storage is None:
-        _storage = CosmosCheckpointStorage()
+        _storage = (
+            CosmosCheckpointStorage()
+            if config.COSMOSDB_ENDPOINT
+            else InMemoryCheckpointStorage()
+        )
     return _storage
 
 
 async def close_checkpoint_storage() -> None:
     """Cierra el cliente compartido; lo llama el lifespan de la app."""
     global _storage
-    if _storage is not None:
+    if isinstance(_storage, CosmosCheckpointStorage):
         await _storage.aclose()
-        _storage = None
+    _storage = None

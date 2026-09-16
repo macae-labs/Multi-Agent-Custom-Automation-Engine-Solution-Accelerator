@@ -215,19 +215,15 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(config.plans, dict)
         self.assertIsInstance(config.approvals, dict)
         self.assertIsInstance(config.sockets, dict)
-        self.assertIsInstance(config.clarifications, dict)
         # Operator knob (upstream default was 5, this fork tunes it per run).
         # Sanity-check the type/floor instead of a literal so re-tuning it does
         # not fail the suite — a plan needs at least one round to execute.
         self.assertIsInstance(config.max_rounds, int)
         self.assertGreaterEqual(config.max_rounds, 1)
         self.assertIsInstance(config._approval_events, dict)
-        self.assertIsInstance(config._clarification_events, dict)
         self.assertEqual(config.default_timeout, 1800.0)
-        # Human-scale windows: approval/clarification block on a human reading
         # and typing — these must never regress to machine-scale timeouts.
         self.assertEqual(config.approval_timeout, 1800.0)
-        self.assertEqual(config.clarification_timeout, 1800.0)
         self.assertIsInstance(config.active_runs, set)
 
     def test_get_current_orchestration(self):
@@ -267,21 +263,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         config.cleanup_approval(plan_id)
         self.assertNotIn(plan_id, config.approvals)
 
-    def test_clarification_workflow(self):
-        """Test clarification workflow."""
-
-        config = OrchestrationConfig()
-        request_id = "test-request"
-
-        # Test set clarification pending
-        config.set_clarification_pending(request_id)
-        self.assertIn(request_id, config.clarifications)
-        self.assertIsNone(config.clarifications[request_id])
-
-        # Test set clarification result
-        answer = "Test answer"
-        config.set_clarification_result(request_id, answer)
-        self.assertEqual(config.clarifications[request_id], answer)
 
     async def test_wait_for_approval_already_decided(self):
         """Test waiting for approval when already decided."""
@@ -297,20 +278,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         result = await config.wait_for_approval(plan_id)
         self.assertTrue(result)
 
-    async def test_wait_for_clarification_already_answered(self):
-        """Test waiting for clarification when already answered."""
-
-        config = OrchestrationConfig()
-        request_id = "test-request"
-        answer = "Test answer"
-
-        # Set clarification first
-        config.set_clarification_pending(request_id)
-        config.set_clarification_result(request_id, answer)
-
-        # Wait should return immediately
-        result = await config.wait_for_clarification(request_id)
-        self.assertEqual(result, answer)
 
     async def test_wait_for_approval_timeout(self):
         """Test waiting for approval with timeout."""
@@ -328,21 +295,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         # Approval should be cleaned up
         self.assertNotIn(plan_id, config.approvals)
 
-    async def test_wait_for_clarification_timeout(self):
-        """Test waiting for clarification with timeout."""
-
-        config = OrchestrationConfig()
-        request_id = "test-request"
-
-        # Set clarification pending but don't provide result
-        config.set_clarification_pending(request_id)
-
-        # Wait should timeout
-        with self.assertRaises(asyncio.TimeoutError):
-            await config.wait_for_clarification(request_id, timeout=0.1)
-
-        # Clarification should be cleaned up
-        self.assertNotIn(request_id, config.clarifications)
 
     async def test_wait_for_approval_cancelled(self):
         """Test waiting for approval when cancelled."""
@@ -364,27 +316,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
 
         await cancel_task_handle
 
-    async def test_wait_for_clarification_cancelled(self):
-        """Test waiting for clarification when cancelled."""
-
-        config = OrchestrationConfig()
-        request_id = "test-request"
-
-        config.set_clarification_pending(request_id)
-
-        async def cancel_task():
-            await asyncio.sleep(0.05)
-            task.cancel()
-
-        task = asyncio.create_task(
-            config.wait_for_clarification(request_id, timeout=1.0)
-        )
-        cancel_task_handle = asyncio.create_task(cancel_task())
-
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-
-        await cancel_task_handle
 
     def test_cleanup_approval(self):
         """Test cleanup approval."""
@@ -401,22 +332,6 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         config.cleanup_approval(plan_id)
         self.assertNotIn(plan_id, config.approvals)
         self.assertNotIn(plan_id, config._approval_events)
-
-    def test_cleanup_clarification(self):
-        """Test cleanup clarification."""
-
-        config = OrchestrationConfig()
-        request_id = "test-request"
-
-        # Set clarification and event
-        config.set_clarification_pending(request_id)
-        self.assertIn(request_id, config.clarifications)
-        self.assertIn(request_id, config._clarification_events)
-
-        # Cleanup
-        config.cleanup_clarification(request_id)
-        self.assertNotIn(request_id, config.clarifications)
-        self.assertNotIn(request_id, config._clarification_events)
 
 
 class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
@@ -902,31 +817,6 @@ class TestApprovalAndClarificationEdgeCases(IsolatedAsyncioTestCase):
         self.assertFalse(result)
         _ = await reject_task_handle
 
-    async def test_wait_for_clarification_key_error(self):
-        """Test waiting for clarification with non-existent request_id raises KeyError."""
-        config = OrchestrationConfig()
-
-        with self.assertRaises(KeyError) as context:
-            await config.wait_for_clarification("non_existent_request", timeout=1.0)
-
-        self.assertIn("non_existent_request", str(context.exception))
-
-    async def test_wait_for_clarification_success(self):
-        """Test waiting for clarification succeeds when answer is set."""
-        config = OrchestrationConfig()
-        request_id = "test-request-success"
-
-        config.set_clarification_pending(request_id)
-
-        async def answer_task():
-            await asyncio.sleep(0.05)
-            config.set_clarification_result(request_id, "User answer")
-
-        answer_task_handle = asyncio.create_task(answer_task())
-        result = await config.wait_for_clarification(request_id, timeout=1.0)
-
-        self.assertEqual(result, "User answer")
-        _ = await answer_task_handle
 
     async def test_wait_for_approval_creates_new_event(self):
         """Test that waiting for approval creates event if not exists."""

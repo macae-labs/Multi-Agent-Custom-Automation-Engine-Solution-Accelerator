@@ -1,19 +1,31 @@
 """
 ProxyAgent: Human clarification proxy compliant with agent_framework.
 
-Responsibilities:
-- Request clarification from a human via websocket
-- Await response (with timeout + cancellation handling)
-- Yield AgentRunResponseUpdate objects compatible with agent_framework
+The agent never waits in-process. It emits a ``Content`` marked
+``user_input_request=True``; the framework's ``AgentExecutor`` turns that into a
+``request_info`` event, the workflow goes idle and the pending request lands in
+the checkpoint. The answer comes back through
+``workflow.run(checkpoint_id=..., responses={request_id: Content})`` as the
+agent's next input (a single ``user`` message).
+
+Deterministic rule (measured in test_user_input_durable_harness.py):
+
+* anchor ``session.state["pending_clarification"] = {"id", "question"}`` is written
+  BEFORE the stream ends (``on_checkpoint_save`` serializes the session when the
+  superstep closes) and survives checkpoint and ``MagenticResetSignal``;
+* if the anchor exists and the incoming messages end with a ``user`` message,
+  that message is the human answer → clear the anchor and reply with it;
+* otherwise ask, with a fresh ``Content.id``, and store the anchor.
+
+The WebSocket notification (USER_CLARIFICATION_REQUEST) is emitted by the
+``request_info`` handler in ``OrchestrationManager``, not here.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 import uuid
-from typing import Any, AsyncIterable, Awaitable
+from typing import Any, AsyncIterable, Awaitable, Final
 
 from agent_framework import (
     AgentResponse,
@@ -26,15 +38,10 @@ from agent_framework import (
 )
 from agent_framework._types import ResponseStream
 
-from v4.config.settings import connection_config, orchestration_config
-from v4.models.messages import (
-    TimeoutNotification,
-    UserClarificationRequest,
-    UserClarificationResponse,
-    WebsocketMessageType,
-)
-
 logger = logging.getLogger(__name__)
+
+PENDING_CLARIFICATION_KEY = "pending_clarification"
+CLARIFICATION_CONTENT_TYPE: Final = "text"
 
 
 class ProxyAgent(BaseAgent):
@@ -54,13 +61,11 @@ class ProxyAgent(BaseAgent):
             "Clarification agent. Ask this when instructions are unclear or additional "
             "user details are required."
         ),
-        timeout_seconds: int | None = None,
         **kwargs: Any,
     ):
         super().__init__(name=name, description=description, **kwargs)
         self.user_id = user_id or ""
         self.session_id = session_id or ""
-        self._timeout = timeout_seconds or orchestration_config.clarification_timeout
 
     # ---------------------------
     # AgentProtocol implementation
@@ -69,17 +74,7 @@ class ProxyAgent(BaseAgent):
     def create_session(
         self, *, session_id: str | None = None, **kwargs: Any
     ) -> AgentSession:
-        """
-        Create a new session for ProxyAgent conversations.
-        Required by AgentProtocol for workflow integration.
-
-        Args:
-            session_id: Optional session ID
-            **kwargs: Additional keyword arguments for session creation
-
-        Returns:
-            A new AgentSession instance
-        """
+        """Create a new session; ``session.state`` carries the clarification anchor."""
         return AgentSession(session_id=session_id, **kwargs)
 
     def run(
@@ -99,29 +94,16 @@ class ProxyAgent(BaseAgent):
         """
         if stream:
             return ResponseStream(
-                self._invoke_stream_internal(messages, session, **kwargs),
+                self._invoke_stream_internal(messages, session),
                 finalizer=lambda updates: AgentResponse.from_updates(updates),
             )
 
         async def _run_non_streaming() -> AgentResponse:
-            response_messages: list[Message] = []
-            response_id = str(uuid.uuid4())
-
-            async for update in self._invoke_stream_internal(
-                messages, session, **kwargs
-            ):
-                if update.contents:
-                    response_messages.append(
-                        Message(
-                            role=update.role or "assistant",
-                            contents=update.contents,
-                        )
-                    )
-
-            return AgentResponse(
-                messages=response_messages,
-                response_id=response_id,
-            )
+            updates = [
+                update
+                async for update in self._invoke_stream_internal(messages, session)
+            ]
+            return AgentResponse.from_updates(updates)
 
         return _run_non_streaming()
 
@@ -129,135 +111,96 @@ class ProxyAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None,
         session: AgentSession | None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """
-        Internal streaming implementation.
+        normalized = self._as_messages(messages)
+        state: dict[str, Any] = session.state if session is not None else {}
+        pending = state.get(PENDING_CLARIFICATION_KEY)
 
-        1. Sends clarification request via websocket
-        2. Waits for human response / timeout
-        3. Yields AgentRunResponseUpdate with the clarified answer
-        """
-        # Normalize messages to string
-        message_text = self._extract_message_text(messages)
-
-        logger.info(
-            "ProxyAgent: Requesting clarification (session=%s, user=%s)",
-            "present" if session else "None",
-            self.user_id,
-        )
-        logger.debug("ProxyAgent: Message text: %s", message_text[:100])
-
-        clarification_req_text = f"{message_text}"
-        request_id = str(uuid.uuid4())
-        clarification_request = UserClarificationRequest(
-            question=clarification_req_text,
-            request_id=request_id,
-        )
-
-        # Dispatch websocket event requesting clarification
-        # Serialize dataclass to a plain dict so json.dumps produces proper JSON
-        # instead of relying on str() repr which is fragile for the frontend parser.
-        await connection_config.send_status_update_async(
-            {
-                "question": clarification_req_text,
-                "request_id": request_id,
-            },
-            user_id=self.user_id,
-            message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
-        )
-
-        # ── Mirror clarification question to chat_cosmos ──
-        if self.session_id and self.user_id:
-            try:
-                from common.services.chat_cosmos_service import get_chat_cosmos_service
-
-                _chat_svc = await get_chat_cosmos_service()
-                await _chat_svc.add_message(
-                    session_id=self.session_id,
-                    user_id=self.user_id,
-                    content=clarification_req_text,
-                    role="assistant",
-                    metadata={
-                        "intent": "task",
-                        "clarification_id": request_id,
-                        "message_type": "clarification_question",
-                    },
-                )
-            except Exception as _ce:
-                logger.warning(
-                    "Could not persist clarification question to chat_cosmos: %s", _ce
-                )
-
-        # Await human clarification
-        human_response = await self._wait_for_user_clarification(
-            clarification_request.request_id
-        )
-
-        if human_response is None:
-            # Timeout or cancellation - end silently
-            logger.debug(
-                "ProxyAgent: No clarification response (timeout/cancel). Ending stream."
+        if pending and normalized and normalized[-1].role == "user":
+            # The human answer arrived (executor _cache after handle_user_input_response).
+            state.pop(PENDING_CLARIFICATION_KEY, None)
+            answer_text = (
+                normalized[-1].text or ""
+            ).strip() or "No additional clarification provided."
+            logger.info(
+                "ProxyAgent: clarification %s answered (%d chars)",
+                pending.get("id"),
+                len(answer_text),
+            )
+            response_id = str(uuid.uuid4())
+            message_id = str(uuid.uuid4())
+            yield AgentResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(text=answer_text)],
+                author_name=self.name,
+                response_id=response_id,
+                message_id=message_id,
+            )
+            question_words = len(str(pending.get("question", "")).split())
+            answer_words = len(answer_text.split())
+            yield AgentResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_usage(
+                        UsageDetails(
+                            input_token_count=question_words,
+                            output_token_count=answer_words,
+                            total_token_count=question_words + answer_words,
+                        )
+                    )
+                ],
+                author_name=self.name,
+                response_id=response_id,
+                message_id=message_id,
             )
             return
 
-        answer_text = (
-            human_response.answer
-            if human_response.answer
-            else "No additional clarification provided."
+        # Ask: the manager's instruction is the question for the human.
+        question = self._extract_message_text(normalized)
+        content_id = f"clarification-{uuid.uuid4()}"
+        # Anchor BEFORE the stream ends so on_checkpoint_save serializes it.
+        state[PENDING_CLARIFICATION_KEY] = {"id": content_id, "question": question}
+        logger.info(
+            "ProxyAgent: requesting clarification %s (session=%s, user=%s)",
+            content_id,
+            "present" if session else "None",
+            self.user_id,
         )
-
-        # Return just the user's answer directly - no prefix that might confuse orchestrator
-        synthetic_reply = answer_text
-
-        logger.info("ProxyAgent: Received clarification: %s", synthetic_reply[:100])
-
-        # Generate consistent IDs for this response
-        response_id = str(uuid.uuid4())
-        message_id = str(uuid.uuid4())
-
-        # Yield final assistant text update with explicit text content
-        # New API: use Content.from_text() to wrap text in AgentResponseUpdate
-        text_update = AgentResponseUpdate(
-            role="assistant",
-            contents=[Content.from_text(text=synthetic_reply)],
-            author_name=self.name,
-            response_id=response_id,
-            message_id=message_id,
-        )
-
-        logger.debug(
-            "ProxyAgent: Yielding text update (text length=%d)", len(synthetic_reply)
-        )
-        yield text_update
-
-        # Yield synthetic usage update for consistency
-        # Use same message_id to indicate this is part of the same message
-        usage_update = AgentResponseUpdate(
+        yield AgentResponseUpdate(
             role="assistant",
             contents=[
-                Content.from_usage(
-                    UsageDetails(
-                        input_token_count=len(message_text.split()),
-                        output_token_count=len(synthetic_reply.split()),
-                        total_token_count=len(message_text.split())
-                        + len(synthetic_reply.split()),
-                    )
+                Content(
+                    CLARIFICATION_CONTENT_TYPE,
+                    text=question,
+                    id=content_id,
+                    user_input_request=True,
                 )
             ],
             author_name=self.name,
-            response_id=response_id,
-            message_id=message_id,  # Same message_id groups with text content
+            response_id=str(uuid.uuid4()),
+            message_id=str(uuid.uuid4()),
         )
-
-        logger.debug("ProxyAgent: Yielding usage update")
-        yield usage_update
-
-        logger.info("ProxyAgent: Completed clarification response")
 
     # ---------------------------
     # Helper methods
     # ---------------------------
+
+    @staticmethod
+    def _as_messages(
+        messages: str | Message | list[str] | list[Message] | None,
+    ) -> list[Message]:
+        if messages is None:
+            return []
+        if isinstance(messages, (str, Message)):
+            return [
+                messages
+                if isinstance(messages, Message)
+                else Message(role="user", text=messages)
+            ]
+        return [
+            m if isinstance(m, Message) else Message(role="user", text=str(m))
+            for m in messages
+        ]
 
     def _extract_message_text(
         self, messages: str | Message | list[str] | list[Message] | None
@@ -281,69 +224,6 @@ class ProxyAgent(BaseAgent):
                 )
         return str(messages)
 
-    async def _wait_for_user_clarification(
-        self, request_id: str
-    ) -> UserClarificationResponse | None:
-        """
-        Wait for user clarification with timeout and cancellation handling.
-        """
-        orchestration_config.set_clarification_pending(
-            request_id,
-            session_id=self.session_id,
-            user_id=self.user_id,
-        )
-        try:
-            answer = await orchestration_config.wait_for_clarification(request_id)
-            return UserClarificationResponse(request_id=request_id, answer=answer)
-        except asyncio.TimeoutError:
-            await self._notify_timeout(request_id)
-            return None
-        except asyncio.CancelledError:
-            logger.debug("ProxyAgent: Clarification request %s cancelled", request_id)
-            orchestration_config.cleanup_clarification(request_id)
-            return None
-        except KeyError:
-            logger.debug("ProxyAgent: Invalid clarification request id %s", request_id)
-            return None
-        except Exception as ex:
-            logger.debug("ProxyAgent: Unexpected error awaiting clarification: %s", ex)
-            orchestration_config.cleanup_clarification(request_id)
-            return None
-        finally:
-            # Safety net cleanup
-            if (
-                request_id in orchestration_config.clarifications
-                and orchestration_config.clarifications[request_id] is None
-            ):
-                orchestration_config.cleanup_clarification(request_id)
-
-    async def _notify_timeout(self, request_id: str) -> None:
-        """Send timeout notification to the client."""
-        notice = TimeoutNotification(
-            timeout_type="clarification",
-            request_id=request_id,
-            message=(
-                f"User clarification request timed out after "
-                f"{self._timeout} seconds. Please retry."
-            ),
-            timestamp=time.time(),
-            timeout_duration=self._timeout,
-        )
-        try:
-            await connection_config.send_status_update_async(
-                message=notice,
-                user_id=self.user_id,
-                message_type=WebsocketMessageType.TIMEOUT_NOTIFICATION,
-            )
-            logger.info(
-                "ProxyAgent: Timeout notification sent (request_id=%s user=%s)",
-                request_id,
-                self.user_id,
-            )
-        except Exception as ex:
-            logger.error("ProxyAgent: Failed to send timeout notification: %s", ex)
-        orchestration_config.cleanup_clarification(request_id)
-
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -351,13 +231,5 @@ class ProxyAgent(BaseAgent):
 
 
 async def create_proxy_agent(user_id: str | None = None) -> ProxyAgent:
-    """
-    Factory for ProxyAgent.
-
-    Args:
-        user_id: User ID for websocket communication
-
-    Returns:
-        Initialized ProxyAgent instance
-    """
+    """Factory for ProxyAgent."""
     return ProxyAgent(user_id=user_id)

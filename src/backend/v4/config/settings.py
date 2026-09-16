@@ -100,27 +100,22 @@ class OrchestrationConfig:
             str, Optional[bool]
         ] = {}  # m_plan_id -> approval status (None pending)
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
-        self.clarifications: Dict[
-            str, Optional[str]
-        ] = {}  # request_id -> clarification response (None pending)
-        self.clarification_contexts: Dict[
-            str, Dict[str, str]
-        ] = {}  # request_id -> session/user context for routing answers
         self.max_rounds: int = 5  # Maximum replanning rounds
 
-        # Event-driven notification system for approvals and clarifications
+        # Event-driven notification system for approvals. Clarifications no
+        # longer wait in-process: ProxyAgent emits a Content marked
+        # user_input_request=True, the framework raises request_info, the
+        # pending request lives in the checkpoint and the answer resumes the
+        # workflow (OrchestrationManager.resume_orchestration).
         self._approval_events: Dict[str, asyncio.Event] = {}
-        self._clarification_events: Dict[str, asyncio.Event] = {}
 
         # Default timeout (seconds) for waiting operations
         self.default_timeout: float = 1800.0
 
-        # Human-scale windows: approval and clarification block on a HUMAN
-        # reading and typing — 200s kills plans before anyone can answer
-        # (forensic: clarifications timed out silently at ~200s). Machine
-        # operations keep default_timeout.
+        # Human-scale window: approval blocks on a HUMAN reading and typing —
+        # 200s kills plans before anyone can answer. Machine operations keep
+        # default_timeout.
         self.approval_timeout: float = 1800.0
-        self.clarification_timeout: float = 1800.0
 
         # Sessions with an orchestration run currently in flight (created /
         # awaiting approval / executing). Makes resume_plan idempotent: a plan
@@ -217,99 +212,10 @@ class OrchestrationConfig:
             if plan_id in self.approvals and self.approvals[plan_id] is None:
                 self.cleanup_approval(plan_id)
 
-    def set_clarification_pending(
-        self,
-        request_id: str,
-        session_id: str = "",
-        user_id: str = "",
-    ) -> None:
-        """Mark clarification pending and create/reset its event."""
-        self.clarifications[request_id] = None
-        self.clarification_contexts[request_id] = {
-            "session_id": session_id or "",
-            "user_id": user_id or "",
-        }
-        if request_id not in self._clarification_events:
-            self._clarification_events[request_id] = asyncio.Event()
-        else:
-            self._clarification_events[request_id].clear()
-
-    def get_pending_clarification_for_session(
-        self, session_id: str, user_id: str = ""
-    ) -> Optional[str]:
-        """Return the pending clarification request for this chat session."""
-        for request_id, answer in self.clarifications.items():
-            if answer is not None:
-                continue
-            context = self.clarification_contexts.get(request_id, {})
-            if context.get("session_id") != session_id:
-                continue
-            if user_id and context.get("user_id") not in ("", user_id):
-                continue
-            return request_id
-        return None
-
-    def set_clarification_result(self, request_id: str, answer: str) -> None:
-        """Set clarification answer and trigger event."""
-        self.clarifications[request_id] = answer
-        if request_id in self._clarification_events:
-            self._clarification_events[request_id].set()
-
-    async def wait_for_clarification(
-        self, request_id: str, timeout: Optional[float] = None
-    ) -> str:
-        """Wait for clarification response with timeout."""
-        if timeout is None:
-            timeout = self.clarification_timeout
-
-        if request_id not in self.clarifications:
-            raise KeyError(f"Request ID {request_id} not found in clarifications")
-
-        clarification_result = self.clarifications[request_id]
-        if clarification_result is not None:
-            return clarification_result
-
-        if request_id not in self._clarification_events:
-            self._clarification_events[request_id] = asyncio.Event()
-
-        try:
-            await asyncio.wait_for(
-                self._clarification_events[request_id].wait(), timeout=timeout
-            )
-            # After event.wait(), the value is guaranteed to be set (not None)
-            result = self.clarifications[request_id]
-            assert result is not None, (
-                f"Clarification for {request_id} should not be None after event"
-            )
-            return result
-        except asyncio.TimeoutError:
-            self.cleanup_clarification(request_id)
-            raise
-        except asyncio.CancelledError:
-            logger.debug("Clarification request %s was cancelled", request_id)
-            raise
-        except Exception as e:
-            logger.error(
-                "Unexpected error waiting for clarification %s: %s", request_id, e
-            )
-            raise
-        finally:
-            if (
-                request_id in self.clarifications
-                and self.clarifications[request_id] is None
-            ):
-                self.cleanup_clarification(request_id)
-
     def cleanup_approval(self, plan_id: str) -> None:
         """Remove approval tracking data and event."""
         self.approvals.pop(plan_id, None)
         self._approval_events.pop(plan_id, None)
-
-    def cleanup_clarification(self, request_id: str) -> None:
-        """Remove clarification tracking data and event."""
-        self.clarifications.pop(request_id, None)
-        self.clarification_contexts.pop(request_id, None)
-        self._clarification_events.pop(request_id, None)
 
 
 class ConnectionConfig:

@@ -84,8 +84,8 @@ def _as_messages(messages) -> list[Message]:
 class ProxyLikeAgent(BaseAgent):
     """Espejo de ProxyAgent.run: pregunta con un Content marcado o continúa con la respuesta.
 
-    Ancla determinista: session.state["pending_question"] = id del Content
-    marcado que emitió; si existe y llega un mensaje user, es la respuesta.
+    Ancla determinista: session.state["pending_clarification"] = {id, question}
+    del Content marcado que emitió; si existe y llega un mensaje user, es la respuesta.
     """
 
     def __init__(self, log: list) -> None:
@@ -108,14 +108,18 @@ class ProxyLikeAgent(BaseAgent):
             "messages": [(m.role, [(c.type, c.id, c.user_input_request, c.text) for c in m.contents]) for m in msgs],
             "state": dict(state),
         })
-        pending = state.get("pending_question")
+        state["turns"] = state.get("turns", 0) + 1  # sobrevive al checkpoint; se pierde si la sesión se sustituye
+        pending = state.get("pending_clarification")
         if pending and msgs and msgs[-1].role == "user":
-            state.pop("pending_question")
-            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(f"{ANSWER_PREFIX} {pending}: {msgs[-1].text}")])
+            state.pop("pending_clarification")
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(f"{ANSWER_PREFIX} {pending['id']}: {msgs[-1].text}")])
             return
         qid = f"q-{uuid.uuid4().hex[:6]}"
-        state["pending_question"] = qid
-        yield AgentResponseUpdate(role="assistant", contents=[Content("text", text=f"¿Dato para {qid}?", id=qid, user_input_request=True)])
+        question = f"¿Dato para {qid}?"
+        # El ancla queda en session.state ANTES de que el stream termine: on_checkpoint_save
+        # serializa la sesión al cerrar el superstep.
+        state["pending_clarification"] = {"id": qid, "question": question}
+        yield AgentResponseUpdate(role="assistant", contents=[Content("text", text=question, id=qid, user_input_request=True)])
 
 
 def _workflow(storage, log: list, rounds: int = 1):
@@ -149,6 +153,10 @@ async def test_question_is_marked_content_and_the_anchor_is_in_session_state(sto
     latest = await storage.get_latest(workflow_name=workflow.name)
     assert latest is not None and list(latest.pending_request_info_events) == [ask.request_id]
     assert latest.pending_request_info_events[ask.request_id].data.id == ask.data.id
+    # El ancla está en el objeto restaurado del checkpoint, en la sesión del executor del
+    # participante, con el mismo Content.id que viajó en el request_info.
+    restored_session = latest.state["_executor_state"]["Clarifier"]["agent_session"]["state"]
+    assert restored_session["pending_clarification"] == {"id": ask.data.id, "question": ask.data.text}
     # El primer run() recibe sólo la instrucción del manager y un estado vacío.
     assert log[0]["messages"][-1][0] == "user" and log[0]["state"] == {}
 
@@ -170,7 +178,7 @@ async def test_answer_resumes_new_instance_with_user_role_and_restored_state(sto
     # y el estado de sesión restaurado desde el checkpoint con el id de la pregunta pendiente.
     first = log2[0]
     assert first["messages"] == [("user", [("text", None, None, "42")])]
-    assert first["state"] == {"pending_question": ask.data.id}
+    assert first["state"] == {"turns": 1, "pending_clarification": {"id": ask.data.id, "question": ask.data.text}}
     texts = [m.text for out in result.get_outputs() for m in (out if isinstance(out, list) else [out]) if isinstance(m, Message)]
     assert texts and texts[-1] == "FINAL", texts
     assert not result.get_request_info_events()
@@ -200,7 +208,7 @@ async def test_two_clarifications_in_one_plan_resume_by_their_own_id(storage):
     texts = [m.text for out in result.get_outputs() for m in (out if isinstance(out, list) else [out]) if isinstance(m, Message)]
     assert texts and texts[-1] == "FINAL", texts
     answers = [e for e in log if e["messages"] and e["messages"][-1][1][0][3] in ("A1", "A2")]
-    assert [e["state"]["pending_question"] for e in answers] == [first_ask.data.id, second_asks[0].data.id]
+    assert [e["state"]["pending_clarification"]["id"] for e in answers] == [first_ask.data.id, second_asks[0].data.id]
 
 
 @pytest.mark.asyncio
@@ -215,3 +223,72 @@ async def test_function_result_answer_arrives_with_tool_role(storage):
         responses={ask.request_id: Content.from_function_result(call_id=ask.data.id, result="42")},
     )
     assert log2[0]["messages"][0][0] == "tool"
+
+
+class StallingManagerClient(ManagerClient):
+    """Tras la primera respuesta del Clarifier declara estancamiento una vez: reset + replan."""
+
+    def __init__(self, rounds: int) -> None:
+        super().__init__(rounds)
+        self.stalled = False
+
+    async def _respond(self, messages) -> ChatResponse:
+        prompt = (messages[-1].text or "").lower()
+        answered = sum((m.text or "").count(ANSWER_PREFIX) for m in messages)
+        if "is_request_satisfied" in prompt and answered == 1 and not self.stalled:
+            self.stalled = True
+            ledger = json.loads(_ledger(False))
+            ledger["is_progress_being_made"]["answer"] = False
+            ledger["is_in_loop"]["answer"] = True
+            return ChatResponse(messages=[Message(role="assistant", text=json.dumps(ledger))])
+        return await super()._respond(messages)
+
+
+@pytest.mark.asyncio
+async def test_reset_keeps_the_session_so_the_anchor_is_cleared_by_the_agent_not_by_the_reset(storage):
+    """MagenticResetSignal asigna `_agent_thread`, no `_session` (agent_framework_orchestrations
+    1.0.0b260311): la sesión del executor sobrevive al reset y con ella session.state. El
+    ProxyAgent limpia el ancla al responder y la sobrescribe al preguntar; nunca cuenta con el reset."""
+    log: list = []
+    manager = StandardMagenticManager(
+        agent=Agent(client=StallingManagerClient(rounds=2), name="MagenticManager"), max_round_count=8, max_stall_count=0
+    )
+    workflow = MagenticBuilder(participants=[ProxyLikeAgent(log)], manager=manager, checkpoint_storage=storage).build()
+    ask = (await _run_and_collect(workflow.run("Completa el formulario", stream=True)))[0]
+    cp = await storage.get_latest(workflow_name=workflow.name)
+
+    log2: list = []
+    manager2 = StandardMagenticManager(
+        agent=Agent(client=StallingManagerClient(rounds=2), name="MagenticManager"), max_round_count=8, max_stall_count=0
+    )
+    resumed = MagenticBuilder(participants=[ProxyLikeAgent(log2)], manager=manager2, checkpoint_storage=storage).build()
+    asks = await _run_and_collect(resumed.run(
+        checkpoint_id=cp.checkpoint_id, checkpoint_storage=storage,
+        responses={ask.request_id: Content.from_text("A1")}, stream=True,
+    ))
+    # A1 → el agente limpia el ancla → estancamiento → reset + replan → vuelve a preguntar con id nuevo.
+    assert len(asks) == 1 and asks[0].data.id != ask.data.id
+    assert log2[0]["state"]["pending_clarification"]["id"] == ask.data.id
+    assert log2[1]["state"] == {"turns": 2}  # misma sesión tras el reset: el contador continúa, sin ancla pendiente
+
+
+def test_no_in_process_clarification_wait_remains_in_backend():
+    """La tanda deja cero ocurrencias del API de espera en proceso: sin guardas ni compatibilidad."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[5] / "src" / "backend"
+    assert (root / "app.py").exists(), root
+    pattern = re.compile(
+        r"_clarification_events|wait_for_clarification|set_clarification_pending|cleanup_clarification"
+        r"|get_pending_clarification_for_session|_wait_for_user_clarification|clarification_timeout"
+        r"|set_clarification_result|\.clarifications\b"
+    )
+    hits = [
+        f"{path.relative_to(root)}:{number}"
+        for path in root.rglob("*.py")
+        if ".venv" not in path.parts
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert hits == []
