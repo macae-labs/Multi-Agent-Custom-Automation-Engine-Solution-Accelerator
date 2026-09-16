@@ -86,8 +86,10 @@ async def test_load_delete_and_latest(storage):
     loaded = await storage.load(checkpoints[0].checkpoint_id)
     assert loaded.to_dict() == checkpoints[0].to_dict()
 
-    assert await storage.delete(checkpoints[0].checkpoint_id) is True
-    assert await storage.delete(checkpoints[0].checkpoint_id) is False
+    deleted = await storage.delete(checkpoints[0].checkpoint_id)
+    assert deleted is True
+    deleted_again = await storage.delete(checkpoints[0].checkpoint_id)
+    assert deleted_again is False
     with pytest.raises(WorkflowCheckpointException, match="No checkpoint found"):
         await storage.load(checkpoints[0].checkpoint_id)
     assert await storage.get_latest(workflow_name="otro") is None
