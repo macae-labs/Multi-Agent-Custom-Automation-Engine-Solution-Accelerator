@@ -3,7 +3,7 @@
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -93,12 +93,24 @@ class PlanApprovalRequest:
 
 @dataclass(slots=True)
 class PlanApprovalResponse:
-    """Response for plan approval from the frontend."""
+    """The human's decision on a parked plan review.
+
+    ``decision`` is the discriminator: ``approve`` resumes the plan, ``revise``
+    sends ``feedback`` to the manager (replan, then a new review request),
+    ``reject`` cancels. ``approved`` is kept for older clients and is only a
+    fallback when ``decision`` is missing.
+    """
 
     m_plan_id: str
     approved: bool
     feedback: str | None = None
     plan_id: str | None = None
+    decision: Literal["approve", "revise", "reject"] | None = None
+
+    def resolved_decision(self) -> Literal["approve", "revise", "reject"]:
+        if self.decision is not None:
+            return self.decision
+        return "approve" if self.approved else "reject"
 
 
 @dataclass(slots=True)

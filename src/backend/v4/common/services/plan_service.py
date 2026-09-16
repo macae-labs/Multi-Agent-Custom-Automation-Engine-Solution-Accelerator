@@ -123,9 +123,10 @@ class PlanService:
         """Record the human's decision on a parked plan review.
 
         Reads and writes only the persisted ``Plan`` (no in-process registry), so
-        the decision is honoured after a restart. Approval marks the plan and its
-        ``m_plan`` approved. Rejection records nothing here: the caller cancels
-        the parked request via ``OrchestrationManager.cancel_parked``.
+        the decision is honoured after a restart. ``approve`` marks the plan and
+        its ``m_plan`` approved. ``revise`` and ``reject`` record nothing here:
+        the router resumes the manager with the feedback / cancels the parked
+        request (``OrchestrationManager.cancel_parked``).
 
         Returns:
             True when the decision was recorded, False otherwise.
@@ -139,7 +140,7 @@ class PlanService:
             if plan is None:
                 logger.warning("Plan %s not found in memory store.", plan_id_val)
                 return False
-            if not human_feedback.approved:
+            if human_feedback.resolved_decision() != "approve":
                 return True
             m_plan = dict(plan.m_plan or (plan.waiting_for or {}).get("m_plan") or {})
             m_plan["plan_id"] = plan_id_val

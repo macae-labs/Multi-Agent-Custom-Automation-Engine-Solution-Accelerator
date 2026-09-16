@@ -25,6 +25,7 @@ interface SimplifiedPlanChatProps extends PlanChatProps {
   showProcessingPlanSpinner: boolean;
   showApprovalButtons: boolean;
   handleApprovePlan: () => Promise<void>;
+  handleRevisePlan: (feedback: string) => Promise<void>;
   handleRejectPlan: () => Promise<void>;
   processingApproval: boolean;
   /** True when parent attempted to load a plan and failed (404 case). */
@@ -65,6 +66,7 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
   showProcessingPlanSpinner,
   showApprovalButtons,
   handleApprovePlan,
+  handleRevisePlan,
   handleRejectPlan,
   processingApproval,
   notFound,
@@ -228,6 +230,7 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
         <RenderPlanResponse
           planApprovalRequest={planApprovalRequest}
           handleApprovePlan={onApprove}
+          handleRevisePlan={handleRevisePlan}
           handleRejectPlan={onReject}
           processingApproval={processingApproval}
           showApprovalButtons={showApprovalButtons}

@@ -16,6 +16,7 @@ import json
 import logging
 import v4.common.services.plan_service as plan_service_module
 from v4.common.services.plan_service import PlanService
+import v4.models.messages as real_messages
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ def _collaborators_patched(monkeypatch):
     ):
         monkeypatch.setattr(mod, name, value)
 
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 from typing import Any, List
 from dataclasses import dataclass
 
@@ -178,12 +179,15 @@ class MockAgentMessageResponse:
     streaming_message: str = ""
 
 
-@dataclass
-class MockPlanApprovalResponse:
-    plan_id: str = ""
-    m_plan_id: str = ""
-    approved: bool = True
-    feedback: str = ""
+def _approval(plan_id=None, m_plan_id="", approved=True, feedback=None, decision=None):
+    """El modelo real del contrato (dataclass), no un doble: lo que valida el router."""
+    return real_messages.PlanApprovalResponse(
+        m_plan_id=m_plan_id,
+        approved=approved,
+        feedback=feedback,
+        plan_id=plan_id,
+        decision=decision,
+    )
 
 
 class TestUtilityFunctions:
@@ -321,7 +325,7 @@ class TestPlanService:
     async def test_handle_plan_approval_success(self):
         """Approval is recorded on the persisted Plan only (durable across restarts):
         m_plan gets plan_id/team_id/APPROVED, plan gets approved status + flag."""
-        mock_approval = MockPlanApprovalResponse(
+        mock_approval = _approval(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
             approved=True,
@@ -353,7 +357,7 @@ class TestPlanService:
     async def test_handle_plan_approval_rejection(self):
         """Rejection records nothing here: the caller cancels the parked request
         (OrchestrationManager.cancel_parked). The plan is neither deleted nor mutated."""
-        mock_approval = MockPlanApprovalResponse(
+        mock_approval = _approval(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
             approved=False,
@@ -376,7 +380,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_handle_plan_approval_requires_plan_id(self):
         """Without plan_id there is no persisted Plan to record the decision on."""
-        mock_approval = MockPlanApprovalResponse(plan_id=None, approved=True)
+        mock_approval = _approval(plan_id=None, approved=True)
         mock_db = MagicMock()
         mock_db.get_plan_by_plan_id = AsyncMock(return_value=MagicMock())
         mock_db.update_plan = AsyncMock()
@@ -392,7 +396,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_handle_plan_approval_plan_not_found(self):
         """Test when plan is not found in memory store."""
-        mock_approval = MockPlanApprovalResponse(
+        mock_approval = _approval(
             plan_id="missing-plan", m_plan_id="test-m-plan", approved=True
         )
         mock_db = MagicMock()
@@ -410,7 +414,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_handle_plan_approval_exception(self):
         """Store failures are swallowed into False, never raised to the router."""
-        mock_approval = MockPlanApprovalResponse(plan_id="plan-1", approved=True)
+        mock_approval = _approval(plan_id="plan-1", approved=True)
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             side_effect=RuntimeError("cosmos down")
         )
@@ -528,7 +532,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_static_method_properties(self):
         """Test that all PlanService methods are static."""
-        mock_approval = MockPlanApprovalResponse(plan_id=None, approved=False)
+        mock_approval = _approval(plan_id=None, approved=False)
         result = await PlanService.handle_plan_approval(mock_approval, "user")
         assert result is False
     def test_event_tracking_calls(self):
@@ -562,7 +566,7 @@ class TestPlanService:
             return_value=mock_db
         )
 
-        approval = MockPlanApprovalResponse(
+        approval = _approval(
             plan_id="plan-123",
             m_plan_id="m-plan-123",
             approved=True,
@@ -613,7 +617,7 @@ class TestPlanService:
         malformed_inputs = [
             MockUserClarificationResponse(plan_id=None, answer=None),
             MockAgentMessageResponse(plan_id="", content="", steps=[]),
-            MockPlanApprovalResponse(approved=True, plan_id=""),
+            _approval(approved=True, plan_id=""),
         ]
 
         for input_obj in malformed_inputs:

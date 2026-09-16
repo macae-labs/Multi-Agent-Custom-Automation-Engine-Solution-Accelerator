@@ -266,9 +266,15 @@ export interface MPlanData {
     raw_data?: any;
 }
 
+/** The human's decision on a parked plan review (mirrors backend PlanApprovalResponse). */
+export type PlanDecision = 'approve' | 'revise' | 'reject';
+
 export interface PlanApprovalRequest {
     m_plan_id: string;
     plan_id: string;
+    /** Explicit discriminator. `revise` requires non-empty `feedback`. */
+    decision: PlanDecision;
+    /** Legacy boolean kept in sync with `decision` (approve => true). */
     approved: boolean;
     feedback?: string;
 }
