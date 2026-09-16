@@ -648,7 +648,12 @@ class OrchestrationManager:
 
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
-            if plan is not None:
+            if plan is None:
+                if is_plan_review:
+                    raise RuntimeError(
+                        f"Plan {plan_id} not found while parking request_info"
+                    )
+            else:
                 waiting_for["team_id"] = plan.team_id
                 if mplan is not None:
                     mplan.team_id = plan.team_id or ""
