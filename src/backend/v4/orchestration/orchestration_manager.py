@@ -23,6 +23,7 @@ from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatResponseReceivedEvent,
 )
 from agent_framework_orchestrations._magentic import (
+    MagenticPlanReviewRequest,
     MagenticProgressLedger,
 )
 
@@ -335,6 +336,9 @@ class OrchestrationManager:
             checkpoint_storage=storage,
             # Required: yield agent streaming output events, not just orchestrator output
             intermediate_outputs=True,
+            # Native HITL gate: after manager.plan() the orchestrator emits a
+            # request_info(MagenticPlanReviewRequest) and idles on a checkpoint.
+            enable_plan_review=True,
         )
 
         # Build workflow
@@ -512,14 +516,16 @@ class OrchestrationManager:
         session_id: str,
         plan_id: str,
         request_id: str,
-        answer: str,
+        response: Any,
         workspace_id: Optional[str] = None,
     ) -> None:
-        """Deliver a human answer to the pending ``request_info`` and continue.
+        """Deliver the human response to the pending ``request_info`` and continue.
 
-        The plan's ``waiting_for`` (persisted by ``run_orchestration`` when the
-        workflow went idle) carries the checkpoint to restore. The answer enters
-        the workflow as ``Content.from_text`` (role ``user`` for the agent).
+        The plan's ``waiting_for`` (persisted by ``_park_on_request_info`` when the
+        workflow went idle) carries the checkpoint to restore. ``response`` is
+        the framework object the request expects: ``Content.from_text`` for a
+        clarification, ``MagenticPlanReviewResponse.approve()/revise()`` for a
+        plan review.
         """
         from common.database.database_factory import DatabaseFactory
 
@@ -543,8 +549,44 @@ class OrchestrationManager:
             else waiting_for.get("workspace_id"),
             _resume={
                 "checkpoint_id": waiting_for["checkpoint_id"],
-                "responses": {request_id: Content.from_text(text=answer)},
+                "responses": {request_id: response},
             },
+        )
+
+    async def cancel_parked(self, user_id: str, plan_id: str, request_id: str) -> None:
+        """The human rejected a parked request.
+
+        Nothing to resume: ``waiting_for`` is cleared, the plan is kept as
+        ``canceled`` (auditable decision) and the UI gets the FINAL_RESULT
+        ``cancelled`` it always got.
+        """
+        from common.database.database_factory import DatabaseFactory
+
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+        waiting_for = (plan.waiting_for if plan else None) or {}
+        if plan is None or waiting_for.get("request_id") != request_id:
+            raise ValueError(
+                f"Plan {plan_id} is not waiting for request {request_id} "
+                f"(waiting_for={waiting_for.get('request_id')})"
+            )
+        plan.waiting_for = None
+        plan.overall_status = PlanStatus.canceled
+        await memory_store.update_plan(plan)
+        await connection_config.send_status_update_async(
+            {
+                "content": "Plan execution cancelled by user.",
+                "status": "cancelled",
+                "timestamp": asyncio.get_event_loop().time(),
+            },
+            user_id,
+            message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+        )
+        self.logger.info(
+            "Parked %s %s cancelled by user (plan %s)",
+            waiting_for.get("kind"),
+            request_id,
+            plan_id,
         )
 
     async def _park_on_request_info(
@@ -571,9 +613,17 @@ class OrchestrationManager:
             )
         data = event.data
         is_clarification = isinstance(data, Content) and bool(data.user_input_request)
+        is_plan_review = isinstance(data, MagenticPlanReviewRequest)
         question = (data.text or "") if is_clarification else ""
+        kind = (
+            "clarification"
+            if is_clarification
+            else "plan_review"
+            if is_plan_review
+            else type(data).__name__
+        )
         waiting_for: Dict[str, Any] = {
-            "kind": "clarification" if is_clarification else type(data).__name__,
+            "kind": kind,
             "request_id": event.request_id,
             "checkpoint_id": latest.checkpoint_id,
             "workflow_name": workflow.name,
@@ -581,6 +631,18 @@ class OrchestrationManager:
             "content_id": getattr(data, "id", None),
             "workspace_id": workspace_id,
         }
+        mplan = None
+        if is_plan_review:
+            manager = orchestration_config.managers.get(user_id)
+            mplan = getattr(manager, "magentic_plan", None)
+            if mplan is None:
+                raise RuntimeError(
+                    f"plan review {event.request_id} without an MPlan on the manager"
+                )
+            if plan_id:
+                mplan.plan_id = plan_id
+            waiting_for["m_plan_id"] = mplan.id
+            waiting_for["is_stalled"] = bool(data.is_stalled)
         if plan_id:
             from common.database.database_factory import DatabaseFactory
 
@@ -588,8 +650,28 @@ class OrchestrationManager:
             plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
             if plan is not None:
                 waiting_for["team_id"] = plan.team_id
+                if mplan is not None:
+                    mplan.team_id = plan.team_id or ""
+                    # Re-sent on WS reconnect from the store (router).
+                    waiting_for["m_plan"] = mplan.model_dump()
                 plan.waiting_for = waiting_for
                 await memory_store.update_plan(plan)
+        if mplan is not None:
+            from v4.models.messages import PlanApprovalRequest
+            from v4.models.messages import PlanStatus as V4PlanStatus
+
+            await connection_config.send_status_update_async(
+                message=PlanApprovalRequest(
+                    plan=mplan,
+                    status=V4PlanStatus.PENDING_APPROVAL,
+                    context={
+                        "request_id": event.request_id,
+                        "is_stalled": bool(data.is_stalled),
+                    },
+                ),
+                user_id=user_id,
+                message_type=WebsocketMessageType.PLAN_APPROVAL_REQUEST,
+            )
         if is_clarification:
             await connection_config.send_status_update_async(
                 {"question": question, "request_id": event.request_id},
@@ -649,8 +731,6 @@ class OrchestrationManager:
         ``request_info`` responses; the event loop below is shared.
         """
         job_id = str(uuid.uuid4())
-        if _resume is None:
-            orchestration_config.set_approval_pending(job_id)
         self.logger.info(
             "Starting orchestration job '%s' for user '%s'%s",
             job_id,
@@ -1098,29 +1178,6 @@ class OrchestrationManager:
                     )
 
         except Exception as e:
-            # Approval timeout / rejection is an expected flow in HITL.
-            # Do not bubble it as an unhandled server error.
-            if str(e) == "Plan execution cancelled by user":
-                self.logger.warning(
-                    "Orchestration cancelled for user '%s' due to missing/negative approval",
-                    user_id,
-                )
-                try:
-                    await connection_config.send_status_update_async(
-                        {
-                            "content": "Plan execution cancelled by user or approval timeout.",
-                            "status": "cancelled",
-                            "timestamp": asyncio.get_event_loop().time(),
-                        },
-                        user_id,
-                        message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
-                    )
-                except Exception as send_error:
-                    self.logger.error(
-                        "Failed to send cancellation status: %s", send_error
-                    )
-                return
-
             # Error handling
             self.logger.error("Unexpected orchestration error: %s", e, exc_info=True)
             self.logger.error("Error type: %s", type(e).__name__)

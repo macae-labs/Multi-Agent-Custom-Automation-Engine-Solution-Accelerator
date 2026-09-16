@@ -10,7 +10,6 @@ from common.models.messages_af import (
     AgentType,
     PlanStatus,
 )
-from v4.config.settings import orchestration_config
 from v4.models.models import PlanStatus as V4PlanStatus
 
 logger = logging.getLogger(__name__)
@@ -121,60 +120,37 @@ class PlanService:
     async def handle_plan_approval(
         human_feedback: messages.PlanApprovalResponse, user_id: str
     ) -> bool:
-        """
-        Process a PlanApprovalResponse coming from the client.
+        """Record the human's decision on a parked plan review.
 
-        Args:
-            feedback: messages.PlanApprovalResponse (contains m_plan_id, plan_id, approved, feedback)
-            user_id: authenticated user id
+        Reads and writes only the persisted ``Plan`` (no in-process registry), so
+        the decision is honoured after a restart. Approval marks the plan and its
+        ``m_plan`` approved. Rejection records nothing here: the caller cancels
+        the parked request via ``OrchestrationManager.cancel_parked``.
 
         Returns:
-            dict with status and metadata
-
-        Raises:
-            ValueError on invalid state
+            True when the decision was recorded, False otherwise.
         """
-        if orchestration_config is None:
+        plan_id_val = human_feedback.plan_id
+        if not plan_id_val:
             return False
         try:
-            mplan = orchestration_config.plans[human_feedback.m_plan_id]
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            if hasattr(mplan, "plan_id"):
-                print(
-                    "Updated orchestration config:",
-                    orchestration_config.plans[human_feedback.m_plan_id],
-                )
-                if human_feedback.approved:
-                    plan_id_val = human_feedback.plan_id
-                    if plan_id_val is None:
-                        return False
-                    plan = await memory_store.get_plan(plan_id_val)
-                    mplan.plan_id = plan_id_val
-                    mplan.team_id = (
-                        plan.team_id
-                        if plan is not None and plan.team_id is not None
-                        else ""
-                    )
-                    mplan.overall_status = V4PlanStatus.APPROVED
-                    orchestration_config.plans[human_feedback.m_plan_id] = mplan
-                    if plan is not None:
-                        plan.overall_status = PlanStatus.approved
-                        plan.approved = (
-                            True  # keep boolean field consistent with overall_status
-                        )
-                        plan.m_plan = mplan.model_dump()
-                        await memory_store.update_plan(plan)
-                    else:
-                        print("Plan not found in memory store.")
-                        return False
-                else:  # reject plan
-                    if human_feedback.plan_id is not None:
-                        await memory_store.delete_plan_by_plan_id(
-                            human_feedback.plan_id
-                        )
-
+            plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id_val)
+            if plan is None:
+                logger.warning("Plan %s not found in memory store.", plan_id_val)
+                return False
+            if not human_feedback.approved:
+                return True
+            m_plan = dict(plan.m_plan or (plan.waiting_for or {}).get("m_plan") or {})
+            m_plan["plan_id"] = plan_id_val
+            m_plan["team_id"] = plan.team_id or ""
+            m_plan["overall_status"] = V4PlanStatus.APPROVED.value
+            plan.m_plan = m_plan
+            plan.overall_status = PlanStatus.approved
+            plan.approved = True  # keep boolean field consistent with overall_status
+            await memory_store.update_plan(plan)
         except Exception as e:
-            print(f"Error processing plan approval: {e}")
+            logger.error("Error processing plan approval: %s", e)
             return False
         return True
 

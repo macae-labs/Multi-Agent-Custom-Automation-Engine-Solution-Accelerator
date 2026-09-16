@@ -3,10 +3,8 @@
 Comprehensive test cases covering HumanApprovalMagenticManager with proper mocking.
 """
 
-import asyncio
 import unittest
-from unittest.mock import Mock, AsyncMock, patch
-
+from unittest.mock import AsyncMock, Mock, patch
 
 # Mock external Azure dependencies
 
@@ -104,11 +102,7 @@ mock_connection_config.send_status_update_async = AsyncMock()
 mock_orchestration_config = Mock()
 mock_orchestration_config.max_rounds = 10
 mock_orchestration_config.default_timeout = 30
-mock_orchestration_config.plans = {}
-mock_orchestration_config.approvals = {}
-mock_orchestration_config.set_approval_pending = Mock()
-mock_orchestration_config.wait_for_approval = AsyncMock(return_value=True)
-mock_orchestration_config.cleanup_approval = Mock()
+mock_orchestration_config.managers = {}
 
 
 # Mock v4.models.models
@@ -124,11 +118,13 @@ class MockMPlan:
 
 
 # Now import the module under test
-from agent_framework_orchestrations._magentic import StandardMagenticManager  # noqa: E402
-from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
-from v4.models.models import MPlan
 import pytest
+from agent_framework_orchestrations._magentic import (
+    StandardMagenticManager,  # noqa: E402
+)
 
+from v4.models.models import MPlan
+from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
 
 connection_config = mock_connection_config
 orchestration_config = mock_orchestration_config
@@ -190,14 +186,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         connection_config.send_status_update_async.side_effect = (
             None  # Reset side effects
         )
-        orchestration_config.plans.clear()
-        orchestration_config.approvals.clear()
-        orchestration_config.set_approval_pending.reset_mock()
-        orchestration_config.wait_for_approval.reset_mock()
-        orchestration_config.wait_for_approval.return_value = (
-            True  # Default return value
-        )
-        orchestration_config.cleanup_approval.reset_mock()
 
         # Create mock agent for new API
         self.mock_agent = Mock()
@@ -245,50 +233,31 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager.max_stall_count, 4)
         self.assertEqual(manager.max_reset_count, 1)
 
-    async def test_plan_success_approved(self):
-        """Test successful plan creation and approval."""
-        # Reset any side effects first
-        connection_config.send_status_update_async.side_effect = None
-
-        # Setup
-        orchestration_config.wait_for_approval.return_value = True
-
-        # Execute
+    async def test_plan_builds_mplan_and_never_waits(self):
+        """plan() returns the base message and builds the MPlan. It sends nothing,
+        waits for nothing and registers nothing in-process: the approval gate is
+        the framework's request_info(MagenticPlanReviewRequest) parked in the
+        checkpoint (OrchestrationManager._park_on_request_info)."""
         result = await self.manager.plan(self.test_context)
 
-        # Verify
         self.assertIsInstance(result, MockChatMessage)
         self.assertEqual(result.text, "Test plan")
-
-        # Verify plan was created and stored
         self.assertIsNotNone(self.manager.magentic_plan)
         self.assertEqual(self.manager.magentic_plan.user_id, self.user_id)
+        connection_config.send_status_update_async.assert_not_called()
+        self.assertFalse(hasattr(self.manager, "_wait_for_user_approval"))
 
-        # Verify approval request was sent
-        connection_config.send_status_update_async.assert_called()
-        orchestration_config.set_approval_pending.assert_called()
-        orchestration_config.wait_for_approval.assert_called()
+    async def test_replan_refreshes_mplan(self):
+        """A native `revise` triggers manager.replan(); the MPlan the UI will see
+        on the next PLAN_APPROVAL_REQUEST must be the replanned one."""
+        await self.manager.plan(self.test_context)
+        first = self.manager.magentic_plan
+        self.manager.task_ledger.plan.text = "- **MockAgent** to do it differently"
+        result = await self.manager.replan(self.test_context)
 
-    async def test_plan_success_rejected(self):
-        """Test plan creation with user rejection."""
-        # Reset any side effects first
-        connection_config.send_status_update_async.side_effect = None
-
-        # Setup - explicitly mock the wait_for_user_approval to return rejection
-        with patch.object(self.manager, "_wait_for_user_approval") as mock_wait:
-            mock_response = MockPlanApprovalResponse(
-                approved=False, m_plan_id="test-plan-123"
-            )
-            mock_wait.return_value = mock_response
-
-            # Execute & Verify
-            with self.assertRaises(Exception) as context:
-                await self.manager.plan(self.test_context)
-
-            self.assertIn("Plan execution cancelled by user", str(context.exception))
-
-            # Verify the mocked _wait_for_user_approval was called
-            mock_wait.assert_called_once()
+        self.assertEqual(result.text, "Test replan")
+        self.assertIsNot(self.manager.magentic_plan, first)
+        connection_config.send_status_update_async.assert_not_called()
 
     async def test_plan_task_ledger_none(self):
         """Test plan method when task_ledger is None."""
@@ -307,42 +276,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(
                     "task_ledger not set after plan()", str(context.exception)
                 )
-
-    async def test_plan_approval_storage_error(self):
-        """Test plan method when storing in orchestration_config.plans fails."""
-        # Reset any side effects first
-        connection_config.send_status_update_async.side_effect = None
-
-        # Setup - mock plans dict to raise exception
-        original_plans = orchestration_config.plans
-        orchestration_config.plans = Mock()
-        orchestration_config.plans.__setitem__ = Mock(
-            side_effect=Exception("Storage error")
-        )
-
-        try:
-            # Execute & Verify - should still work despite storage error
-            orchestration_config.wait_for_approval.return_value = True
-            result = await self.manager.plan(self.test_context)
-
-            self.assertIsInstance(result, MockChatMessage)
-        finally:
-            # Reset the plans
-            orchestration_config.plans = original_plans
-
-    async def test_plan_websocket_send_error(self):
-        """Test plan method when WebSocket sending fails."""
-        # Setup
-        connection_config.send_status_update_async.side_effect = Exception(
-            "WebSocket error"
-        )
-
-        # Execute & Verify - should still try to wait for approval
-        with self.assertRaises(Exception):
-            await self.manager.plan(self.test_context)
-
-        # Reset side effect
-        connection_config.send_status_update_async.side_effect = None
 
     async def test_replan(self):
         """Test replan method."""
@@ -385,160 +318,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
 
         # Verify final message was sent
         connection_config.send_status_update_async.assert_called()
-
-    async def test_wait_for_user_approval_success(self):
-        """Test _wait_for_user_approval with successful approval."""
-        # Setup
-        plan_id = "test-plan-123"
-
-        # Patch the PlanApprovalResponse directly
-        with patch(
-            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
-            MockPlanApprovalResponse,
-        ):
-            orchestration_config.wait_for_approval = AsyncMock(return_value=True)
-
-            # Execute
-            result = await self.manager._wait_for_user_approval(plan_id)
-
-            # Verify
-            self.assertIsNotNone(result)
-            self.assertTrue(result.approved)
-            self.assertEqual(result.m_plan_id, plan_id)
-
-        orchestration_config.set_approval_pending.assert_called_with(plan_id)
-        orchestration_config.wait_for_approval.assert_called_with(plan_id)
-
-    async def test_wait_for_user_approval_rejection(self):
-        """Test _wait_for_user_approval with user rejection."""
-        # Setup
-        plan_id = "test-plan-123"
-
-        # Patch the PlanApprovalResponse directly
-        with patch(
-            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
-            MockPlanApprovalResponse,
-        ):
-            orchestration_config.wait_for_approval = AsyncMock(return_value=False)
-
-            # Execute
-            result = await self.manager._wait_for_user_approval(plan_id)
-
-            # Verify
-            self.assertIsNotNone(result)
-            self.assertFalse(result.approved)
-            self.assertEqual(result.m_plan_id, plan_id)
-
-    async def test_wait_for_user_approval_no_plan_id(self):
-        """Test _wait_for_user_approval with no plan ID."""
-        # Patch the PlanApprovalResponse directly
-        with patch(
-            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
-            MockPlanApprovalResponse,
-        ):
-            result = await self.manager._wait_for_user_approval(None)
-
-            self.assertIsNotNone(result)
-            self.assertFalse(result.approved)
-            self.assertEqual(result.m_plan_id, "")
-        self.assertEqual(result.m_plan_id, "")
-
-    async def test_wait_for_user_approval_timeout(self):
-        """Test _wait_for_user_approval with timeout."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.wait_for_approval.side_effect = asyncio.TimeoutError()
-
-        # Execute
-        result = await self.manager._wait_for_user_approval(plan_id)
-
-        # Verify
-        self.assertIsNone(result)
-
-        # Verify timeout notification was sent
-        connection_config.send_status_update_async.assert_called()
-        orchestration_config.cleanup_approval.assert_called_with(plan_id)
-
-    async def test_wait_for_user_approval_timeout_websocket_error(self):
-        """Test _wait_for_user_approval with timeout and WebSocket error."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.wait_for_approval.side_effect = asyncio.TimeoutError()
-        connection_config.send_status_update_async.side_effect = Exception(
-            "WebSocket error"
-        )
-
-        # Execute
-        result = await self.manager._wait_for_user_approval(plan_id)
-
-        # Verify
-        self.assertIsNone(result)
-        orchestration_config.cleanup_approval.assert_called_with(plan_id)
-
-        # Reset side effect
-        connection_config.send_status_update_async.side_effect = None
-
-    async def test_wait_for_user_approval_key_error(self):
-        """Test _wait_for_user_approval with KeyError."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.wait_for_approval.side_effect = KeyError("Plan not found")
-
-        # Execute
-        result = await self.manager._wait_for_user_approval(plan_id)
-
-        # Verify
-        self.assertIsNone(result)
-
-    async def test_wait_for_user_approval_cancelled_error(self):
-        """Test _wait_for_user_approval with CancelledError."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.wait_for_approval.side_effect = asyncio.CancelledError()
-
-        # Execute
-        result = await self.manager._wait_for_user_approval(plan_id)
-
-        # Verify
-        self.assertIsNone(result)
-        orchestration_config.cleanup_approval.assert_called_with(plan_id)
-
-    async def test_wait_for_user_approval_unexpected_error(self):
-        """Test _wait_for_user_approval with unexpected error."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.wait_for_approval.side_effect = Exception(
-            "Unexpected error"
-        )
-
-        # Execute
-        result = await self.manager._wait_for_user_approval(plan_id)
-
-        # Verify
-        self.assertIsNone(result)
-        orchestration_config.cleanup_approval.assert_called_with(plan_id)
-
-    async def test_wait_for_user_approval_finally_cleanup(self):
-        """Test _wait_for_user_approval finally block cleanup."""
-        # Setup
-        plan_id = "test-plan-123"
-        orchestration_config.approvals = {plan_id: None}
-
-        # Patch the PlanApprovalResponse directly
-        with patch(
-            "v4.orchestration.human_approval_manager.messages.PlanApprovalResponse",
-            MockPlanApprovalResponse,
-        ):
-            orchestration_config.wait_for_approval = AsyncMock(return_value=True)
-
-            # Execute
-            result = await self.manager._wait_for_user_approval(plan_id)
-
-            # Verify
-            self.assertIsNotNone(result)
-            self.assertTrue(result.approved)
-            self.assertEqual(result.m_plan_id, plan_id)
-        self.assertTrue(result.approved)
 
     async def test_prepare_final_answer(self):
         """Test prepare_final_answer method."""
@@ -618,8 +397,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
             mock_plan = MPlan(id="test-plan-id")
             mock_plan_to_obj.return_value = mock_plan
 
-            orchestration_config.wait_for_approval.return_value = True
-
             # Execute - should handle missing participant_descriptions
             result = await self.manager.plan(context)
 
@@ -632,7 +409,6 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
         # Setup
         task = MockChatMessage("Test task from ChatMessage")
         context = MockMagenticContext(task=task)
-        orchestration_config.wait_for_approval.return_value = True
 
         # Execute
         result = await self.manager.plan(context)

@@ -15,7 +15,6 @@ from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatResponseReceivedEvent,
 )
 
-
 # Mock external Azure dependencies
 
 
@@ -132,7 +131,6 @@ mock_orchestration_config.agent_wrappers = {}
 # Source stores the HumanApprovalMagenticManager per user (chat_history seeding)
 mock_orchestration_config.managers = {}
 mock_orchestration_config.get_current_orchestration = Mock(return_value=None)
-mock_orchestration_config.set_approval_pending = Mock()
 
 
 # Mock v4.models.messages
@@ -165,11 +163,11 @@ class MockMagenticAgentFactory:
 
 
 # Now import the module under test
+import pytest
+
 from v4.orchestration.orchestration_manager import (  # noqa: E402
     OrchestrationManager,
 )
-import pytest
-
 
 # Colaboradores del módulo bajo test: los mismos objetos que la fixture
 # instala en su namespace durante cada test (setUp los resetea).
@@ -207,7 +205,6 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         orchestration_config.agent_wrappers.clear()
         orchestration_config.managers.clear()
         orchestration_config.get_current_orchestration.return_value = None
-        orchestration_config.set_approval_pending.reset_mock()
         connection_config.send_status_update_async.reset_mock()
         connection_config.send_status_update_async.side_effect = None
         streaming_agent_response_callback.reset_mock()
@@ -646,10 +643,8 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         # Reset side effect for other tests
         streaming_agent_response_callback.side_effect = None
 
-    def test_run_orchestration_job_id_generation(self):
-        """Test that job_id is generated and approval is set pending."""
-        # Reset the mock first to get a clean count
-        orchestration_config.set_approval_pending.reset_mock()
+    def test_run_orchestration_requires_initialized_workflow(self):
+        """No workflow for the user -> ValueError before any work starts."""
         orchestration_config.get_current_orchestration.return_value = None
 
         input_task = Mock()
@@ -665,9 +660,6 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
                     input_task=input_task,
                 )
             )
-
-        # Verify approval was set pending (called with some job_id)
-        orchestration_config.set_approval_pending.assert_called_once()
 
     async def test_run_orchestration_string_input_task(self):
         """Test run_orchestration with string input task."""
@@ -1136,82 +1128,6 @@ class TestWorkflowOutputEventHandling(IsolatedAsyncioTestCase):
 
         # Empty list should still result in a status update being sent
         connection_config.send_status_update_async.assert_called()
-
-    # ── HITL cancellation flow (local feature, commit 758204a6) ──
-
-    async def test_run_orchestration_hitl_cancellation(self):
-        """Test that 'Plan execution cancelled by user' is caught gracefully.
-
-        When human approval times out or is rejected, the workflow raises
-        Exception("Plan execution cancelled by user").  The except block in
-        run_orchestration should send a FINAL_RESULT_MESSAGE with status
-        'cancelled' and return without re-raising.
-        """
-        mock_workflow = Mock()
-
-        # Make the workflow raise the HITL cancellation exception
-        async def _raise_cancel(*_a, **_kw):
-            raise Exception("Plan execution cancelled by user")  # noqa: TRY002
-            yield  # noqa: unreachable – makes this an async generator
-
-        mock_workflow.run = _raise_cancel
-        mock_workflow.executors = {}
-
-        orchestration_config.get_current_orchestration.return_value = mock_workflow
-
-        input_task = Mock()
-        input_task.description = "Requires approval"
-        input_task.context = ""
-
-        # Should NOT raise
-        await self.orchestration_manager.run_orchestration(
-            user_id=self.test_user_id,
-            session_id=self.test_session_id,
-            input_task=input_task,
-        )
-
-        # Verify a cancellation message was sent
-        connection_config.send_status_update_async.assert_called()
-        last_call = connection_config.send_status_update_async.call_args
-        payload = last_call[0][0] if last_call[0] else last_call[1].get("message", {})
-        # Flat payload: send_status_update_async is the ONLY place that adds the
-        # {type, data} envelope. Senders used to pre-wrap, producing a double
-        # envelope on the wire ({type, data:{type, data:{...}}}).
-        self.assertEqual(payload["status"], "cancelled")
-
-    async def test_run_orchestration_hitl_cancellation_send_failure(self):
-        """Test HITL cancellation when the WebSocket send itself fails.
-
-        Even if sending the cancellation status fails, the method should
-        return gracefully (no re-raise).
-        """
-        mock_workflow = Mock()
-
-        async def _raise_cancel(*_a, **_kw):
-            raise Exception("Plan execution cancelled by user")  # noqa: TRY002
-            yield
-
-        mock_workflow.run = _raise_cancel
-        mock_workflow.executors = {}
-
-        orchestration_config.get_current_orchestration.return_value = mock_workflow
-        connection_config.send_status_update_async.side_effect = RuntimeError(
-            "WebSocket closed"
-        )
-
-        input_task = Mock()
-        input_task.description = "Requires approval"
-        input_task.context = ""
-
-        # Should still NOT raise despite send failure
-        await self.orchestration_manager.run_orchestration(
-            user_id=self.test_user_id,
-            session_id=self.test_session_id,
-            input_task=input_task,
-        )
-
-        # Clean up side_effect so it doesn't leak to subsequent tests
-        connection_config.send_status_update_async.side_effect = None
 
 
 if __name__ == "__main__":

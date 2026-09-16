@@ -31,7 +31,6 @@ def _collaborators_patched(monkeypatch):
         ('AgentType', mock_messages_af.AgentType),
         ('PlanStatus', mock_messages_af.PlanStatus),
         ('messages', mock_v4_messages),
-        ('orchestration_config', MagicMock(orchestration_config=mock_orchestration_config).orchestration_config),
         ('DatabaseFactory', mock_database_factory.DatabaseFactory),
     ):
         monkeypatch.setattr(mod, name, value)
@@ -143,9 +142,6 @@ mock_v4_messages = MagicMock()
 
 # Now import the real PlanService using direct file import with proper mocking
 
-# Mock the orchestration_config
-mock_orchestration_config = MagicMock()
-mock_orchestration_config.plans = {}
 
 
 build_agent_message_from_user_clarification = (
@@ -323,125 +319,105 @@ class TestPlanService:
 
     @pytest.mark.asyncio
     async def test_handle_plan_approval_success(self):
-        """Test successful plan approval."""
-        # Setup mock data
+        """Approval is recorded on the persisted Plan only (durable across restarts):
+        m_plan gets plan_id/team_id/APPROVED, plan gets approved status + flag."""
         mock_approval = MockPlanApprovalResponse(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
             approved=True,
             feedback="Looks good!",
         )
-        user_id = "test-user"
-
-        # Setup mock orchestration config
-        mock_mplan = MagicMock()
-        mock_mplan.plan_id = None
-        mock_mplan.team_id = None
-        mock_mplan.model_dump.return_value = {"test": "data"}
-
-        mock_orchestration_config.plans = {"test-m-plan-456": mock_mplan}
-
-        # Setup mock database and plan
-        mock_db = MagicMock()
         mock_plan = MagicMock()
         mock_plan.team_id = "test-team"
-        mock_db.get_plan = AsyncMock(return_value=mock_plan)
+        mock_plan.m_plan = None
+        mock_plan.waiting_for = {"kind": "plan_review", "m_plan": {"id": "test-m-plan-456"}}
+        mock_db = MagicMock()
+        mock_db.get_plan_by_plan_id = AsyncMock(return_value=mock_plan)
         mock_db.update_plan = AsyncMock()
+        mock_db.delete_plan_by_plan_id = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             return_value=mock_db
         )
 
-        with patch.object(
-            plan_service_module, "orchestration_config", mock_orchestration_config
-        ):
-            result = await PlanService.handle_plan_approval(mock_approval, user_id)
+        result = await PlanService.handle_plan_approval(mock_approval, "test-user")
 
         assert result is True
-        assert mock_mplan.plan_id == "test-plan-123"
-        assert mock_mplan.team_id == "test-team"
+        mock_db.get_plan_by_plan_id.assert_awaited_once_with(plan_id="test-plan-123")
+        assert mock_plan.m_plan["id"] == "test-m-plan-456"
+        assert mock_plan.m_plan["plan_id"] == "test-plan-123"
+        assert mock_plan.m_plan["team_id"] == "test-team"
         assert mock_plan.overall_status == MockPlanStatus.approved
-        mock_db.update_plan.assert_called_once()
-
+        assert mock_plan.approved is True
+        mock_db.update_plan.assert_awaited_once_with(mock_plan)
     @pytest.mark.asyncio
     async def test_handle_plan_approval_rejection(self):
-        """Test plan rejection."""
+        """Rejection records nothing here: the caller cancels the parked request
+        (OrchestrationManager.cancel_parked). The plan is neither deleted nor mutated."""
         mock_approval = MockPlanApprovalResponse(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
             approved=False,
             feedback="Need changes",
         )
-        user_id = "test-user"
-
-        # Setup mock orchestration config
-        mock_mplan = MagicMock()
-        mock_mplan.plan_id = "existing-plan-id"
-        mock_orchestration_config.plans = {"test-m-plan-456": mock_mplan}
-
-        # Setup mock database
+        mock_plan = MagicMock()
         mock_db = MagicMock()
+        mock_db.get_plan_by_plan_id = AsyncMock(return_value=mock_plan)
+        mock_db.update_plan = AsyncMock()
         mock_db.delete_plan_by_plan_id = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             return_value=mock_db
         )
 
-        with patch.object(
-            plan_service_module, "orchestration_config", mock_orchestration_config
-        ):
-            result = await PlanService.handle_plan_approval(mock_approval, user_id)
+        result = await PlanService.handle_plan_approval(mock_approval, "test-user")
 
         assert result is True
-        mock_db.delete_plan_by_plan_id.assert_called_once_with("test-plan-123")
-
+        mock_db.update_plan.assert_not_called()
+        mock_db.delete_plan_by_plan_id.assert_not_called()
     @pytest.mark.asyncio
-    async def test_handle_plan_approval_no_orchestration_config(self):
-        """Test when orchestration config is None."""
-        mock_approval = MockPlanApprovalResponse()
+    async def test_handle_plan_approval_requires_plan_id(self):
+        """Without plan_id there is no persisted Plan to record the decision on."""
+        mock_approval = MockPlanApprovalResponse(plan_id=None, approved=True)
+        mock_db = MagicMock()
+        mock_db.get_plan_by_plan_id = AsyncMock(return_value=MagicMock())
+        mock_db.update_plan = AsyncMock()
+        mock_db.delete_plan_by_plan_id = AsyncMock()
+        mock_database_factory.DatabaseFactory.get_database = AsyncMock(
+            return_value=mock_db
+        )
 
-        with patch.object(plan_service_module, "orchestration_config", None):
-            result = await PlanService.handle_plan_approval(mock_approval, "user")
+        result = await PlanService.handle_plan_approval(mock_approval, "user")
 
         assert result is False
-
+        mock_database_factory.DatabaseFactory.get_database.assert_not_called()
     @pytest.mark.asyncio
     async def test_handle_plan_approval_plan_not_found(self):
         """Test when plan is not found in memory store."""
         mock_approval = MockPlanApprovalResponse(
             plan_id="missing-plan", m_plan_id="test-m-plan", approved=True
         )
-
-        mock_mplan = MagicMock()
-        mock_mplan.plan_id = None
-        mock_orchestration_config.plans = {"test-m-plan": mock_mplan}
-
         mock_db = MagicMock()
-        mock_db.get_plan = AsyncMock(return_value=None)  # Plan not found
+        mock_db.get_plan_by_plan_id = AsyncMock(return_value=None)
+        mock_db.update_plan = AsyncMock()
+        mock_db.delete_plan_by_plan_id = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             return_value=mock_db
         )
 
-        with patch.object(
-            plan_service_module, "orchestration_config", mock_orchestration_config
-        ):
-            result = await PlanService.handle_plan_approval(mock_approval, "user")
+        result = await PlanService.handle_plan_approval(mock_approval, "user")
 
         assert result is False
-
+        mock_db.update_plan.assert_not_called()
     @pytest.mark.asyncio
     async def test_handle_plan_approval_exception(self):
-        """Test exception handling in plan approval."""
-        mock_approval = MockPlanApprovalResponse(m_plan_id="nonexistent")
+        """Store failures are swallowed into False, never raised to the router."""
+        mock_approval = MockPlanApprovalResponse(plan_id="plan-1", approved=True)
+        mock_database_factory.DatabaseFactory.get_database = AsyncMock(
+            side_effect=RuntimeError("cosmos down")
+        )
 
-        # Setup orchestration config that will cause KeyError
-        mock_orchestration_config.plans = {}
-
-        with patch.object(
-            plan_service_module, "orchestration_config", mock_orchestration_config
-        ):
-            result = await PlanService.handle_plan_approval(mock_approval, "user")
+        result = await PlanService.handle_plan_approval(mock_approval, "user")
 
         assert result is False
-
     @pytest.mark.asyncio
     async def test_handle_agent_messages_success(self):
         """Test successful agent message handling."""
@@ -552,13 +528,9 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_static_method_properties(self):
         """Test that all PlanService methods are static."""
-        # Verify methods are static by calling them on the class
-        mock_approval = MockPlanApprovalResponse(approved=False)
-
-        with patch.object(plan_service_module, "orchestration_config", None):
-            result = await PlanService.handle_plan_approval(mock_approval, "user")
-            assert result is False
-
+        mock_approval = MockPlanApprovalResponse(plan_id=None, approved=False)
+        result = await PlanService.handle_plan_approval(mock_approval, "user")
+        assert result is False
     def test_event_tracking_calls(self):
         """Test that event tracking is callable via the mocked event_utils module."""
         # Verify the mock event_utils has the track function accessible
@@ -572,26 +544,24 @@ class TestPlanService:
 
     @pytest.mark.asyncio
     async def test_integration_scenario_approval_workflow(self):
-        """Test complete approval workflow integration."""
-        # Setup complete mock environment
-        mock_mplan = MagicMock()
-        mock_mplan.plan_id = None
-        mock_mplan.team_id = None
-        mock_mplan.model_dump.return_value = {"test": "plan"}
-
-        mock_orchestration_config.plans = {"m-plan-123": mock_mplan}
-
+        """Approval of a parked plan whose m_plan lives only in waiting_for
+        (the restart case: nothing in memory, everything in the store)."""
         mock_plan = MagicMock()
         mock_plan.team_id = "team-456"
-
+        mock_plan.m_plan = None
+        mock_plan.waiting_for = {
+            "kind": "plan_review",
+            "request_id": "req-1",
+            "m_plan": {"id": "m-plan-123", "steps": []},
+        }
         mock_db = MagicMock()
-        mock_db.get_plan = AsyncMock(return_value=mock_plan)
+        mock_db.get_plan_by_plan_id = AsyncMock(return_value=mock_plan)
         mock_db.update_plan = AsyncMock()
+        mock_db.delete_plan_by_plan_id = AsyncMock()
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             return_value=mock_db
         )
 
-        # Test approval flow
         approval = MockPlanApprovalResponse(
             plan_id="plan-123",
             m_plan_id="m-plan-123",
@@ -599,16 +569,13 @@ class TestPlanService:
             feedback="Approved",
         )
 
-        with patch.object(
-            plan_service_module, "orchestration_config", mock_orchestration_config
-        ):
-            result = await PlanService.handle_plan_approval(approval, "user-123")
+        result = await PlanService.handle_plan_approval(approval, "user-123")
 
         assert result is True
-        assert mock_mplan.plan_id == "plan-123"
-        assert mock_mplan.team_id == "team-456"
+        assert mock_plan.m_plan["plan_id"] == "plan-123"
+        assert mock_plan.m_plan["team_id"] == "team-456"
+        assert mock_plan.m_plan["steps"] == []
         assert mock_plan.overall_status == MockPlanStatus.approved
-
     @pytest.mark.asyncio
     async def test_integration_scenario_message_processing(self):
         """Test complete message processing workflow."""

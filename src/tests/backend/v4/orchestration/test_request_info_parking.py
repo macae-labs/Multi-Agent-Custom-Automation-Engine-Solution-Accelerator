@@ -76,7 +76,7 @@ async def test_resume_restores_the_checkpoint_with_the_answer_and_clears_waiting
     manager = OrchestrationManager()
     run = AsyncMock()
     monkeypatch.setattr(manager, "run_orchestration", run)
-    await manager.resume_orchestration("u1", "s1", "p1", "req-1", "42")
+    await manager.resume_orchestration("u1", "s1", "p1", "req-1", Content.from_text("42"))
     assert parked.plan.waiting_for is None and parked.store.updates[-1] == {}
     kwargs = run.await_args.kwargs
     assert kwargs["workspace_id"] == "ws-1" and kwargs["_resume"]["checkpoint_id"] == "cp-9"
@@ -88,4 +88,4 @@ async def test_resume_restores_the_checkpoint_with_the_answer_and_clears_waiting
 async def test_resume_refuses_a_request_the_plan_is_not_waiting_for(parked):
     parked.plan.waiting_for = {"kind": "clarification", "request_id": "req-1", "checkpoint_id": "cp-9"}
     with pytest.raises(ValueError, match="not waiting for request"):
-        await OrchestrationManager().resume_orchestration("u1", "s1", "p1", "req-X", "42")
+        await OrchestrationManager().resume_orchestration("u1", "s1", "p1", "req-X", Content.from_text("42"))
