@@ -149,6 +149,9 @@ class Plan(BaseDataModel):
     streaming_message: Optional[str] = None
     human_clarification_request: Optional[str] = None
     human_clarification_response: Optional[str] = None
+    # Pending request_info the workflow is idle on (durable; checkpoint-backed):
+    # {kind, request_id, checkpoint_id, workflow_name, question, content_id}.
+    waiting_for: Optional[Dict[str, Any]] = None
 
 
 class Step(BaseDataModel):

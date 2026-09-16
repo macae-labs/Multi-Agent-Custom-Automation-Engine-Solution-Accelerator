@@ -74,11 +74,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_cosmos_client.initialize = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -135,11 +134,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_cosmos_client.initialize = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -177,11 +175,10 @@ class TestDatabaseFactoryGetDatabase:
         mock_cosmos_client.initialize = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -212,11 +209,10 @@ class TestDatabaseFactoryGetDatabase:
         )
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -309,11 +305,10 @@ class TestDatabaseFactoryIntegration:
         mock_cosmos_client.initialize = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -342,11 +337,10 @@ class TestDatabaseFactoryIntegration:
         mock_cosmos_client1.close = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch("common.database.database_factory.config", mock_config):
             with patch(
@@ -387,11 +381,10 @@ class TestDatabaseFactoryIntegration:
         mock_cosmos_client2.initialize = AsyncMock()
 
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch("common.database.database_factory.config", mock_config):
             # Create singleton instance
@@ -444,11 +437,10 @@ class TestDatabaseFactoryConfigurationHandling:
 
         mock_credentials = Mock()
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://custom.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "custom_database"
         mock_config.COSMOSDB_CONTAINER = "custom_container"
-        mock_config.get_azure_credentials.return_value = mock_credentials
+        mock_config.get_cosmos_credential_async.return_value = mock_credentials
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -468,18 +460,17 @@ class TestDatabaseFactoryConfigurationHandling:
                     tenant_id="",
                 )
 
-                # Verify get_azure_credentials was called
-                mock_config.get_azure_credentials.assert_called_once()
+                # Verify get_cosmos_credential_async was called
+                mock_config.get_cosmos_credential_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_config_credential_error(self):
         """Test handling of config credential errors."""
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.side_effect = Exception("Credential error")
+        mock_config.get_cosmos_credential_async.side_effect = Exception("Credential error")
 
         with patch("common.database.database_factory.config", mock_config):
             with pytest.raises(Exception, match="Credential error"):
@@ -521,11 +512,10 @@ class TestDatabaseFactoryErrorHandling:
     async def test_cosmos_client_creation_failure(self):
         """Test handling of CosmosDBClient creation failure."""
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         mock_config.COSMOSDB_DATABASE = "test_db"
         mock_config.COSMOSDB_CONTAINER = "test_container"
-        mock_config.get_azure_credentials.return_value = "mock_credentials"
+        mock_config.get_cosmos_credential_async.return_value = "mock_credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",
@@ -546,8 +536,7 @@ class TestDatabaseFactoryErrorHandling:
 
         # Simulate creation failure
         mock_config = Mock()
-        mock_config.COSMOSDB_KEY = None  # key unset -> AAD credential path
-        mock_config.get_azure_credentials.side_effect = Exception("Config error")
+        mock_config.get_cosmos_credential_async.side_effect = Exception("Config error")
 
         with patch("common.database.database_factory.config", mock_config):
             with pytest.raises(Exception):
@@ -564,7 +553,7 @@ class TestDatabaseFactoryErrorHandling:
         good_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
         good_config.COSMOSDB_DATABASE = "test_db"
         good_config.COSMOSDB_CONTAINER = "test_container"
-        good_config.get_azure_credentials.return_value = "credentials"
+        good_config.get_cosmos_credential_async.return_value = "credentials"
 
         with patch(
             "common.database.database_factory.CosmosDBClient",

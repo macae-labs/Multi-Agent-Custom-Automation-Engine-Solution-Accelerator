@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from agent_framework import (
     Agent,
     AgentResponseUpdate,
-    InMemoryCheckpointStorage,
+    Content,
     Message,
 )
 
@@ -29,6 +29,7 @@ from agent_framework_orchestrations._magentic import (
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import PlanStatus, TeamConfiguration
+from common.services.checkpoint_storage import get_checkpoint_storage
 from v4.callbacks.response_handlers import (
     streaming_agent_response_callback,
 )
@@ -318,7 +319,7 @@ class OrchestrationManager:
                 cls.logger.debug("Added participant '%s'", name)
 
         # Assemble workflow with callback
-        storage = InMemoryCheckpointStorage()
+        storage = get_checkpoint_storage()
 
         # New SDK: participants() accepts a Sequence (list) of agents
         # The orchestrator uses agent.name to identify them
@@ -505,6 +506,126 @@ class OrchestrationManager:
                 _pe,
             )
 
+    async def resume_orchestration(
+        self,
+        user_id: str,
+        session_id: str,
+        plan_id: str,
+        request_id: str,
+        answer: str,
+        workspace_id: Optional[str] = None,
+    ) -> None:
+        """Deliver a human answer to the pending ``request_info`` and continue.
+
+        The plan's ``waiting_for`` (persisted by ``run_orchestration`` when the
+        workflow went idle) carries the checkpoint to restore. The answer enters
+        the workflow as ``Content.from_text`` (role ``user`` for the agent).
+        """
+        from common.database.database_factory import DatabaseFactory
+
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+        waiting_for = (plan.waiting_for if plan else None) or {}
+        if plan is None or waiting_for.get("request_id") != request_id:
+            raise ValueError(
+                f"Plan {plan_id} is not waiting for request {request_id} "
+                f"(waiting_for={waiting_for.get('request_id')})"
+            )
+        plan.waiting_for = None  # consumed: the answer is on its way into the workflow
+        await memory_store.update_plan(plan)
+        await self.run_orchestration(
+            user_id,
+            session_id,
+            input_task=None,
+            plan_id=plan_id,
+            workspace_id=workspace_id
+            if workspace_id is not None
+            else waiting_for.get("workspace_id"),
+            _resume={
+                "checkpoint_id": waiting_for["checkpoint_id"],
+                "responses": {request_id: Content.from_text(text=answer)},
+            },
+        )
+
+    async def _park_on_request_info(
+        self,
+        *,
+        workflow: Any,
+        event: Any,
+        user_id: str,
+        session_id: str,
+        plan_id: Optional[str],
+        workspace_id: Optional[str],
+    ) -> None:
+        """The workflow went idle on a ``request_info``: the pending request lives
+        in the checkpoint that closed the superstep. Nothing waits in-process:
+        ``waiting_for`` is persisted on the plan, the UI is notified, and this
+        run ends. The answer resumes from the checkpoint (``resume_orchestration``).
+        """
+        storage = get_checkpoint_storage()
+        latest = await storage.get_latest(workflow_name=workflow.name)
+        if latest is None or event.request_id not in latest.pending_request_info_events:
+            raise RuntimeError(
+                f"request_info {event.request_id} sin checkpoint que lo conserve "
+                f"(workflow {workflow.name})"
+            )
+        data = event.data
+        is_clarification = isinstance(data, Content) and bool(data.user_input_request)
+        question = (data.text or "") if is_clarification else ""
+        waiting_for: Dict[str, Any] = {
+            "kind": "clarification" if is_clarification else type(data).__name__,
+            "request_id": event.request_id,
+            "checkpoint_id": latest.checkpoint_id,
+            "workflow_name": workflow.name,
+            "question": question,
+            "content_id": getattr(data, "id", None),
+            "workspace_id": workspace_id,
+        }
+        if plan_id:
+            from common.database.database_factory import DatabaseFactory
+
+            memory_store = await DatabaseFactory.get_database(user_id=user_id)
+            plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+            if plan is not None:
+                waiting_for["team_id"] = plan.team_id
+                plan.waiting_for = waiting_for
+                await memory_store.update_plan(plan)
+        if is_clarification:
+            await connection_config.send_status_update_async(
+                {"question": question, "request_id": event.request_id},
+                user_id=user_id,
+                message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
+            )
+            if session_id:
+                try:
+                    from common.services.chat_cosmos_service import (
+                        get_chat_cosmos_service,
+                    )
+
+                    chat_svc = await get_chat_cosmos_service()
+                    await chat_svc.add_message(
+                        session_id=session_id,
+                        user_id=user_id,
+                        content=question,
+                        role="assistant",
+                        metadata={
+                            "intent": "task",
+                            "clarification_id": event.request_id,
+                            "message_type": "clarification_question",
+                        },
+                    )
+                except Exception as chat_error:
+                    self.logger.warning(
+                        "Could not persist clarification question to chat_cosmos: %s",
+                        chat_error,
+                    )
+        self.logger.info(
+            "Orchestration parked on %s %s (checkpoint %s)",
+            waiting_for["kind"],
+            event.request_id,
+            latest.checkpoint_id,
+        )
+
     async def run_orchestration(
         self,
         user_id,
@@ -513,6 +634,7 @@ class OrchestrationManager:
         plan_id: Optional[str] = None,
         history: Optional[list] = None,
         workspace_id: Optional[str] = None,
+        _resume: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Execute the Magentic workflow for the provided user and task description.
@@ -521,11 +643,19 @@ class OrchestrationManager:
         agent messages are persisted to the plan store and the plan is marked
         completed here, in-process — no longer dependent on the frontend echoing
         to ``/agent_message`` (which was fragile and duplicated the final).
+
+        ``_resume`` (internal, set by ``resume_orchestration``) restores the
+        checkpoint the workflow went idle on and feeds the pending
+        ``request_info`` responses; the event loop below is shared.
         """
         job_id = str(uuid.uuid4())
-        orchestration_config.set_approval_pending(job_id)
+        if _resume is None:
+            orchestration_config.set_approval_pending(job_id)
         self.logger.info(
-            "Starting orchestration job '%s' for user '%s'", job_id, user_id
+            "Starting orchestration job '%s' for user '%s'%s",
+            job_id,
+            user_id,
+            " (resume)" if _resume else "",
         )
 
         workflow = orchestration_config.get_current_orchestration(user_id)
@@ -536,6 +666,8 @@ class OrchestrationManager:
         self.logger.debug("Executor keys at run start: %s", list(executors.keys()))
 
         for exec_key, executor in executors.items():
+            if _resume is not None:
+                break  # state comes from the checkpoint; do not wipe it
             try:
                 if exec_key == "magentic_orchestrator":
                     # Orchestrator path
@@ -598,11 +730,15 @@ class OrchestrationManager:
         # framework models objective and conversation separately; welding the
         # history into the task string polluted the plan (steps like "review
         # prior context", agents chosen for past topics).
-        task_text = getattr(input_task, "description", str(input_task))
+        task_text = (
+            getattr(input_task, "description", str(input_task))
+            if input_task is not None
+            else ""
+        )
         self.logger.debug("Task: %s", task_text)
 
         manager = orchestration_config.managers.get(user_id)
-        if manager is not None:
+        if manager is not None and _resume is None:
             # Unconditional: an empty list clears any stale pending seed left
             # by a run that never reached plan().
             manager.seed_chat_history(history or [])
@@ -625,10 +761,22 @@ class OrchestrationManager:
             # Execute workflow using run() with stream=True
             # The execution settings are configured in the manager/client
             final_output: str | None = None
+            # request_info the workflow went idle on (clarification / plan review)
+            pending_request: Any = None
 
             self.logger.info("Starting workflow execution...")
 
-            async for event in workflow.run(task_text, stream=True):
+            if _resume is None:
+                event_stream = workflow.run(task_text, stream=True)
+            else:
+                event_stream = workflow.run(
+                    checkpoint_id=_resume["checkpoint_id"],
+                    checkpoint_storage=get_checkpoint_storage(),
+                    responses=_resume["responses"],
+                    stream=True,
+                )
+
+            async for event in event_stream:
                 try:
                     # WorkflowEvent has a .type field (string) instead of specific event classes
                     event_type = (
@@ -637,8 +785,18 @@ class OrchestrationManager:
                     if event_type not in ("status", "output"):
                         self.logger.info("[EVENT] type=%s", event_type)
 
+                    # The workflow is about to go idle waiting for a human. The
+                    # pending request lives in the checkpoint; nothing blocks here.
+                    if event_type == "request_info":
+                        pending_request = event
+                        self.logger.info(
+                            "[REQUEST INFO] request_id=%s data=%s",
+                            getattr(event, "request_id", None),
+                            type(event.data).__name__,
+                        )
+
                     # Handle orchestrator events (plan, progress ledger)
-                    if event_type == "magentic_orchestrator":
+                    elif event_type == "magentic_orchestrator":
                         self.logger.info("[Magentic Orchestrator Event]")
                         if isinstance(event.data, Message):
                             self.logger.info(
@@ -853,6 +1011,17 @@ class OrchestrationManager:
                         f"Error processing event {type(event).__name__}: {e}",
                         exc_info=True,
                     )
+
+            if pending_request is not None:
+                await self._park_on_request_info(
+                    workflow=workflow,
+                    event=pending_request,
+                    user_id=user_id,
+                    session_id=session_id,
+                    plan_id=plan_id,
+                    workspace_id=workspace_id,
+                )
+                return
 
             # Extract final result
             final_text = final_output if final_output else ""

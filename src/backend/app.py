@@ -48,6 +48,14 @@ async def lifespan(app: FastAPI):
             logger.warning(f"GeneratedFileStore cleanup warning (non-fatal): {gfs_e}")
 
         try:
+            from common.services.chat_cosmos_service import aclose_chat_cosmos_service
+            from common.services.checkpoint_storage import close_checkpoint_storage
+
+            await aclose_chat_cosmos_service()
+            await close_checkpoint_storage()
+        except Exception as ckpt_e:
+            logger.warning(f"Checkpoint storage cleanup warning (non-fatal): {ckpt_e}")
+        try:
             await config.aclose_shared_resources()
             logger.info("✅ Shared async resources closed")
         except Exception as cfg_e:
