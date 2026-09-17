@@ -1,0 +1,242 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-007",
+  "domain": "canary",
+  "status": "open",
+  "invariant": {
+    "id": "INV-STORE-IDENTITY-PER-CALL",
+    "statement": "Toda consulta 'del usuario' al store de memoria corre con la identidad del llamador: la conexión Cosmos es única por proceso y user_id/tenant_id viajan por llamada (DatabaseBase.for_user); el singleton no lleva identidad."
+  },
+  "signature": {
+    "family": "semantic_contradiction",
+    "id": "SIG-reconciler-already-applied-while-plan-parked",
+    "structural_match": {
+      "trigger": "POST /api/v4/plan_approval (o /events) con identidad real distinta del primer llamador de la réplica",
+      "observed_log": "INFO v4.control.reconciler: Event plan_review:<request_id>: plan no longer parked; already applied",
+      "observed_state": "memory: plan con waiting_for.kind=plan_review y el mismo request_id; work_events: el evento en status=applied sin error; workflow_checkpoints: un solo checkpoint del linaje (ninguna reanudación)",
+      "precondition": "DatabaseFactory._instance creado por otro usuario (smoke app-only) en la misma réplica; CosmosDBClient captura user_id/tenant_id en __init__ y ningún llamador usa force_new",
+      "same_replica_app_only": "el mismo flujo con el usuario que creó el singleton se aplica (validación previa de la 125 con app-only)",
+      "guard_that_hides_the_same_signature": "CosmosDBClient.query_items devolvía [] ante cualquier excepción de Cosmos: un fallo de red también habría producido 'already applied'"
+    }
+  },
+  "env_fingerprint": {
+    "where": "canary_revision",
+    "env_names_present": [
+      "COSMOSDB_ENDPOINT",
+      "COSMOSDB_DATABASE",
+      "WORK_EVENTS_CONTAINER",
+      "APP_ENV"
+    ],
+    "credential_mode": "device_code",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed",
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "7f836863",
+      "dirty": true
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-17T06:55:00Z",
+      "executed_at": "2026-09-17T06:56:26Z",
+      "description": "hitl_canary_probe.py 0000125 con HITL_USER_DEVICE_CODE=1: Winston completó el device code (tenant de tokens f00a8e4f, scope <client_id>/user_impersonation por GUID). Sesión probe-hitl-fe94cbad y plan a1e2fd6f… del usuario d1f2b268… en Cosmos de producción (inventario en INC-2026-003). Flujo A: aparcado en plan_review en verde; approve 200; sin transición en 420 s."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T07:20:00Z",
+      "description": "Consola de la revisión (az containerapp logs show, formato json con TimeStamp): 06:56:24 checkpoint 5e40b6f6 y aparcado; 06:56:26.147 'Plan approval processed: True'; 06:56:26.240 'plan no longer parked; already applied'; ninguna línea 'Failed to query items'. Cosmos (lectura): plan con waiting_for intacto (kind plan_review, request_id b4ff1874), evento applied sin error, 1 checkpoint del linaje. Código: database_factory.get_database devuelve _instance sin mirar user_id; get_all_plans filtra por self.user_id; get_plan_by_plan_id no filtra por usuario (por eso el router sí encontró el plan)."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T07:20:47Z",
+      "description": "DatabaseBase.for_user (vista copy.copy con la identidad del llamador sobre la misma conexión); DatabaseFactory.get_database crea el singleton sin identidad y devuelve siempre la vista del llamador, force_new abre una conexión propia; CosmosDBClient.query_items propaga el fallo de Cosmos en vez de devolver []; auth_utils deja de registrar fragmentos del token OBO; la sonda lleva el flujo B por /api/v4/events y verifica tid/iss/aud/scp del token antes de llamar."
+    },
+    {
+      "stage": "validate",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T07:20:47Z",
+      "description": "test_database_factory.py reescrito contra CosmosDBClient real con CosmosClient parcheado en su namespace (6, incluida la firma de dos usuarios y la consulta con @user_id del llamador); test_cosmosdb afirma que el fallo se propaga; suite completa con -p module_identity_tracker; ruff, format y mypy."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": null,
+      "description": "Commit, PR y merge: click de Winston. CD crea la revisión siguiente a 0% de tráfico."
+    },
+    {
+      "stage": "monitor",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": null,
+      "description": "Repetir hitl_canary_probe.py <rev> con HITL_USER_DEVICE_CODE=1 (A por rutas de la UI, B por /events) tras un smoke app-only en la misma réplica, para que el singleton lo haya creado otro usuario; cierra el incidente en L6."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Con identidad real el approve queda 'applied' y el plan sigue aparcado en plan_review; con el usuario app-only el mismo flujo reanuda.",
+    "candidate_causes": [
+      "plan_approval procesa la aprobación antes de que entre el reconciliador y el plan deja de estar aparcado",
+      "Un fallo transitorio de Cosmos convertido en [] por query_items hace que find_parked_plan no encuentre el plan",
+      "DatabaseFactory es un singleton con el user_id del primer llamador: get_all_plans del reconciliador filtra por otro usuario"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "command_or_test": "az containerapp logs show -n ca-pslc25991vme66zmins -g arg-macaev4-8d1cceac --revision <rev> --type console --tail 400 --format json | grep -E 'no longer parked|Failed to query items'; consulta del plan en memory (waiting_for) y del evento en work_events (status); grep -n '_instance is None' src/backend/common/database/database_factory.py",
+      "cwd": ".",
+      "expected_signal_when_failing": "'no longer parked' con waiting_for intacto y sin 'Failed to query items' → la búsqueda corrió con otra identidad",
+      "expected_signal_when_healthy": "el evento pasa a applied sólo tras 'Resuming' y el plan cambia de waiting_for"
+    },
+    "confirmed_cause": {
+      "statement": "DatabaseFactory.get_database devolvía el mismo CosmosDBClient para cualquier user_id; la instancia capturó la identidad del primer llamador de la réplica (smoke app-only) y find_parked_plan → get_all_plans filtró por ese usuario. El reconciliador interpretó 'no encontrado' como 'ya aplicado' y marcó el evento applied sin transición.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "consola rev 125 06:56:26.240; memory plan a1e2fd6f… (waiting_for intacto); work_events plan_review:b4ff1874… applied; database_factory.py líneas 36-56 (HEAD)"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "plan_approval desaparca el plan antes de que entre el reconciliador",
+        "discarded_by": "El documento del plan conserva waiting_for.kind=plan_review y el mismo request_id; handle_plan_approval sólo escribe overall_status=approved y find_parked_plan no mira el status.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "Fallo transitorio de Cosmos convertido en lista vacía",
+        "discarded_by": "Ninguna línea 'Failed to query items from CosmosDB' en la consola entre la aprobación y 'no longer parked'.",
+        "side_effect_kept": "El guardián se retiró de todos modos: producía la misma firma falsa ante cualquier caída de Cosmos."
+      }
+    ]
+  },
+  "lanes_not_covered": [
+    "Validación con identidad real de los flujos A y B en una revisión con la corrección: pendiente de la revisión siguiente (L6).",
+    "Un documento de plan que no valide contra el modelo se omite con warning en query_items y produciría también 'no longer parked'; no cubierto por esta entrada."
+  ],
+  "residual_risk": [
+    "El reconciliador sigue tratando 'plan no encontrado' como 'ya aplicado' (correcto tras un reinicio entre la reanudación y mark); cualquier otra causa de 'no encontrado' produce la misma marca. La identidad y la propagación del fallo cierran las dos causas conocidas."
+  ],
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "7f836863",
+      "commit_or_pr": "pendiente: árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/common/database/database_base.py",
+      "src/backend/common/database/database_factory.py",
+      "src/backend/common/database/cosmosdb.py",
+      "src/backend/auth/auth_utils.py",
+      "src/tests/backend/common/database/test_database_factory.py",
+      "src/tests/backend/common/database/test_cosmosdb.py",
+      "docs/incidents/probes/hitl_canary_probe.py"
+    ],
+    "new_functions_introduced": [
+      "DatabaseBase.for_user"
+    ],
+    "justification_if_new_functions": "La identidad por llamada necesita una vista sobre la conexión compartida; ningún método existente separa conexión de identidad (CosmosDBClient las captura juntas en __init__)."
+  },
+  "validate": {
+    "closing_layer": "L3",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "test_database_factory.py: 6 passed (dos usuarios comparten conexión y conservan identidad; get_all_plans manda @user_id del llamador; force_new independiente; close_all una vez; error de inicialización propagado)."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "Suite completa del backend: 953 passed, 4 skipped, 42 subtests, exit 0 (2026-09-17)."
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Misma invocación que test.yml con -p module_identity_tracker: 0 MODTRACK, exit 0."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "ruff check, ruff format --check y mypy en verde (75 archivos)."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin red por diseño."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin UI."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "La revisión 125 no lleva la corrección; se repite la sonda con identidad real en la revisión siguiente."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "Sin promoción: la 125 no es válida para más de un usuario."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Control negativo local, misma huella que la validación: el test antiguo test_multiple_get_database_calls_return_same_instance afirmaba result1 is result2 para user1/user2 (el defecto codificado en la suite) y los tests nuevos de dos usuarios fallan contra esa fábrica; en la revisión 125 la firma se reprodujo con identidad real tras un smoke app-only en la misma réplica."
+    }
+  },
+  "learn": {
+    "retrieval_keys": [
+      "plan no longer parked already applied",
+      "DatabaseFactory singleton user_id first caller",
+      "get_all_plans wrong user",
+      "approve applied without resume",
+      "query_items returns empty on exception",
+      "EasyAuth AllowAnonymous token other tenant 500 no principal",
+      "AADSTS90009 api:// self token GUID scope"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": "src/backend",
+      "command_or_test": "PYTHONPATH=$PWD/../..:$PWD uv run python -m pytest ../../src/tests/backend/common/database/test_database_factory.py -q",
+      "expected_signal_when_failing": "test_second_user_shares_the_connection_and_keeps_its_own_identity o test_user_queries_carry_the_callers_identity en rojo",
+      "expected_signal_when_healthy": "6 passed"
+    },
+    "last_verified": "2026-09-17T07:20:47Z",
+    "expires_if_not_reverified_by": "2026-12-16T07:20:47Z",
+    "operational": true
+  }
+}

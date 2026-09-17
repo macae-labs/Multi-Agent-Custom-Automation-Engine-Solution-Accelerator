@@ -107,9 +107,7 @@ def get_authenticated_user_details(request_headers):
         _tok = _dev_acquire_user_token()
         user_object["access_token"] = _tok
     if _tok:
-        logging.info(
-            "OBO token present: %s...%s (len=%d)", _tok[:20], _tok[-10:], len(_tok)
-        )
+        logging.info("OBO token present (len=%d)", len(_tok))
     else:
         logging.info(
             "OBO token: None (no Bearer header, EasyAuth token, or dev CLI token)"

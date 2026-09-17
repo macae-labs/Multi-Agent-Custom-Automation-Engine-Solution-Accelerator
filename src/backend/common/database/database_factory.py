@@ -21,19 +21,15 @@ class DatabaseFactory:
         tenant_id: str = "",
         force_new: bool = False,
     ) -> DatabaseBase:
+        """Store del llamador: una conexión por proceso, identidad por llamada.
+
+        La conexión (cliente, base, contenedor) es única y la cierra
+        ``close_all``; cada llamada recibe una vista con su ``user_id`` y
+        ``tenant_id``. El singleton anterior conservaba la identidad del primer
+        llamador del proceso y las consultas "del usuario" de cualquier otro
+        usuario leían los datos de aquél (INC-2026-007). ``force_new`` abre una
+        conexión propia, fuera del singleton.
         """
-        Get a database instance.
-
-        Args:
-            user_id: User ID for data isolation
-            tenant_id: Tenant ID for multi-tenant isolation
-            force_new: Force creation of new instance
-
-        Returns:
-            DatabaseBase: Database instance
-        """
-
-        # Create new instance if forced or if singleton doesn't exist
         if force_new or DatabaseFactory._instance is None:
             cosmos_db_client = CosmosDBClient(
                 endpoint=config.COSMOSDB_ENDPOINT,
@@ -44,18 +40,14 @@ class DatabaseFactory:
                 database_name=config.COSMOSDB_DATABASE,
                 container_name=config.COSMOSDB_CONTAINER,
                 session_id="",
-                user_id=user_id,
-                tenant_id=tenant_id,
+                user_id=user_id if force_new else "",
+                tenant_id=tenant_id if force_new else "",
             )
-
             await cosmos_db_client.initialize()
-
-            if not force_new:
-                DatabaseFactory._instance = cosmos_db_client
-
-            return cosmos_db_client
-
-        return DatabaseFactory._instance
+            if force_new:
+                return cosmos_db_client
+            DatabaseFactory._instance = cosmos_db_client
+        return DatabaseFactory._instance.for_user(user_id, tenant_id)
 
     @staticmethod
     async def close_all():

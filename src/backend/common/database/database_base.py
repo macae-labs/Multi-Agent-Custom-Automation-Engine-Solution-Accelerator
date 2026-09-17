@@ -1,5 +1,6 @@
 """Database base class for managing database operations."""
 
+import copy
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
@@ -20,6 +21,20 @@ _T = TypeVar("_T", bound="BaseDataModel")
 
 class DatabaseBase(ABC):
     """Abstract base class for database operations."""
+
+    user_id: str = ""
+    tenant_id: str = ""
+
+    def for_user(self, user_id: str, tenant_id: str = "") -> "DatabaseBase":
+        """Vista con la identidad del llamador sobre la misma conexión.
+
+        Las consultas "del usuario" filtran por ``self.user_id``; la conexión
+        (cliente, base, contenedor) se comparte y la cierra quien la abrió.
+        """
+        view = copy.copy(self)
+        view.user_id = user_id
+        view.tenant_id = tenant_id
+        return view
 
     @abstractmethod
     async def initialize(self) -> None:

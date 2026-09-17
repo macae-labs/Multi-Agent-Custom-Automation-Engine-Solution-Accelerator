@@ -96,6 +96,13 @@ class AppConfig:
         self.COSMOSDB_MCP_CONNECTIONS_CONTAINER = self._get_optional(
             "COSMOSDB_MCP_CONNECTIONS_CONTAINER", "mcp_connections"
         )
+        # Eventos del reconciliador: UN contenedor por entorno. El lease es
+        # global por contenedor, así que un backend de desarrollo que comparta
+        # `work_events` con producción entregaría sus planes al loop de
+        # producción. El .env local apunta a `work_events_dev`.
+        self.WORK_EVENTS_CONTAINER = self._get_optional(
+            "WORK_EVENTS_CONTAINER", "work_events"
+        )
 
         self.APPLICATIONINSIGHTS_CONNECTION_STRING = self._get_required(
             "APPLICATIONINSIGHTS_CONNECTION_STRING"
