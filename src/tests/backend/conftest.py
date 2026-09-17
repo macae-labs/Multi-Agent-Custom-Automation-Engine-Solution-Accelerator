@@ -192,30 +192,80 @@ def mock_azure_services():
 
 
 class FakeCosmosContainer:
-    """Doble en memoria de la superficie de ContainerProxy que usan los
-    servicios sobre Cosmos (upsert/delete/query por parámetros)."""
+    """Doble en memoria de la superficie de ContainerProxy (aio) que usan los
+    servicios sobre Cosmos, con la semántica del SDK que importa al plano de
+    control: ``create_item`` con id repetido → CosmosResourceExistsError (409);
+    ``replace_item``/``upsert_item`` con ``etag`` y ``MatchConditions.IfNotModified``
+    sobre un etag viejo → CosmosAccessConditionFailedError (412); ``read_item``
+    inexistente → CosmosResourceNotFoundError (404); cada escritura cambia
+    ``_etag``. La partición es la ruta ``partition_path`` (por defecto
+    ``workflow_name``, la del contenedor de checkpoints)."""
 
-    def __init__(self) -> None:
+    def __init__(self, partition_path: str = "workflow_name") -> None:
         self.docs: dict = {}
+        self.partition_path = partition_path
+        self._version = 0
 
-    async def upsert_item(self, body):
-        self.docs[body["id"]] = dict(body)
-        return body
+    def _stamp(self, body):
+        self._version += 1
+        doc = dict(body)
+        doc["_etag"] = f'"{self._version}"'
+        doc["_ts"] = self._version
+        self.docs[doc["id"]] = doc
+        return dict(doc)
 
-    async def delete_item(self, item, partition_key):
-        assert self.docs[item]["workflow_name"] == partition_key
+    def _check_etag(self, item_id, etag, match_condition):
+        from azure.core import MatchConditions
+        from azure.cosmos import exceptions
+
+        if match_condition is None or etag is None:
+            return
+        current = self.docs.get(item_id, {}).get("_etag")
+        if match_condition == MatchConditions.IfNotModified and current != etag:
+            raise exceptions.CosmosAccessConditionFailedError(status_code=412, message="etag mismatch")
+
+    async def create_item(self, body, **kwargs):
+        from azure.cosmos import exceptions
+
+        if body["id"] in self.docs:
+            raise exceptions.CosmosResourceExistsError(status_code=409, message="conflict")
+        return self._stamp(body)
+
+    async def upsert_item(self, body, *, etag=None, match_condition=None, **kwargs):
+        self._check_etag(body["id"], etag, match_condition)
+        return self._stamp(body)
+
+    async def replace_item(self, item, body, *, etag=None, match_condition=None, **kwargs):
+        from azure.cosmos import exceptions
+
+        item_id = item if isinstance(item, str) else item["id"]
+        if item_id not in self.docs:
+            raise exceptions.CosmosResourceNotFoundError(status_code=404, message="not found")
+        self._check_etag(item_id, etag, match_condition)
+        return self._stamp(body)
+
+    async def read_item(self, item, partition_key, **kwargs):
+        from azure.cosmos import exceptions
+
+        doc = self.docs.get(item)
+        if doc is None or doc.get(self.partition_path) != partition_key:
+            raise exceptions.CosmosResourceNotFoundError(status_code=404, message="not found")
+        return dict(doc)
+
+    async def delete_item(self, item, partition_key, **kwargs):
+        assert self.docs[item][self.partition_path] == partition_key
         del self.docs[item]
 
-    def query_items(self, query, parameters=None, partition_key=None):
+    def query_items(self, query, parameters=None, partition_key=None, **kwargs):
         params = {p["name"]: p["value"] for p in parameters or []}
 
         async def _gen():
             for doc in list(self.docs.values()):
-                if "@id" in params and doc["id"] != params["@id"]:
+                if partition_key is not None and doc.get(self.partition_path) != partition_key:
                     continue
-                if "@workflow_name" in params and doc["workflow_name"] != params["@workflow_name"]:
+                if any(k != "@" + self.partition_path and doc.get(k[1:]) != v for k, v in params.items() if k.startswith("@")):
                     continue
-                yield {**doc, "_rid": "rid", "_etag": "etag", "_ts": 1}
+                yield dict(doc)
 
         return _gen()
 
@@ -223,3 +273,9 @@ class FakeCosmosContainer:
 @pytest.fixture
 def fake_cosmos_container():
     return FakeCosmosContainer()
+
+
+@pytest.fixture
+def fake_cosmos_container_factory():
+    """Contenedores falsos con otra ruta de partición (eventos, lease)."""
+    return FakeCosmosContainer
