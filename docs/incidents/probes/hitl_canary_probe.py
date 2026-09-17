@@ -227,7 +227,7 @@ async def run(rev: str, team_id: str | None):
 
         # ── A: approve → clarificaciones → terminal (o continuar un plan ya aparcado: RESUME_PLAN_A)
         plan_id = os.environ.get("RESUME_PLAN_A") or (await new_plan("A"))[1]
-        doc = await wait_for(cos, plan_id, lambda d: parked("plan_review")(d) or parked("clarification")(d) or terminal(d), "A aparcado")
+        doc = await wait_for(cos, plan_id, lambda d: parked("plan_review")(d) or parked("clarification")(d) or terminal(d), "A aparcado o terminal")
         rid_review = None
         if parked("plan_review")(doc):
             wf = doc["waiting_for"]
