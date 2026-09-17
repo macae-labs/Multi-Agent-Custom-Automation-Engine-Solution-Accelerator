@@ -206,26 +206,42 @@ async def run(rev: str, team_id: str | None):
             created.append((session_id, plan_id))
             return session_id, plan_id
 
-        # ── A: approve → clarification → terminal (o continuar un plan ya aparcado: RESUME_PLAN_A)
+        async def answer_until_terminal(label, plan_id, first_rid=None):
+            """Responde clarificaciones en bucle hasta el terminal: con modelo real el
+            número de preguntas no es determinista (medido en la 126: dos seguidas)."""
+            answers = ["El tercer trimestre de 2026", "Listo para el tercer trimestre de 2026"]
+            rids, last = [], first_rid
+            for i in range(6):
+                doc = await wait_for(cos, plan_id, lambda d, last=last: terminal(d) or parked_other_than("clarification", last)(d), f"{label} clarification o terminal")
+                if terminal(doc):
+                    return doc, rids
+                wf2 = doc["waiting_for"]
+                check(f"{label} pregunta del ProxyAgent #{i + 1}", bool(wf2.get("question")), f"pregunta={str(wf2.get('question'))[:70]!r}")
+                if label == "A":
+                    st, body = api.call("POST", "/api/v4/user_clarification", {"request_id": wf2["request_id"], "answer": answers[min(i, 1)], "plan_id": plan_id})
+                else:
+                    st, body = api.call("POST", "/api/v4/events", {"kind": "clarification", "request_id": wf2["request_id"], "payload": {"answer": answers[min(i, 1)]}})
+                check(f"{label} clarification #{i + 1} {'user_clarification' if label == 'A' else '/events'}", st == 200, f"http={st} {body}")
+                rids.append(wf2["request_id"]); last = wf2["request_id"]
+            raise RuntimeError(f"{label}: más de 6 clarificaciones seguidas")
+
+        # ── A: approve → clarificaciones → terminal (o continuar un plan ya aparcado: RESUME_PLAN_A)
         plan_id = os.environ.get("RESUME_PLAN_A") or (await new_plan("A"))[1]
-        doc = await wait_for(cos, plan_id, parked("plan_review"), "A aparcado en plan_review")
-        wf = doc["waiting_for"]
-        check("A waiting_for.plan_review", bool(wf.get("request_id") and wf.get("checkpoint_id") and wf.get("m_plan_id")),
-              f"request_id={wf.get('request_id', '')[:8]}… names={doc.get('workflow_names')}")
-        st, body = api.call("POST", "/api/v4/plan_approval", {"m_plan_id": wf["m_plan_id"], "plan_id": plan_id, "decision": "approve", "feedback": "ok"})
-        check("A plan_approval approve", st == 200, f"http={st} {body}")
-        rid_review = wf["request_id"]
-        doc = await wait_for(cos, plan_id, parked("clarification"), "A aparcado en clarification")
-        wf2 = doc["waiting_for"]
-        check("A pregunta del ProxyAgent", bool(wf2.get("question")), f"pregunta={str(wf2.get('question'))[:70]!r}")
-        st, body = api.call("POST", "/api/v4/user_clarification", {"request_id": wf2["request_id"], "answer": "El tercer trimestre de 2026", "plan_id": plan_id})
-        check("A user_clarification", st == 200, f"http={st} {body}")
-        doc = await wait_for(cos, plan_id, terminal, "A terminal")
+        doc = await wait_for(cos, plan_id, lambda d: parked("plan_review")(d) or parked("clarification")(d) or terminal(d), "A aparcado")
+        rid_review = None
+        if parked("plan_review")(doc):
+            wf = doc["waiting_for"]
+            check("A waiting_for.plan_review", bool(wf.get("request_id") and wf.get("checkpoint_id") and wf.get("m_plan_id")),
+                  f"request_id={wf.get('request_id', '')[:8]}… names={doc.get('workflow_names')}")
+            st, body = api.call("POST", "/api/v4/plan_approval", {"m_plan_id": wf["m_plan_id"], "plan_id": plan_id, "decision": "approve", "feedback": "ok"})
+            check("A plan_approval approve", st == 200, f"http={st} {body}")
+            rid_review = wf["request_id"]
+        doc, rids_a = await answer_until_terminal("A", plan_id)
         check("A terminal completed", doc.get("overall_status") == "completed", f"status={doc.get('overall_status')} waiting_for={doc.get('waiting_for')}")
-        ev1, ev2 = await cos.event("plan_review", rid_review), await cos.event("clarification", wf2["request_id"])
-        check("A eventos aplicados", bool(ev1 and ev2 and ev1["status"] == "applied" and ev2["status"] == "applied"),
-              f"plan_review={ev1 and ev1['status']} clarification={ev2 and ev2['status']}")
-        check("A sin token en los eventos", all("user_access_token" not in json.dumps(e.get("payload", {})) for e in (ev1, ev2) if e))
+        events = ([await cos.event("plan_review", rid_review)] if rid_review else []) + [await cos.event("clarification", r) for r in rids_a]
+        check("A eventos aplicados", bool(events) and all(e and e["status"] == "applied" for e in events),
+              f"{[(e and e['status']) for e in events]}")
+        check("A sin token en los eventos", all("user_access_token" not in json.dumps(e.get("payload", {})) for e in events if e))
         names = doc.get("workflow_names") or []
         check("A checkpoints del linaje purgados", len(names) >= 2 and await cos.checkpoints(names) == 0, f"segmentos={len(names)}")
 
@@ -241,10 +257,7 @@ async def run(rev: str, team_id: str | None):
         check("B petición nueva", wfb2["request_id"] != wfb["request_id"] and wfb2.get("m_plan_id") != wfb.get("m_plan_id"), f"is_stalled={wfb2.get('is_stalled')}")
         st, body = api.call("POST", "/api/v4/events", {"kind": "plan_review", "request_id": wfb2["request_id"], "payload": {"decision": "approve"}})
         check("B /events approve del plan revisado", st == 200 and body.get("status") == "recorded", f"http={st} {body}")
-        doc = await wait_for(cos, plan_b, lambda d: terminal(d) or parked("clarification")(d), "B clarification o terminal")
-        if parked("clarification")(doc):
-            api.call("POST", "/api/v4/events", {"kind": "clarification", "request_id": doc["waiting_for"]["request_id"], "payload": {"answer": "Q3 2026"}})
-            doc = await wait_for(cos, plan_b, terminal, "B terminal")
+        doc, _ = await answer_until_terminal("B", plan_b)
         check("B terminal completed", doc.get("overall_status") == "completed", f"status={doc.get('overall_status')}")
         evr = await cos.event("plan_review", wfb["request_id"])
         check("B evento revise aplicado", bool(evr and evr["status"] == "applied"), f"{evr and evr['status']}")
