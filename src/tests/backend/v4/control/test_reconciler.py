@@ -101,7 +101,8 @@ async def test_one_event_one_transition_and_duplicate_does_nothing(events, manag
     rec = Reconciler(store=events)
     first_append = await events.append("clarification", "req-1", {"user_id": USER, "answer": "sí"})
     assert not first_append.duplicate
-    assert (await events.append("clarification", "req-1", {"user_id": USER, "answer": "otra"})).duplicate
+    second_append = await events.append("clarification", "req-1", {"user_id": USER, "answer": "otra"})
+    assert second_append.duplicate
 
     assert await rec.run_once() == 1
     manager.mock.resume_orchestration.assert_awaited_once()
