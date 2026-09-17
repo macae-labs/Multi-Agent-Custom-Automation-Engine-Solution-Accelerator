@@ -179,11 +179,10 @@ class MockAgentMessageResponse:
     streaming_message: str = ""
 
 
-def _approval(plan_id=None, m_plan_id="", approved=True, feedback=None, decision=None):
+def _approval(plan_id=None, m_plan_id="", decision="approve", feedback=None):
     """El modelo real del contrato (dataclass), no un doble: lo que valida el router."""
     return real_messages.PlanApprovalResponse(
         m_plan_id=m_plan_id,
-        approved=approved,
         feedback=feedback,
         plan_id=plan_id,
         decision=decision,
@@ -328,7 +327,7 @@ class TestPlanService:
         mock_approval = _approval(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
-            approved=True,
+            decision="approve",
             feedback="Looks good!",
         )
         mock_plan = MagicMock()
@@ -360,7 +359,7 @@ class TestPlanService:
         mock_approval = _approval(
             plan_id="test-plan-123",
             m_plan_id="test-m-plan-456",
-            approved=False,
+            decision="reject",
             feedback="Need changes",
         )
         mock_plan = MagicMock()
@@ -380,7 +379,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_handle_plan_approval_requires_plan_id(self):
         """Without plan_id there is no persisted Plan to record the decision on."""
-        mock_approval = _approval(plan_id=None, approved=True)
+        mock_approval = _approval(plan_id=None, decision="approve")
         mock_db = MagicMock()
         mock_db.get_plan_by_plan_id = AsyncMock(return_value=MagicMock())
         mock_db.update_plan = AsyncMock()
@@ -397,7 +396,7 @@ class TestPlanService:
     async def test_handle_plan_approval_plan_not_found(self):
         """Test when plan is not found in memory store."""
         mock_approval = _approval(
-            plan_id="missing-plan", m_plan_id="test-m-plan", approved=True
+            plan_id="missing-plan", m_plan_id="test-m-plan", decision="approve"
         )
         mock_db = MagicMock()
         mock_db.get_plan_by_plan_id = AsyncMock(return_value=None)
@@ -414,7 +413,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_handle_plan_approval_exception(self):
         """Store failures are swallowed into False, never raised to the router."""
-        mock_approval = _approval(plan_id="plan-1", approved=True)
+        mock_approval = _approval(plan_id="plan-1", decision="approve")
         mock_database_factory.DatabaseFactory.get_database = AsyncMock(
             side_effect=RuntimeError("cosmos down")
         )
@@ -532,7 +531,7 @@ class TestPlanService:
     @pytest.mark.asyncio
     async def test_static_method_properties(self):
         """Test that all PlanService methods are static."""
-        mock_approval = _approval(plan_id=None, approved=False)
+        mock_approval = _approval(plan_id=None, decision="reject")
         result = await PlanService.handle_plan_approval(mock_approval, "user")
         assert result is False
     def test_event_tracking_calls(self):
@@ -569,7 +568,7 @@ class TestPlanService:
         approval = _approval(
             plan_id="plan-123",
             m_plan_id="m-plan-123",
-            approved=True,
+            decision="approve",
             feedback="Approved",
         )
 
@@ -617,7 +616,7 @@ class TestPlanService:
         malformed_inputs = [
             MockUserClarificationResponse(plan_id=None, answer=None),
             MockAgentMessageResponse(plan_id="", content="", steps=[]),
-            _approval(approved=True, plan_id=""),
+            _approval(decision="approve", plan_id=""),
         ]
 
         for input_obj in malformed_inputs:

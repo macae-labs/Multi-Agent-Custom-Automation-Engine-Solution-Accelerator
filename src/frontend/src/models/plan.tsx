@@ -274,8 +274,6 @@ export interface PlanApprovalRequest {
     plan_id: string;
     /** Explicit discriminator. `revise` requires non-empty `feedback`. */
     decision: PlanDecision;
-    /** Legacy boolean kept in sync with `decision` (approve => true). */
-    approved: boolean;
     feedback?: string;
 }
 

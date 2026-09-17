@@ -87,14 +87,6 @@ ORCHESTRATOR_PROGRESS_LEDGER_PROMPT = "Progress ledger prompt"
 # Mock v4.models.messages
 
 
-class MockPlanApprovalResponse:
-    """Mock PlanApprovalResponse."""
-
-    def __init__(self, approved=True, m_plan_id=None):
-        self.approved = approved
-        self.m_plan_id = m_plan_id
-
-
 # Mock v4.config.settings
 mock_connection_config = Mock()
 mock_connection_config.send_status_update_async = AsyncMock()
