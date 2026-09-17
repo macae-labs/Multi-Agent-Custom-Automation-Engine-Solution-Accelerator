@@ -71,7 +71,8 @@ def token(local=False, probe_user="probe-turnlog-user"):
     }).encode()
     t = json.load(urllib.request.urlopen(urllib.request.Request(
         f"https://login.microsoftonline.com/{TEN}/oauth2/v2.0/token", data=body)))["access_token"]
-    oid = json.loads(base64.urlsafe_b64decode((lambda s: s + "=" * (-len(s) % 4))(t.split(".")[1])))["oid"]
+    oid = json.loads(base64.urlsafe_b64decode(
+        (lambda s: s + "=" * (-len(s) % 4))(t.split(".")[1])))["oid"]
     return t, oid
 
 
@@ -135,7 +136,8 @@ def main(argv):
 
     def check(stage, desc, ok, detail=""):
         results.append(ok)
-        print(f"{'PASS' if ok else 'FAIL'}  {stage}  {desc}" + (f"  [{detail}]" if detail else ""))
+        print(f"{'PASS' if ok else 'FAIL'}  {stage}  {desc}"
+              + (f"  [{detail}]" if detail else ""))
 
     tok, oid = token(cfg["local"], cfg["probe_user"])
     sid = f"probe-turnlog-{uuid.uuid4().hex[:8]}"
@@ -163,6 +165,7 @@ def main(argv):
           )
           and "[turn-log]" not in r2["text"] and (real and real in r2["text"])
           and not r2["errors"],
+          f"tools={len(r2['tools'])} errors={r2['errors']} ms={r2['ms']} text={r2['text'][:120]!r}")
 
     r3 = sse(cfg, tok, sid, "Sin consultar nada nuevo: ¿qué SHA corto me diste en tu respuesta anterior? Solo el SHA.")
     low3 = r3["text"].lower()
@@ -180,7 +183,8 @@ def main(argv):
                    and (m.get("metadata") or {}).get("turn_log")]
     first = with_ledger[0]["metadata"]["turn_log"][0] if with_ledger else None
     check("S4", "Cosmos: ningún content de assistant con [turn-log]; el turno con tool trae metadata.turn_log",
-          status == 200 and len(assistants) >= 3 and no_marker and len(with_ledger) >= 1,
+          status == 200 and len(
+              assistants) >= 3 and no_marker and len(with_ledger) >= 1,
           f"http={status} msgs={len(msgs)} assistants={len(assistants)} con_ledger={len(with_ledger)} "
           f"deed0={(json.dumps(first, ensure_ascii=False)[:90] + '…') if first else None}")
 
