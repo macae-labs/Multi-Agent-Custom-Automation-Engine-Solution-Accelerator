@@ -2,7 +2,7 @@
   "schema_version": "1",
   "incident_id": "INC-2026-007",
   "domain": "canary",
-  "status": "open",
+  "status": "closed",
   "invariant": {
     "id": "INV-STORE-IDENTITY-PER-CALL",
     "statement": "Toda consulta 'del usuario' al store de memoria corre con la identidad del llamador: la conexión Cosmos es única por proceso y user_id/tenant_id viajan por llamada (DatabaseBase.for_user); el singleton no lleva identidad."
@@ -103,6 +103,16 @@
       "human_approved_at": null,
       "executed_at": null,
       "description": "Repetir hitl_canary_probe.py <rev> con HITL_USER_DEVICE_CODE=1 (A por rutas de la UI, B por /events) tras un smoke app-only en la misma réplica, para que el singleton lo haya creado otro usuario; cierra el incidente en L6."
+    },
+    {
+      "stage": "monitor",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-17T09:21:00Z",
+      "executed_at": "2026-09-17T09:35:36Z",
+      "description": "Sonda con identidad real (device code completado por Winston) contra la 126 con la 125 desactivada: 22/22. Sesiones y planes en el inventario de INC-2026-003."
     }
   ],
   "probe_budget": {
@@ -143,8 +153,7 @@
     ]
   },
   "lanes_not_covered": [
-    "Validación con identidad real de los flujos A y B en una revisión con la corrección: pendiente de la revisión siguiente (L6).",
-    "Un documento de plan que no valide contra el modelo se omite con warning en query_items y produciría también 'no longer parked'; no cubierto por esta entrada."
+    "La regla de una sola revisión activa con reconciliador por contenedor (INC-2026-008) es precondición de esta validación."
   ],
   "residual_risk": [
     "El reconciliador sigue tratando 'plan no encontrado' como 'ya aplicado' (correcto tras un reinicio entre la reanudación y mark); cualquier otra causa de 'no encontrado' produce la misma marca. La identidad y la propagación del fallo cierran las dos causas conocidas."
@@ -171,7 +180,7 @@
     "justification_if_new_functions": "La identidad por llamada necesita una vista sobre la conexión compartida; ningún método existente separa conexión de identidad (CosmosDBClient las captura juntas en __init__)."
   },
   "validate": {
-    "closing_layer": "L3",
+    "closing_layer": "L6",
     "layers": {
       "L0": {
         "result": "pass",
@@ -198,12 +207,12 @@
         "observed": "Sin UI."
       },
       "L6": {
-        "result": "n/a",
-        "observed": "La revisión 125 no lleva la corrección; se repite la sonda con identidad real en la revisión siguiente."
+        "result": "pass",
+        "observed": "Revisión 126 (imagen sha-ccfc26aa, merge #219) con la 125 desactivada y smoke app-only previo en la misma réplica (singleton creado por otro usuario): consola de la 126 tras 'POST /api/v4/plan_approval 200' → 'Starting orchestration job … for user d1f2b268…', 'Successfully restored workflow from checkpoint', supersteps 2-6, aparcado en clarification y reanudaciones; hitl_canary_probe.py 22/22 (A por rutas de la UI reanudando el plan 3739e9eb… con dos clarificaciones hasta completed, eventos applied sin token, linaje purgado; B por /api/v4/events: revise → replan → approve → clarification → completed, evento revise applied, checkpoints purgados)."
       },
       "L7": {
         "result": "n/a",
-        "observed": "Sin promoción: la 125 no es válida para más de un usuario."
+        "observed": "Promoción de tráfico a la 126: click de Winston tras esta validación."
       }
     }
   },
@@ -235,7 +244,7 @@
       "expected_signal_when_failing": "test_second_user_shares_the_connection_and_keeps_its_own_identity o test_user_queries_carry_the_callers_identity en rojo",
       "expected_signal_when_healthy": "6 passed"
     },
-    "last_verified": "2026-09-17T07:20:47Z",
+    "last_verified": "2026-09-17T09:35:36Z",
     "expires_if_not_reverified_by": "2026-12-16T07:20:47Z",
     "operational": true
   }

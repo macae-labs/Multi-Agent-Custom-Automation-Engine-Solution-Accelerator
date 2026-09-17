@@ -1,0 +1,188 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-008",
+  "domain": "canary",
+  "status": "open",
+  "invariant": {
+    "id": "INV-ONE-RECONCILER-REVISION-PER-CONTAINER",
+    "statement": "Por cada contenedor work_events hay exactamente una revisión ACTIVA (con réplica, sin importar el peso de tráfico) cuya imagen lleva el reconciliador: el lease no distingue revisiones, así que una revisión antigua activa procesa, con su código, los eventos que la nueva escribe. Tráfico 0 no es revisión desactivada."
+  },
+  "signature": {
+    "family": "stale_state",
+    "id": "SIG-old-revision-consumes-new-revision-events-via-shared-lease",
+    "structural_match": {
+      "trigger": "Canary de la revisión N+1 con la revisión N (también con reconciliador) activa a 0% de tráfico",
+      "observed_new_revision": "consola de la 126: tras 'POST /api/v4/plan_approval 200' ninguna línea del reconciliador ni de reanudación",
+      "observed_old_revision": "consola de la 125 a las 08:54:16.667: 'Event plan_review:8a027fed…: plan no longer parked; already applied' (código sin la corrección de INC-2026-007)",
+      "lease": "work_events id=reconciler pk=lease holder=<uuid sin revisión>, renovado cada 5 s con TTL 30 s por la 125 desde su arranque; la 126 nunca lo adquiere",
+      "consequence": "el evento queda applied sin transición y su identidad (kind:request_id) impide reintentarlo: el plan cda62aef… queda aparcado sin salida por evento"
+    }
+  },
+  "env_fingerprint": {
+    "where": "canary_revision",
+    "env_names_present": [
+      "COSMOSDB_ENDPOINT",
+      "WORK_EVENTS_CONTAINER",
+      "CONTAINER_APP_REVISION"
+    ],
+    "credential_mode": "device_code",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed",
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "ccfc26aa",
+      "dirty": false
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-17T08:53:00Z",
+      "executed_at": "2026-09-17T08:54:16Z",
+      "description": "hitl_canary_probe.py 0000126 con identidad real (device code completado por Winston) tras smoke app-only en la misma réplica: aparcado en plan_review en verde; approve 200; sin transición en 420 s. Sesión probe-hitl-a25c8610 y plan cda62aef… en Cosmos de producción (inventario en INC-2026-003)."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T09:05:18Z",
+      "description": "Consola de la 126 (json con TimeStamp): última línea 08:54:16.273 POST plan_approval 200, nada del reconciliador. Consola de la 125: 08:54:16.667 'no longer parked; already applied' para el mismo request_id. work_events: lease holder uuid sin revisión, age 2 s (renovado). Réplica de la 126 sin reinicios. new_holder_id() = uuid4().hex."
+    },
+    {
+      "stage": "propose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T09:05:18Z",
+      "description": "Regla operativa: antes de validar una revisión con reconciliador, desactivar toda otra revisión activa con reconciliador sobre el mismo contenedor (az containerapp revision deactivate); tras promover, desactivar la anterior. Cambio de código pendiente: holder del lease con CONTAINER_APP_REVISION como prefijo para que el documento diga quién lo tiene."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_traffic",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-17T09:10:00Z",
+      "executed_at": "2026-09-17T09:10:30Z",
+      "description": "Winston desactivó la revisión 125 (az containerapp revision deactivate → 'Deactivate succeeded'); la réplica desapareció (RevisionNotFound) y el holder del lease cambió a la 126. Sonda ejecutable = 1."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "En la 126, con la corrección de INC-2026-007 desplegada, el approve con identidad real vuelve a quedar applied sin transición.",
+    "candidate_causes": [
+      "La corrección de INC-2026-007 no cierra la causa",
+      "La corrida reanudada con agentes reales tarda más de 420 s",
+      "Otra revisión activa con reconciliador tomó el lease y procesó el evento con el código viejo"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "command_or_test": "az containerapp logs show --revision <nueva> --type console --format json | grep -E 'Event |no longer|Resum'; az containerapp logs show --revision <vieja> … | grep 'no longer parked'; lectura del documento id=reconciler pk=lease en work_events; az containerapp revision list (active, traffic)",
+      "cwd": ".",
+      "expected_signal_when_failing": "la línea del reconciliador aparece en la revisión vieja y no en la nueva; varias revisiones activas con reconciliador",
+      "expected_signal_when_healthy": "una sola revisión activa con reconciliador; la línea de reanudación aparece en la revisión bajo validación"
+    },
+    "confirmed_cause": {
+      "statement": "El lease de work_events es por contenedor y ciego a la revisión. La 125 lo tenía desde su arranque y lo renueva; la 126 no lo adquiere nunca y su wake() en proceso no sirve. El evento escrito en la 126 lo aplicó la 125 con el singleton del primer llamador (INC-2026-007) y lo marcó applied.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "consola 125 08:54:16.667; consola 126 sin líneas posteriores; work_events lease holder uuid"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "La corrida reanudada tarda más de 420 s con agentes reales",
+        "discarded_by": "Un solo checkpoint del linaje y ningún documento nuevo en la sesión; la 126 no registró reanudación alguna.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "La corrección de INC-2026-007 no cierra la causa",
+        "discarded_by": "El código de la 126 nunca procesó el evento: no hay línea del reconciliador en su consola.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "lanes_not_covered": [
+    "Promoción a la 126 y desactivación de revisiones antiguas con reconciliador en canaries futuros: regla operativa hasta que el lease lleve una cerca de época por revisión."
+  ],
+  "residual_risk": [
+    "Cualquier canary futuro con dos revisiones con reconciliador reproduce la firma mientras el lease sea ciego a la revisión; la regla operativa depende de un click humano hasta que el holder lleve la revisión y el reconciliador la registre."
+  ],
+  "validate": {
+    "closing_layer": "L6",
+    "layers": {
+      "L0": {
+        "result": "n/a",
+        "observed": "Sin cambio de código en este ciclo."
+      },
+      "L1": {
+        "result": "n/a",
+        "observed": "Sin cambio de código."
+      },
+      "L2": {
+        "result": "n/a",
+        "observed": "Sin cambio de código."
+      },
+      "L3": {
+        "result": "n/a",
+        "observed": "Sin cambio de código."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin red por diseño."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin UI."
+      },
+      "L6": {
+        "result": "pass",
+        "observed": "Con una sola revisión activa con reconciliador (126), la sonda con identidad real terminó 22/22 y la actividad del reconciliador aparece en la consola de la 126 tras cada 200. Control negativo = la corrida anterior con la 125 activa (misma huella): evento applied por la 125, ninguna actividad en la 126."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "Sin promoción."
+      }
+    }
+  },
+  "learn": {
+    "retrieval_keys": [
+      "old revision consumes events",
+      "shared lease across revisions",
+      "reconciler lease holder uuid",
+      "canary two revisions reconciler",
+      "no longer parked in old revision console",
+      "event applied by other revision",
+      "traffic zero is not deactivated revision"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "az containerapp revision list -n ca-pslc25991vme66zmins -g arg-macaev4-8d1cceac --query \"[?properties.active && properties.replicas > `0`].properties.template.containers[0].image\" -o tsv | sed -E 's/.*:sha-//' | while read sha; do git merge-base --is-ancestor 89c8ff34 \"$sha\" 2>/dev/null && echo \"$sha\"; done | wc -l",
+      "expected_signal_when_failing": ">1 (varias revisiones activas con réplica cuya imagen desciende de #218, el commit que introdujo v4/control/reconciler.py)",
+      "expected_signal_when_healthy": "1"
+    },
+    "last_verified": "2026-09-17T09:35:36Z",
+    "expires_if_not_reverified_by": "2026-12-16T09:05:18Z",
+    "operational": true
+  }
+}
