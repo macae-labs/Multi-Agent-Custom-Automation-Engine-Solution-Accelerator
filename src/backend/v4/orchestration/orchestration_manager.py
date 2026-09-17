@@ -1178,7 +1178,12 @@ class OrchestrationManager:
                     is_final=True,
                 )
             if plan_id:
-                await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
+                try:
+                    await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
+                except Exception as cleanup_error:
+                    self.logger.warning(
+                        "Checkpoint cleanup failed for plan %s: %s", plan_id, cleanup_error
+                    )
 
             # ── Write Plan result back to chat session ────────────────────────
             # This closes the visibility gap: after Plan execution the chat
