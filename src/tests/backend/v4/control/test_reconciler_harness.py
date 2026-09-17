@@ -54,7 +54,8 @@ class ManagerClient(BaseChatClient):
 
 
 def _workflow(storage):
-    manager = StandardMagenticManager(agent=Agent(client=ManagerClient(), name="MagenticManager"), max_round_count=3)
+    manager = StandardMagenticManager(agent=Agent(
+        client=ManagerClient(), name="MagenticManager"), max_round_count=3)
     return MagenticBuilder(
         participants=[Agent(client=ManagerClient(), name="Worker")],
         manager=manager,
@@ -86,7 +87,8 @@ async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lin
     while current is not None:
         walked.append(current.checkpoint_id)
         current = await storage.load(current.previous_checkpoint_id) if current.previous_checkpoint_id else None
-    assert len(walked) < len(fake_cosmos_container.docs)  # caminar la cadena deja huérfanos
+    # caminar la cadena deja huérfanos
+    assert len(walked) < len(fake_cosmos_container.docs)
 
     # Regla de retención: el linaje de workflow_name (uno por segmento) borra todo.
     lineage = [first.name, second.name]
@@ -99,12 +101,18 @@ async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lin
 @pytest.mark.asyncio
 async def test_event_identity_makes_the_second_delivery_a_conflict(fake_cosmos_container_factory):
     events = fake_cosmos_container_factory(partition_path="pk")
-    event = {"id": "approval:req-1", "pk": "u1", "kind": "approval", "identity": "req-1", "status": "pending"}
+    # Identidad = causa: id = f"{kind}:{identity}", pk = kind (el id es único
+    # por partición, y la partición sale del evento, no de quién lo entrega).
+    # Literal hasta que exista EventStore.append; entonces el harness lo usa.
+    event = {"id": "plan_review:req-1", "pk": "plan_review", "kind": "plan_review",
+             "identity": "req-1", "payload": {"decision": "approve"}, "status": "pending"}
     await events.create_item(body=event)
     with pytest.raises(exceptions.CosmosResourceExistsError) as conflict:
-        await events.create_item(body=dict(event))
+        # otra decisión, misma causa: choca
+        await events.create_item(body={**event, "payload": {"decision": "reject"}})
     assert conflict.value.status_code == 409
-    assert [d["status"] for d in events.docs.values()] == ["pending"]  # una entrega registrada, una transición
+    # una entrega registrada, una transición
+    assert [d["status"] for d in events.docs.values()] == ["pending"]
 
 
 @pytest.mark.asyncio
