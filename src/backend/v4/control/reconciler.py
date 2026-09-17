@@ -186,7 +186,11 @@ class Reconciler:
                 # Esperado durante shutdown tras cancel(): no requiere acción.
                 pass
             except Exception as ex:
-                logger.warning("Reconciler task ended with error during stop: %s", ex, exc_info=True)
+                logger.warning(
+                    "Reconciler task ended with error during stop: %s",
+                    ex,
+                    exc_info=True,
+                )
             self._task = None
         try:
             await self.store.release_lease(self.holder)
