@@ -2,7 +2,6 @@ import { getApiUrl, getUserId } from '../api/config';
 import { PlanDataService } from './PlanDataService';
 import { ParsedPlanApprovalRequest, StreamingPlanUpdate, StreamMessage, WebsocketMessageType } from '../models';
 
-
 class WebSocketService {
     private ws: WebSocket | null = null;
     private reconnectAttempts = 0;
@@ -13,7 +12,6 @@ class WebSocketService {
     private reconnectTimer: NodeJS.Timeout | null = null;
     private isConnecting = false;
     private connectionPromise: Promise<void> | null = null;
-
 
     private buildSocketUrl(processId?: string, planId?: string): string {
         const baseWsUrl = getApiUrl() || 'ws://localhost:8000';
@@ -124,7 +122,6 @@ class WebSocketService {
         this.isConnecting = false;
         this.connectionPromise = null;
     }
-
 
     on(eventType: string, callback: (message: StreamMessage) => void): () => void {
         if (!this.listeners.has(eventType)) {
@@ -244,7 +241,6 @@ class WebSocketService {
                 break;
             }
 
-
             case WebsocketMessageType.AGENT_TOOL_MESSAGE: {
                 console.log("Message agent tool':", message);
                 if (message.data) {
@@ -313,33 +309,6 @@ class WebSocketService {
         }
     }
 
-    sendPlanApprovalResponse(response: {
-        plan_id: string;
-        session_id: string;
-        approved: boolean;
-        feedback?: string;
-        user_response?: string;
-        human_clarification?: string;
-    }): void {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            this.emit('error', { error: 'Cannot send plan approval response - WebSocket not connected' });
-            return;
-        }
-        try {
-            const v4Response = {
-                m_plan_id: response.plan_id,
-                approved: response.approved,
-                feedback: response.feedback || response.user_response || response.human_clarification || '',
-            };
-            const message = {
-                type: WebsocketMessageType.PLAN_APPROVAL_RESPONSE,
-                data: v4Response
-            };
-            this.ws.send(JSON.stringify(message));
-        } catch {
-            this.emit('error', { error: 'Failed to send plan approval response' });
-        }
-    }
 }
 
 export const webSocketService = new WebSocketService();

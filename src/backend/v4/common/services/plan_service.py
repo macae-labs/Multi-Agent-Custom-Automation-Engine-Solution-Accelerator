@@ -140,7 +140,7 @@ class PlanService:
             if plan is None:
                 logger.warning("Plan %s not found in memory store.", plan_id_val)
                 return False
-            if human_feedback.resolved_decision() != "approve":
+            if human_feedback.decision != "approve":
                 return True
             m_plan = dict(plan.m_plan or (plan.waiting_for or {}).get("m_plan") or {})
             m_plan["plan_id"] = plan_id_val

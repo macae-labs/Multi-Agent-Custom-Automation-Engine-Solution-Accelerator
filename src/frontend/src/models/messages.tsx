@@ -22,24 +22,6 @@ export interface ApprovalRequest {
 }
 
 /**
- * Message containing human feedback on a step
- */
-export interface HumanFeedback {
-    /** Optional step identifier */
-    step_id?: string;
-    /** Plan identifier */
-    plan_id: string;
-    /** Session identifier */
-    session_id: string;
-    /** Whether the step is approved */
-    approved: boolean;
-    /** Optional feedback from human */
-    human_feedback?: string;
-    /** Optional updated action */
-    updated_action?: string;
-}
-
-/**
  * Message containing human clarification on a plan
  */
 export interface HumanClarification {

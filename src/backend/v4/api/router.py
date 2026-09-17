@@ -5076,10 +5076,7 @@ async def plan_approval(
                 description: >-
                   Explicit decision. approve resumes the plan; revise sends
                   feedback to the manager (replan + new approval request);
-                  reject cancels. Falls back to approved when omitted.
-              approved:
-                type: boolean
-                description: Legacy boolean (approve/reject) used only when decision is omitted
+                  reject cancels.
               feedback:
                 type: string
                 description: Feedback for the manager (required for revise)
@@ -5164,7 +5161,7 @@ async def plan_approval(
             message_type=WebsocketMessageType.ERROR_MESSAGE,
         )
 
-    decision = human_feedback.resolved_decision()
+    decision = human_feedback.decision
     feedback = (human_feedback.feedback or "").strip()
     if decision == "revise" and not feedback:
         raise HTTPException(status_code=400, detail="revise requires feedback")
@@ -5201,7 +5198,7 @@ async def plan_approval(
         {
             "plan_id": plan.plan_id,
             "m_plan_id": human_feedback.m_plan_id,
-            "approved": human_feedback.approved,
+            "decision": decision,
             "user_id": user_id,
             "feedback": human_feedback.feedback,
             "session_id": plan.session_id,

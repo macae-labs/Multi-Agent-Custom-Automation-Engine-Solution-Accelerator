@@ -52,7 +52,6 @@ export const usePlanCancellationAlert = ({
           m_plan_id: planApprovalRequest.id,
           plan_id: planData?.plan?.id,
           decision: 'reject',
-          approved: false,
           feedback: 'Plan cancelled by user navigation'
         });
       }
