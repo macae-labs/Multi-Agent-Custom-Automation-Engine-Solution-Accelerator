@@ -1182,7 +1182,9 @@ class OrchestrationManager:
                     await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
                 except Exception as cleanup_error:
                     self.logger.warning(
-                        "Checkpoint cleanup failed for plan %s: %s", plan_id, cleanup_error
+                        "Checkpoint cleanup failed for plan %s: %s",
+                        plan_id,
+                        cleanup_error,
                     )
 
             # ── Write Plan result back to chat session ────────────────────────
