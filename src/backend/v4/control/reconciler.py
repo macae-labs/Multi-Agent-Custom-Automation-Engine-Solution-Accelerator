@@ -182,8 +182,11 @@ class Reconciler:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                # Esperado durante shutdown tras cancel(): no requiere acción.
                 pass
+            except Exception as ex:
+                logger.warning("Reconciler task ended with error during stop: %s", ex, exc_info=True)
             self._task = None
         try:
             await self.store.release_lease(self.holder)
