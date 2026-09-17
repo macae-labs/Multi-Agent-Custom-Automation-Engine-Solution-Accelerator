@@ -95,7 +95,8 @@ async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lin
     lineage = [first.name, second.name]
     for name in lineage:
         for checkpoint_id in await storage.list_checkpoint_ids(workflow_name=name):
-            assert await storage.delete(checkpoint_id) is True
+            deleted = await storage.delete(checkpoint_id)
+            assert deleted is True
     assert fake_cosmos_container.docs == {}
 
 
