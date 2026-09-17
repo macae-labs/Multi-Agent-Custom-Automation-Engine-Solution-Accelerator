@@ -159,22 +159,20 @@ class CosmosDBClient(DatabaseBase):
         await self._ensure_initialized()
         assert self.container is not None
 
-        try:
-            items = self.container.query_items(query=query, parameters=parameters)
-            result_list = []
-            async for item in items:
-                # item["ts"] = item["_ts"]
-                try:
-                    result_list.append(model_class.model_validate(item))
-                except Exception as validation_error:
-                    self.logger.warning(
-                        "Failed to validate item: %s", str(validation_error)
-                    )
-                    continue
-            return result_list
-        except Exception as e:
-            self.logger.error("Failed to query items from CosmosDB: %s", str(e))
-            return []
+        # Un fallo de la consulta se propaga: devolver [] convertía una caída de
+        # Cosmos en "no hay datos" y el reconciliador daba por aplicado un evento
+        # cuyo plan no encontró (INC-2026-007).
+        items = self.container.query_items(query=query, parameters=parameters)
+        result_list = []
+        async for item in items:
+            try:
+                result_list.append(model_class.model_validate(item))
+            except Exception as validation_error:
+                self.logger.warning(
+                    "Failed to validate item: %s", str(validation_error)
+                )
+                continue
+        return result_list
 
     async def delete_item(self, item_id: str, partition_key: str) -> None:
         """Delete an item from CosmosDB."""

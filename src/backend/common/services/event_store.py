@@ -28,7 +28,6 @@ from common.config.app_config import config
 
 logger = logging.getLogger(__name__)
 
-WORK_EVENTS_CONTAINER_NAME = "work_events"
 EVENT_KINDS = frozenset({"clarification", "plan_review"})
 LEASE_PK = "lease"
 LEASE_ID = "reconciler"
@@ -163,15 +162,15 @@ class EventStore:
         database = self._client.get_database_client(db_name)
         # Provisionado por infra/main.bicep (la cuenta prohíbe crear contenedores
         # por data-plane: disableKeyBasedMetadataWriteAccess). Aquí sólo se abre.
-        self._container = database.get_container_client(WORK_EVENTS_CONTAINER_NAME)
+        self._container = database.get_container_client(config.WORK_EVENTS_CONTAINER)
         try:
             await self._container.read()
         except exceptions.CosmosResourceNotFoundError as missing:
             raise RuntimeError(
-                f"Cosmos container '{WORK_EVENTS_CONTAINER_NAME}' is not provisioned "
+                f"Cosmos container '{config.WORK_EVENTS_CONTAINER}' is not provisioned "
                 "(infra/main.bicep declares it; deploy the infra first)"
             ) from missing
-        logger.info("EventStore listo (container=%s)", WORK_EVENTS_CONTAINER_NAME)
+        logger.info("EventStore listo (container=%s)", config.WORK_EVENTS_CONTAINER)
         return self._container
 
     async def aclose(self) -> None:

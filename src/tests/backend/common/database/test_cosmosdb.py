@@ -423,17 +423,12 @@ class TestCosmosDBQueryOperations:
         assert result == [mock_instance]
 
     @pytest.mark.asyncio
-    async def test_query_items_failure(self, client):
-        """Test query failure."""
+    async def test_query_items_failure_propagates(self, client):
+        """Un fallo de Cosmos no se convierte en lista vacía (INC-2026-007)."""
         client.container.query_items.side_effect = Exception("Query failed")
 
-        query = "SELECT * FROM c"
-        parameters = []
-        mock_model_class = Mock()
-
-        result = await client.query_items(query, parameters, mock_model_class)
-
-        assert result == []
+        with pytest.raises(Exception, match="Query failed"):
+            await client.query_items("SELECT * FROM c", [], Mock())
 
     @pytest.mark.asyncio
     async def test_get_all_items(self, client):

@@ -238,3 +238,38 @@ async def test_token_never_reaches_the_document_and_travels_in_memory_to_the_tra
     stored = events._container.docs[result.id]
     assert "user_access_token" not in stored and "obo-token" not in str(stored)
     assert rec._tokens == {}  # consumido; un reinicio corre sin token
+
+
+@pytest.mark.asyncio
+async def test_event_container_name_comes_from_config_per_environment(monkeypatch):
+    """Un contenedor de eventos por entorno: el lease es global por contenedor y un
+    backend de desarrollo no puede compartir `work_events` con producción."""
+    from common.config.app_config import config as app_config
+    from common.services import event_store as es
+
+    opened = []
+
+    class _DB:
+        def get_container_client(self, name):
+            opened.append(name)
+
+            class _C:
+                async def read(self):
+                    return {}
+
+            return _C()
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_database_client(self, name):
+            return _DB()
+
+    monkeypatch.setattr(app_config, "COSMOSDB_ENDPOINT", "https://x.documents.azure.com:443/")
+    monkeypatch.setattr(app_config, "COSMOSDB_DATABASE", "db")
+    monkeypatch.setattr(app_config, "WORK_EVENTS_CONTAINER", "work_events_dev")
+    monkeypatch.setattr(app_config, "get_cosmos_credential_async", lambda: "key")
+    monkeypatch.setattr(es, "CosmosClient", _Client)
+    await EventStore()._ensure_initialized()
+    assert opened == ["work_events_dev"]

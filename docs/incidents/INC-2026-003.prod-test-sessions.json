@@ -50,7 +50,11 @@
     "eada2545-2ab2-4460-8273-07199e627bbc": [
       "probe-ingress-abort-1789367910-0",
       "probe-ingress-abort-1789367931-1",
-      "probe-turnlog-d8f146a6"
+      "probe-turnlog-d8f146a6",
+      "probe-hitl-202b8082",
+      "probe-hitl-cb35c2dc",
+      "probe-hitl-c1846588",
+      "probe-hitl-fe94cbad"
     ]
   },
   "total": 32,
@@ -60,5 +64,15 @@
       "87b9e00d-3945-40f6-ae0c-a4f643798ff8",
       "32bd45c6-1f59-4f92-8694-5f086969b23f"
     ]
-  }
+  },
+  "plans_by_user": {
+    "eada2545-2ab2-4460-8273-07199e627bbc": [
+      "331aacbc-7b49-4a54-bc22-40eeedf06c1f",
+      "a353ba1e-9f69-4591-b308-4d4ed6f914a9",
+      "a1e2fd6f-7c21-49ab-a337-184b55ddbbd7"
+    ]
+  },
+  "notes": [
+    "2026-09-17 hitl_canary_probe.py contra la revisión 125 (aprobación write-shared: validación de canary): 3 sesiones y 2 planes bajo el principal app-only; los planes viven en el contenedor memory (data_type plan) y no los borra cleanup_prod_test_sessions.py, que sólo cubre chat_sessions."
+  ]
 }
