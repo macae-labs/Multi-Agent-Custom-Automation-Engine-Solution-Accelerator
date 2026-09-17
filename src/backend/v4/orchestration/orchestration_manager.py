@@ -573,6 +573,7 @@ class OrchestrationManager:
         plan.waiting_for = None
         plan.overall_status = PlanStatus.canceled
         await memory_store.update_plan(plan)
+        await self._purge_checkpoint_lineage(plan)
         await connection_config.send_status_update_async(
             {
                 "content": "Plan execution cancelled by user.",
@@ -588,6 +589,29 @@ class OrchestrationManager:
             request_id,
             plan_id,
         )
+
+    async def _purge_checkpoint_lineage(self, plan: Any) -> None:
+        """Pliegue terminal: borra todos los checkpoints de cada segmento del
+        linaje (``plan.workflow_names``). La cadena ``previous_checkpoint_id`` no
+        cruza una reanudación, por eso la unidad es el ``workflow_name``."""
+        names = list(getattr(plan, "workflow_names", None) or [])
+        if not names:
+            return
+        storage = get_checkpoint_storage()
+        for name in names:
+            for checkpoint_id in await storage.list_checkpoint_ids(workflow_name=name):
+                await storage.delete(checkpoint_id)
+        self.logger.info(
+            "Checkpoints purged for plan %s (%d segments)", plan.plan_id, len(names)
+        )
+
+    async def _purge_checkpoint_lineage_by_id(self, user_id: str, plan_id: str) -> None:
+        from common.database.database_factory import DatabaseFactory
+
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+        if plan is not None:
+            await self._purge_checkpoint_lineage(plan)
 
     async def _park_on_request_info(
         self,
@@ -660,6 +684,8 @@ class OrchestrationManager:
                     # Re-sent on WS reconnect from the store (router).
                     waiting_for["m_plan"] = mplan.model_dump()
                 plan.waiting_for = waiting_for
+                if workflow.name not in plan.workflow_names:
+                    plan.workflow_names.append(workflow.name)
                 await memory_store.update_plan(plan)
         if mplan is not None:
             from v4.models.messages import PlanApprovalRequest
@@ -1151,6 +1177,15 @@ class OrchestrationManager:
                     content=final_text,
                     is_final=True,
                 )
+            if plan_id:
+                try:
+                    await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
+                except Exception as cleanup_error:
+                    self.logger.warning(
+                        "Checkpoint cleanup failed for plan %s: %s",
+                        plan_id,
+                        cleanup_error,
+                    )
 
             # ── Write Plan result back to chat session ────────────────────────
             # This closes the visibility gap: after Plan execution the chat
@@ -1206,6 +1241,7 @@ class OrchestrationManager:
                         plan.overall_status = PlanStatus.failed
                         await memory_store.update_plan(plan)
                         self.logger.info("Plan '%s' status updated to FAILED", plan_id)
+                        await self._purge_checkpoint_lineage(plan)
             except Exception as db_error:
                 self.logger.error(
                     "Failed to update plan status to FAILED: %s", db_error

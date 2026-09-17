@@ -7,8 +7,6 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import Annotated, Any, Optional, cast
 
-from agent_framework import Content
-from agent_framework_orchestrations._magentic import MagenticPlanReviewResponse
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import (
     APIRouter,
@@ -42,6 +40,7 @@ from common.models.messages_af import (
     TeamSelectionRequest,
 )
 from common.services.chat_cosmos_service import get_chat_cosmos_service
+from common.services.event_store import EVENT_KINDS, get_event_store
 from common.utils.event_utils import track_event_if_configured
 from common.utils.utils_af import (
     find_first_available_team,
@@ -69,6 +68,7 @@ from v4.config.settings import (
     orchestration_config,
     team_config,
 )
+from v4.control.reconciler import get_reconciler
 from v4.models.messages import WebsocketMessageType
 from v4.models.models import MPlan
 from v4.orchestration.orchestration_manager import OrchestrationManager
@@ -3816,14 +3816,13 @@ async def chat_message_stream(
         )
         await _persist_user_message()
         # The answer resumes the parked workflow from its checkpoint (no in-process wait).
-        await _schedule_resume(
-            background_tasks,
-            user_id=user_id,
-            user_access_token=user_access_token,
-            memory_store=memory_store,
-            plan=pending_plan,
+        await _append_event(
+            kind="clarification",
             request_id=pending_request_id,
-            response=Content.from_text(text=chat_request.message),
+            user_id=user_id,
+            tenant_id=tenant_id,
+            user_access_token=user_access_token,
+            payload={"answer": chat_request.message},
         )
         # Persist the exchange to the single chat history.
         try:
@@ -5168,7 +5167,14 @@ async def plan_approval(
     if decision == "reject":
         # Nothing to resume. Only the explicit decision discriminates: the
         # frontend also sends ``feedback`` on a cancellation.
-        await OrchestrationManager().cancel_parked(user_id, plan.plan_id, request_id)
+        await _append_event(
+            kind="plan_review",
+            request_id=request_id,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            user_access_token=user_access_token,
+            payload={"decision": "reject", "feedback": feedback},
+        )
         track_event_if_configured(
             "Plan_Rejected",
             {
@@ -5180,18 +5186,13 @@ async def plan_approval(
         )
         return {"status": "approval recorded"}
 
-    await _schedule_resume(
-        background_tasks,
-        user_id=user_id,
-        user_access_token=user_access_token,
-        memory_store=memory_store,
-        plan=plan,
+    await _append_event(
+        kind="plan_review",
         request_id=request_id,
-        response=(
-            MagenticPlanReviewResponse.revise(feedback)
-            if decision == "revise"
-            else MagenticPlanReviewResponse.approve()
-        ),
+        user_id=user_id,
+        tenant_id=tenant_id,
+        user_access_token=user_access_token,
+        payload={"decision": decision, "feedback": feedback},
     )
     track_event_if_configured(
         "Plan_Approved" if decision == "approve" else "Plan_Revision_Requested",
@@ -5239,65 +5240,61 @@ async def _plan_waiting_for(
     return None
 
 
-async def _schedule_resume(
-    background_tasks: BackgroundTasks,
+async def _append_event(
     *,
-    user_id: str,
-    user_access_token: Optional[str],
-    memory_store: DatabaseBase,
-    plan: Plan,
+    kind: str,
     request_id: str,
-    response: Any,
-) -> None:
-    """Resume the parked workflow from its checkpoint with the human response
-    (``Content`` for a clarification, ``MagenticPlanReviewResponse`` for a review).
+    user_id: str,
+    tenant_id: Optional[str],
+    user_access_token: Optional[str],
+    payload: dict[str, Any],
+) -> bool:
+    """Persist the human decision as a ``work_event`` and wake the reconciler.
 
-    Same wiring as ``process_request``: the team must be the one the plan was
-    built with (the checkpoint graph depends on its participants) and one run
-    per session. The orchestration is reused when alive and rebuilt after a
-    restart; the framework validates the graph signature on resume.
+    Identity = cause (``kind:request_id``): a second delivery of the same
+    request is a duplicate and produces no transition. Returns ``duplicate``.
+    The reconciler (lifespan task) applies the transition; nothing is
+    scheduled per request.
     """
-    user_current_team = await memory_store.get_current_team(user_id=user_id)
-    team_id = user_current_team.team_id if user_current_team else None
-    if not team_id or (plan.team_id and team_id != plan.team_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Plan {plan.plan_id} was built with team '{plan.team_id}'; "
-                f"current team is '{team_id}'. Resume needs the same team."
-            ),
-        )
-    team = await memory_store.get_team_by_id(team_id=team_id)
-    if not team:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Team configuration '{team_id}' not found or access denied",
-        )
-    session_id = plan.session_id
-    if orchestration_config.is_run_active(session_id):
-        raise HTTPException(
-            status_code=409,
-            detail="An orchestration run is already in flight for this session.",
-        )
-    await OrchestrationManager.get_current_or_new_orchestration(
+    body = {**payload, "user_id": user_id, "tenant_id": tenant_id}
+    result = await get_event_store().append(kind, request_id, body)
+    # El token OBO nunca se persiste: viaja en memoria hasta el reconciliador.
+    get_reconciler().wake(result.id, user_access_token)
+    return result.duplicate
+
+
+class WorkEventIn(BaseModel):
+    kind: str
+    request_id: str
+    payload: dict[str, Any] = {}
+
+
+@app_v4.post("/events")
+async def post_work_event(event: WorkEventIn, request: Request):
+    """Append a ``work_event`` for a parked request (idempotent by identity)."""
+    user_id, tenant_id, user_access_token = _extract_auth_with_token(request)
+    if event.kind not in EVENT_KINDS:
+        raise HTTPException(status_code=400, detail=f"unknown kind '{event.kind}'")
+    if not event.request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+    if event.kind == "plan_review":
+        decision = event.payload.get("decision")
+        if decision not in ("approve", "revise", "reject"):
+            raise HTTPException(status_code=400, detail="decision is required")
+        if (
+            decision == "revise"
+            and not str(event.payload.get("feedback") or "").strip()
+        ):
+            raise HTTPException(status_code=400, detail="revise requires feedback")
+    duplicate = await _append_event(
+        kind=event.kind,
+        request_id=event.request_id,
         user_id=user_id,
-        team_config=team,
-        team_switched=False,
-        team_service=TeamService(memory_store),
+        tenant_id=tenant_id,
         user_access_token=user_access_token,
+        payload=event.payload,
     )
-    plan_id = plan.plan_id
-
-    async def _resume_task() -> None:
-        try:
-            await OrchestrationManager().resume_orchestration(
-                user_id, session_id, plan_id, request_id, response
-            )
-        finally:
-            orchestration_config.clear_run_active(session_id)
-
-    orchestration_config.mark_run_active(session_id)
-    background_tasks.add_task(_resume_task)
+    return {"status": "duplicate" if duplicate else "recorded"}
 
 
 @app_v4.post("/user_clarification")
@@ -5471,14 +5468,13 @@ async def user_clarification(
                 event_props["session_id"] = session_id
             track_event_if_configured("Human_Clarification_Received", event_props)
             # The answer resumes the parked workflow from its checkpoint.
-            await _schedule_resume(
-                background_tasks,
-                user_id=user_id,
-                user_access_token=user_access_token,
-                memory_store=memory_store,
-                plan=plan,
+            await _append_event(
+                kind="clarification",
                 request_id=human_feedback.request_id,
-                response=Content.from_text(text=human_feedback.answer or ""),
+                user_id=user_id,
+                tenant_id=tenant_id,
+                user_access_token=user_access_token,
+                payload={"answer": human_feedback.answer or ""},
             )
             return {
                 "status": "clarification recorded",

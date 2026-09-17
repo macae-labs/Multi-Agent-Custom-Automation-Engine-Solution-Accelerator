@@ -1072,6 +1072,24 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
             version: 2
             defaultTtl: -1
           }
+          {
+            // Checkpoints de workflow (agent_framework); partición = workflow_name (un segmento de corrida)
+            name: 'workflow_checkpoints'
+            paths: [
+              '/workflow_name'
+            ]
+            kind: 'Hash'
+            version: 2
+          }
+          {
+            // Eventos de trabajo del reconciliador + lease; partición = kind
+            name: 'work_events'
+            paths: [
+              '/pk'
+            ]
+            kind: 'Hash'
+            version: 2
+          }
         ]
       }
     ]
