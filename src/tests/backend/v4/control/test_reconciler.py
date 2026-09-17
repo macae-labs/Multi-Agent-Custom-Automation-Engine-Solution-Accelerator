@@ -99,7 +99,8 @@ def _no_run_active():
 async def test_one_event_one_transition_and_duplicate_does_nothing(events, manager):
     manager.plans.append(_plan())
     rec = Reconciler(store=events)
-    assert not (await events.append("clarification", "req-1", {"user_id": USER, "answer": "sí"})).duplicate
+    first_append = await events.append("clarification", "req-1", {"user_id": USER, "answer": "sí"})
+    assert not first_append.duplicate
     assert (await events.append("clarification", "req-1", {"user_id": USER, "answer": "otra"})).duplicate
 
     assert await rec.run_once() == 1
