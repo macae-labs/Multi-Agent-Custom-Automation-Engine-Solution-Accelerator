@@ -26,10 +26,20 @@ async def lifespan(app: FastAPI):
 
     # Startup
     logger.info("🚀 Starting MACAE application...")
+    # Work-event reconciler: the only path that transitions parked plans.
+    # Pending events survive a restart; this task drains them.
+    from v4.control.reconciler import get_reconciler
+
+    reconciler = get_reconciler()
+    reconciler.start()
     yield
 
     # Shutdown
     logger.info("🛑 Shutting down MACAE application...")
+    try:
+        await reconciler.stop()
+    except Exception as rec_e:
+        logger.warning(f"Reconciler stop warning (non-fatal): {rec_e}")
     try:
         # Clean up all agents from Azure AI Foundry when container stops
         await agent_registry.cleanup_all_agents()
@@ -50,9 +60,11 @@ async def lifespan(app: FastAPI):
         try:
             from common.services.chat_cosmos_service import aclose_chat_cosmos_service
             from common.services.checkpoint_storage import close_checkpoint_storage
+            from common.services.event_store import close_event_store
 
             await aclose_chat_cosmos_service()
             await close_checkpoint_storage()
+            await close_event_store()
         except Exception as ckpt_e:
             logger.warning(f"Checkpoint storage cleanup warning (non-fatal): {ckpt_e}")
         try:

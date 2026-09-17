@@ -152,6 +152,14 @@ def _setup_environment_variables():
     # statsbeat (westus-0.in.applicationinsights.azure.com) y el control plane
     # OneSettings (settings.sdk.monitor.azure.com).
     os.environ["APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"] = "true"
+    # Cosmos: ASIGNADO vacío, no setdefault. El .env local trae el endpoint de
+    # producción y el reconciliador arranca en el lifespan de la app: con el
+    # endpoint heredado intentó crear `work_events` en la cuenta real desde
+    # test_app (2026-09-17, Forbidden por política de la cuenta) y dejó un
+    # socket abierto que el gate de ResourceWarning señaló. Sin endpoint, los
+    # servicios usan sus modos en memoria.
+    os.environ["COSMOSDB_ENDPOINT"] = ""
+    os.environ["COSMOSDB_KEY"] = ""
     os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] = "true"
 
 

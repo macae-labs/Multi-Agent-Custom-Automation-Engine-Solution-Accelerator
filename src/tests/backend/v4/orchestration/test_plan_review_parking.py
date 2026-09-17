@@ -42,7 +42,7 @@ def parked(monkeypatch):
         plan_id="p1",
         team_id="t1",
         session_id="s1",
-        waiting_for=None,
+        waiting_for=None, workflow_names=[],
         overall_status=PlanStatus.in_progress,
     )
     store = FakeStore(plan)

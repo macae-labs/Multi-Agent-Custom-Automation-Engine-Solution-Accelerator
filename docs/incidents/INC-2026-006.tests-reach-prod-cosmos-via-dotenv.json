@@ -1,0 +1,233 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-006",
+  "domain": "tests",
+  "status": "closed",
+  "invariant": {
+    "id": "INV-TESTS-NEVER-REACH-PROD-COSMOS",
+    "statement": "Ningún test del backend alcanza la cuenta Cosmos de producción: el conftest asigna COSMOSDB_ENDPOINT y COSMOSDB_KEY vacíos (no setdefault), y ningún servicio crea contenedores por data-plane; los contenedores los declara infra/main.bicep."
+  },
+  "signature": {
+    "family": "gate_failure",
+    "id": "SIG-tests-inherit-prod-cosmos-endpoint-from-dotenv",
+    "structural_match": {
+      "trigger": "lifespan de la app arranca el reconciliador (v4/control/reconciler.py) en test_app; EventStore._ensure_initialized lee config.COSMOSDB_ENDPOINT",
+      "source_of_endpoint": "src/backend/.env vía load_dotenv() en app_config; conftest sólo hacía setdefault de AZURE_COSMOS_ENDPOINT (nombre distinto)",
+      "observed_log": "WARNING v4.control.reconciler: Lease release failed: (Forbidden) Operation 'POST' on resource 'colls' is not allowed through Azure Cosmos DB endpoint",
+      "attempts": 4,
+      "gate_signal": "ResourceWarning: unclosed socket raddr=('20.15.9.68', 443) → test_telemetry_shutdown_completes_and_flushes_to_local_stub en rojo",
+      "account_policy": "disableKeyBasedMetadataWriteAccess=true: create_container_if_not_exists es imposible por data-plane",
+      "prod_state_after": "contenedores en macae: chat_sessions, memory, mcp_connections (ninguno creado)"
+    }
+  },
+  "env_fingerprint": {
+    "where": "local",
+    "env_names_present": [
+      "APP_ENV",
+      "COSMOSDB_ENDPOINT",
+      "COSMOSDB_DATABASE",
+      "COSMOSDB_KEY"
+    ],
+    "credential_mode": "static_dev_token",
+    "dotenv_present": true,
+    "network_scope": "egress_allowed",
+    "git": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "7776e3b1",
+      "dirty": true
+    }
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "write-scratch",
+    "human_required_for": [
+      "write-shared",
+      "merge"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": "2026-09-17T04:27:55Z",
+      "violation": "Corridas de la suite (Winston y validación de Claude) ejecutaron el lifespan de la app con el endpoint de producción heredado del .env: cuatro intentos de crear el contenedor work_events en la cuenta real, sin aprobación. Rechazados por la cuenta (Forbidden); ningún dato ni contenedor creado.",
+      "description": "test_app::test_telemetry_shutdown_completes_and_flushes_to_local_stub en rojo por socket abierto hacia 20.15.9.68:443; el log del reconciliador nombra la operación rechazada."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T04:27:55Z",
+      "description": "grep del .env (COSMOSDB_ENDPOINT presente), _get_optional devuelve '' con la variable vacía, az cosmosdb show: disableKeyBasedMetadataWriteAccess=true; az cosmosdb sql container list: sin work_events."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T04:27:55Z",
+      "description": "conftest asigna COSMOSDB_ENDPOINT='' y COSMOSDB_KEY='' explícitamente (misma forma que la cadena de App Insights); event_store, checkpoint_storage y mcp_connections_service abren el contenedor con get_container_client + read() y fallan con nombre si no existe, sin create_container_if_not_exists; infra/main.bicep declara workflow_checkpoints (/workflow_name) y work_events (/pk)."
+    },
+    {
+      "stage": "validate",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T04:27:55Z",
+      "description": "Suite completa con el gate de identidad: sin rastro de la IP ni del host de Cosmos en el log; test_app en verde; gates ruff/format/mypy en verde."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_dev",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "executed_at": null,
+      "description": "Commit y PR: click de Winston. El despliegue de infra (dos contenedores nuevos) es write-shared aparte."
+    },
+    {
+      "stage": "commit",
+      "class": "write-shared",
+      "blast_radius": "shared_prod_data",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": "2026-09-17T05:14:38Z",
+      "executed_at": "2026-09-17T05:14:38Z",
+      "description": "Creación de los dos contenedores en la cuenta de producción por ARM (az cosmosdb sql container create), ejecutada por Winston; primero en versión de clave 1, recreados vacíos en versión 2 por recomendación para contenedores nuevos; verificado por lectura: partitionKey /workflow_name y /pk, kind Hash, version 2."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Una suite unitaria intenta escrituras de metadatos en Cosmos de producción y deja un socket abierto.",
+    "candidate_causes": [
+      "El reconciliador no debería arrancar en tests (guardián en el lifespan)",
+      "El endpoint llega desde el .env porque conftest no lo neutraliza",
+      "La cuenta permite crear contenedores por data-plane y el código lo asume"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "command_or_test": "grep -c '^COSMOSDB_ENDPOINT=' src/backend/.env; grep -nE 'COSMOSDB_ENDPOINT' src/tests/backend/conftest.py; az cosmosdb show --query disableKeyBasedMetadataWriteAccess",
+      "cwd": ".",
+      "expected_signal_when_failing": ".env con endpoint y conftest sin asignación → los tests heredan producción",
+      "expected_signal_when_healthy": "conftest asigna COSMOSDB_ENDPOINT='' y la política de la cuenta es true (creación por data-plane imposible)"
+    },
+    "confirmed_cause": {
+      "statement": "conftest neutralizaba la telemetría pero no Cosmos: el endpoint real entraba por load_dotenv y cualquier servicio con inicialización de red en el lifespan lo usaba. Además el código asumía poder crear contenedores en runtime, lo que la cuenta prohíbe: create_container_if_not_exists habría fallado en producción en el primer uso de workflow_checkpoints y work_events.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "log de test_app (Forbidden 'POST' on 'colls'), az cosmosdb show, ResourceWarning del gate"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "Un guardián en el lifespan que no arranque el reconciliador bajo pytest",
+        "discarded_by": "Es la clase de guardián que el proyecto no acepta y no cierra la causa: cualquier otro servicio con red en el lifespan heredaría el mismo endpoint. La causa es el entorno de tests.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "lanes_not_covered": [
+    "Los contenedores workflow_checkpoints (/workflow_name) y work_events (/pk) existen en la cuenta de producción, creados por ARM con `az cosmosdb sql container create --partition-key-version 2` el 2026-09-17 (recreados vacíos tras una primera creación en versión 1); bicep los declara igual, versión 2."
+  ],
+  "residual_risk": [
+    "Un servicio nuevo que inicialice red en el lifespan sin leer la config por el mismo camino no está cubierto por esta asignación; la sonda de INC-005 no lo detecta."
+  ],
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "7776e3b1",
+      "commit_or_pr": "pendiente: árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/tests/backend/conftest.py",
+      "src/backend/common/services/event_store.py",
+      "src/backend/common/services/checkpoint_storage.py",
+      "src/backend/v4/common/services/mcp_connections_service.py",
+      "infra/main.bicep"
+    ],
+    "new_functions_introduced": [],
+    "justification_if_new_functions": null
+  },
+  "validate": {
+    "closing_layer": "L3",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "Con COSMOSDB_ENDPOINT='' los tres servicios entran en modo memoria; el log de la suite no contiene la IP 20.15.9.68 ni documents.azure.com."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "Suite completa en verde, test_app incluido; 0 señales del gate de identidad."
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Comando de test.yml con -p module_identity_tracker en verde."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "ruff, ruff format y mypy en verde."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "Sin red por diseño."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "Sin UI."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "La revisión nueva necesita los contenedores desplegados por bicep antes de validarse."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "Sin promoción."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Estado previo (conftest sin la asignación) ejecutado 2026-09-17: cuatro 'Lease release failed: (Forbidden) POST on colls' y ResourceWarning del socket hacia Cosmos en test_app. Con la asignación: ninguna línea con el host ni la IP en el log de la suite."
+    }
+  },
+  "learn": {
+    "retrieval_keys": [
+      "tests hit production cosmos",
+      "Forbidden POST on resource colls",
+      "disableKeyBasedMetadataWriteAccess",
+      "create_container_if_not_exists forbidden",
+      "ResourceWarning unclosed socket 443 cosmos",
+      "conftest COSMOSDB_ENDPOINT empty",
+      "reconciler lifespan under pytest"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": "src/backend",
+      "command_or_test": "PYTHONPATH=$PWD/../..:$PWD:$PWD/../../docs/incidents/probes uv run python -m pytest ../../src/tests/backend/test_app.py -q -p module_identity_tracker -o log_cli=true 2>&1 | grep -cE 'documents\\.azure\\.com|20\\.15\\.9\\.68|Forbidden'",
+      "expected_signal_when_failing": "≥1 (hay tráfico o rechazo de Cosmos de producción durante test_app)",
+      "expected_signal_when_healthy": "0"
+    },
+    "last_verified": "2026-09-17T04:27:55Z",
+    "expires_if_not_reverified_by": "2026-12-16T04:27:55Z",
+    "operational": true
+  }
+}

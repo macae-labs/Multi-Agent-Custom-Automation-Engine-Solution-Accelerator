@@ -152,6 +152,9 @@ class Plan(BaseDataModel):
     # Pending request_info the workflow is idle on (durable; checkpoint-backed):
     # {kind, request_id, checkpoint_id, workflow_name, question, content_id}.
     waiting_for: Optional[Dict[str, Any]] = None
+    # Linaje de checkpoints: un ``workflow_name`` por segmento de corrida (la
+    # reanudación nace con nombre nuevo). Al plegar a terminal se borran todos.
+    workflow_names: List[str] = Field(default_factory=list)
 
 
 class Step(BaseDataModel):

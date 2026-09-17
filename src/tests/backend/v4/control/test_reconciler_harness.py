@@ -27,6 +27,7 @@ from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
 from common.services.checkpoint_storage import CosmosCheckpointStorage
+from common.services.event_store import EventStore
 
 
 class ManagerClient(BaseChatClient):
@@ -103,16 +104,20 @@ async def test_event_identity_makes_the_second_delivery_a_conflict(fake_cosmos_c
     events = fake_cosmos_container_factory(partition_path="pk")
     # Identidad = causa: id = f"{kind}:{identity}", pk = kind (el id es único
     # por partición, y la partición sale del evento, no de quién lo entrega).
-    # Literal hasta que exista EventStore.append; entonces el harness lo usa.
-    event = {"id": "plan_review:req-1", "pk": "plan_review", "kind": "plan_review",
-             "identity": "req-1", "payload": {"decision": "approve"}, "status": "pending"}
-    await events.create_item(body=event)
+    store = EventStore(container=events)
+    first = await store.append("plan_review", "req-1", {"decision": "approve"})
+    # otra decisión, misma causa: el SDK devuelve 409 y append lo reporta
+    second = await store.append("plan_review", "req-1", {"decision": "reject"})
+    assert (first.duplicate, second.duplicate) == (False, True)
+    assert first.id == second.id == "plan_review:req-1"
     with pytest.raises(exceptions.CosmosResourceExistsError) as conflict:
-        # otra decisión, misma causa: choca
-        await events.create_item(body={**event, "payload": {"decision": "reject"}})
+        await events.create_item(body={"id": "plan_review:req-1", "pk": "plan_review"})
     assert conflict.value.status_code == 409
     # una entrega registrada, una transición
-    assert [d["status"] for d in events.docs.values()] == ["pending"]
+    docs = list(events.docs.values())
+    assert [(d["status"], d["payload"]["decision"])
+            for d in docs] == [("pending", "approve")]
+    assert docs[0]["pk"] == "plan_review"
 
 
 @pytest.mark.asyncio

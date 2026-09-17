@@ -29,8 +29,8 @@ from agent_framework._workflows._checkpoint_encoding import (
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
-from azure.cosmos import PartitionKey
 from azure.cosmos.aio import CosmosClient
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from common.config.app_config import config
 
@@ -65,10 +65,16 @@ class CosmosCheckpointStorage:
             url=endpoint, credential=config.get_cosmos_credential_async()
         )
         database = self._client.get_database_client(db_name)
-        self._container = await database.create_container_if_not_exists(
-            id=CHECKPOINTS_CONTAINER_NAME,
-            partition_key=PartitionKey(path="/workflow_name"),
-        )
+        # Provisionado por infra/main.bicep (la cuenta prohíbe crear contenedores
+        # por data-plane: disableKeyBasedMetadataWriteAccess). Aquí sólo se abre.
+        self._container = database.get_container_client(CHECKPOINTS_CONTAINER_NAME)
+        try:
+            await self._container.read()
+        except CosmosResourceNotFoundError as missing:
+            raise WorkflowCheckpointException(
+                f"Cosmos container '{CHECKPOINTS_CONTAINER_NAME}' is not provisioned "
+                "(infra/main.bicep declares it; deploy the infra first)"
+            ) from missing
         logger.info(
             "CosmosCheckpointStorage listo (container=%s)", CHECKPOINTS_CONTAINER_NAME
         )

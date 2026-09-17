@@ -14,7 +14,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from azure.cosmos import PartitionKey
 from azure.cosmos.aio import CosmosClient
 
 from common.config.app_config import config
@@ -93,23 +92,10 @@ class MCPConnectionsService:
             )
             db = self._client.get_database_client(config.COSMOSDB_DATABASE)
 
-            # Get or create the mcp_connections container
-            # In production this is created by Bicep; locally we create if missing
-            try:
-                self._container = db.get_container_client(container_name)
-                # Verify it exists with a metadata read
-                await self._container.read()
-            except Exception:
-                logger.info(
-                    "Container '%s' not found — creating with /pk partition key",
-                    container_name,
-                )
-                db_proxy = self._client.get_database_client(config.COSMOSDB_DATABASE)
-                self._container = await db_proxy.create_container_if_not_exists(
-                    id=container_name,
-                    partition_key=PartitionKey(path="/pk"),
-                    default_ttl=-1,  # enable TTL but don't auto-expire by default
-                )
+            # Provisionado por infra/main.bicep; la cuenta prohíbe crear
+            # contenedores por data-plane, así que aquí sólo se abre.
+            self._container = db.get_container_client(container_name)
+            await self._container.read()
 
             self._initialized = True
             logger.info(

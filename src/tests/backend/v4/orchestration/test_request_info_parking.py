@@ -28,7 +28,7 @@ class FakeStore:
 
 @pytest.fixture
 def parked(monkeypatch):
-    plan = SimpleNamespace(plan_id="p1", team_id="t1", session_id="s1", waiting_for=None)
+    plan = SimpleNamespace(plan_id="p1", team_id="t1", session_id="s1", waiting_for=None, workflow_names=[])
     store = FakeStore(plan)
     monkeypatch.setattr(database_factory.DatabaseFactory, "get_database", AsyncMock(return_value=store))
     checkpoint = SimpleNamespace(checkpoint_id="cp-9", pending_request_info_events={"req-1": object()})
