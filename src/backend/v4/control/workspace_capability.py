@@ -185,7 +185,7 @@ def discover() -> Optional[WorkspaceCapability]:
     # El workspace propio gana sin ambigüedad: es el único que el reconciliador
     # posee y adelanta. Los demás sólo cuentan si no existe.
     owned = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
-    if owned:
+    if len(owned) == 1:
         user_id, workspace_id = owned[0]
         logger.info("Registro de INC (propio): %s/%s", user_id, workspace_id)
         return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id)
