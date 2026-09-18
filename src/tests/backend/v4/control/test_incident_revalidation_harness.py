@@ -101,6 +101,8 @@ async def test_healthy_probe_records_evidence_and_operational_state(events, tmp_
         "exit_code": 0,
         "stdout": "sano\n",
         "stderr": "aviso\n",
+        # El commit del registro: sin él un "sano" no dice contra qué árbol.
+        "source": "",
     }
     assert state["last_verified"]
 
@@ -203,3 +205,24 @@ async def test_without_executor_the_expiry_is_deferred_not_failed(events, caplog
 async def test_reconciler_without_registry_originates_nothing(events):
     assert await Reconciler(store=events).run_once() == 0
     assert await events.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_the_registry_is_not_rescanned_on_every_beat(events):
+    """El loop late cada 5 s por los eventos humanos; el registro no se escanea
+    cada vuelta, o haría glob y lectura de todos los JSON sobre el share."""
+    inc = incident()
+    scans = 0
+
+    async def counting_registry():
+        nonlocal scans
+        scans += 1
+        return [inc]
+
+    rec = Reconciler(
+        store=events, registry=counting_registry, execute=None, now=lambda: NOW
+    )
+    for _ in range(5):
+        await rec.run_once()
+
+    assert scans == 1

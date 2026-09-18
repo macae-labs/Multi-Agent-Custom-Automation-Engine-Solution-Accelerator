@@ -64,17 +64,23 @@ class CosmosCheckpointStorage:
         self._client = CosmosClient(
             url=endpoint, credential=config.get_cosmos_credential_async()
         )
-        database = self._client.get_database_client(db_name)
-        # Provisionado por infra/main.bicep (la cuenta prohíbe crear contenedores
-        # por data-plane: disableKeyBasedMetadataWriteAccess). Aquí sólo se abre.
-        self._container = database.get_container_client(CHECKPOINTS_CONTAINER_NAME)
+        # El ciclo de vida se guarda desde la ADQUISICIÓN: cualquier fallo tras
+        # crear el cliente lo cierra, o queda una sesión aiohttp abierta.
         try:
+            database = self._client.get_database_client(db_name)
+            # Provisionado por infra/main.bicep (la cuenta prohíbe crear
+            # contenedores por data-plane). Aquí sólo se abre.
+            self._container = database.get_container_client(CHECKPOINTS_CONTAINER_NAME)
             await self._container.read()
-        except CosmosResourceNotFoundError as missing:
-            raise WorkflowCheckpointException(
-                f"Cosmos container '{CHECKPOINTS_CONTAINER_NAME}' is not provisioned "
-                "(infra/main.bicep declares it; deploy the infra first)"
-            ) from missing
+        except BaseException as failure:
+            self._container = None
+            await self.aclose()
+            if isinstance(failure, CosmosResourceNotFoundError):
+                raise WorkflowCheckpointException(
+                    f"Cosmos container '{CHECKPOINTS_CONTAINER_NAME}' is not "
+                    "provisioned (infra/main.bicep declares it; deploy the infra first)"
+                ) from failure
+            raise
         logger.info(
             "CosmosCheckpointStorage listo (container=%s)", CHECKPOINTS_CONTAINER_NAME
         )

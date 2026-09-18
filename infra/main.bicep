@@ -1090,6 +1090,18 @@ module cosmosDb 'br/public:avm/res/document-db/database-account:0.15.0' = {
             kind: 'Hash'
             version: 2
           }
+          {
+            // Gemelo para APP_ENV != prod. El lease es global por contenedor:
+            // un backend de desarrollo que compartiera 'work_events' entraría
+            // al plano de control de producción. Declarado aquí para que exista
+            // por construcción, no como un error que alguien tenga que leer.
+            name: 'work_events_dev'
+            paths: [
+              '/pk'
+            ]
+            kind: 'Hash'
+            version: 2
+          }
         ]
       }
     ]

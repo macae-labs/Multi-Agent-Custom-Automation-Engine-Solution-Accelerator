@@ -9,18 +9,25 @@
   es ``exit_code``/``stdout``/``stderr`` verbatim del payload de la tool
   (``format_success_response``). Un error de la tool es fallo de capacidad.
 
-La referencia es durable y de config (``INCIDENT_REGISTRY_USER_ID`` /
-``INCIDENT_REGISTRY_WORKSPACE_ID``), nunca la sesión de un usuario.
+El registro se descubre por CONTENIDO, no por configuración: es el workspace
+que contiene ``docs/incidents``. Nada que declarar, nada que marcar, nada que
+poner en variables de entorno: se clona el repo en un workspace desde la UI y
+el reconciliador lo encuentra.
 """
 
 import json
 import logging
+import subprocess
 from typing import Any, Optional
 
 from agent_framework import MCPStreamableHTTPTool
 
-from common.config.app_config import config
-from v4.common.services.workspace_service import _resolve, workspace_for
+from v4.common.services.workspace_service import (
+    REGISTRY_WORKSPACE_ID,
+    WORKSPACE_ROOT,
+    _resolve,
+    workspace_for,
+)
 from v4.control.incident_revalidation import Evidence, Executor, Registry
 from v4.magentic_agents.models.agent_models import MCPConfig
 
@@ -41,6 +48,12 @@ class WorkspaceCapability:
         self.user_id = user_id
         self.workspace_id = workspace_id
         self._tool = tool
+        #: Commit del registro leído en el último ``registry()``.
+        self.source = ""
+        #: Sólo el workspace propio del reconciliador se adelanta.
+        self.owned = workspace_id == REGISTRY_WORKSPACE_ID
+        #: Una condición estable se registra al cambiar, no en cada vuelta.
+        self._said_foreign = False
 
     async def _mcp(self) -> MCPStreamableHTTPTool:
         if self._tool is None:
@@ -60,8 +73,53 @@ class WorkspaceCapability:
                 logger.debug("MCP tool close: %s", ex)
             self._tool = None
 
+    def _head(self, ws: Any) -> str:
+        """Commit del clon. El backend monta el mismo share, así que es git local."""
+        try:
+            done = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=ws, capture_output=True, timeout=15
+            )
+        except (OSError, subprocess.SubprocessError) as ex:
+            logger.warning("HEAD del registro ilegible: %s", ex)
+            return ""
+        return done.stdout.decode().strip() if done.returncode == 0 else ""
+
+    async def _fast_forward(self) -> None:  # noqa: D401
+        """Adelanta el registro antes de leerlo: un clon que nadie sincroniza es
+        una foto que se pudre y cada merge lo deja más atrás.
+
+        Sólo en el workspace propio (``incident-registry``): el del usuario en
+        Monaco y el de los agentes se leen tal cual, nunca se les hace merge por
+        debajo. Si el árbol divergió, git falla, se registra el motivo y se sigue
+        con lo que hay; el commit queda en la evidencia, así que un registro
+        viejo se delata en vez de mentir en silencio."""
+        if not self.owned:
+            if not self._said_foreign:
+                self._said_foreign = True
+                logger.info(
+                    "Registro en un workspace ajeno (%s): se lee tal cual, sin "
+                    "adelantar",
+                    self.workspace_id,
+                )
+            return
+        try:
+            evidence = await self.execute(
+                "git fetch --quiet origin && git merge --ff-only --quiet @{u}", ""
+            )
+        except Exception as ex:  # la capacidad no está disponible: se lee lo que hay
+            logger.warning("Registro sin adelantar (%s): %s", type(ex).__name__, ex)
+            return
+        if evidence.exit_code != 0:
+            logger.warning(
+                "Registro sin adelantar (exit %d): %s",
+                evidence.exit_code,
+                (evidence.stderr or evidence.stdout).strip()[-200:],
+            )
+
     async def registry(self) -> list[dict[str, Any]]:
+        await self._fast_forward()
         ws = workspace_for(self.user_id, self.workspace_id)
+        self.source = self._head(ws)
         base = _resolve(ws, INCIDENTS_DIR)
         incidents: list[dict[str, Any]] = []
         if not base.is_dir():
@@ -107,20 +165,43 @@ class WorkspaceCapability:
             exit_code=int(details["exit_code"]),
             stdout=str(details.get("stdout", "")),
             stderr=str(details.get("stderr", "")),
+            source=self.source,
         )
 
 
-def from_config() -> Optional[WorkspaceCapability]:
-    """``None`` si la referencia durable no está configurada: el reconciliador
-    entonces sólo reacciona a eventos humanos, y lo dice en el log."""
-    user_id = config.INCIDENT_REGISTRY_USER_ID
-    workspace_id = config.INCIDENT_REGISTRY_WORKSPACE_ID
-    if not (user_id and workspace_id and config.MCP_SERVER_ENDPOINT):
-        logger.info(
-            "Registro de INC no configurado (INCIDENT_REGISTRY_USER_ID / "
-            "INCIDENT_REGISTRY_WORKSPACE_ID / MCP_SERVER_ENDPOINT)"
+def discover() -> Optional[WorkspaceCapability]:
+    """El workspace que contiene ``docs/incidents``. ``None`` si no hay ninguno
+    o si hay varios: con varios no se adivina, se nombran en el log."""
+    if not WORKSPACE_ROOT.is_dir():
+        logger.info("Registro de INC: no existe la raíz %s", WORKSPACE_ROOT)
+        return None
+    found: list[tuple[str, str]] = []
+    for user_dir in sorted(p for p in WORKSPACE_ROOT.iterdir() if p.is_dir()):
+        for ws in sorted(user_dir.iterdir()):
+            if (ws.is_dir() or ws.is_symlink()) and any(
+                (ws / INCIDENTS_DIR).glob("*.json")
+            ):
+                found.append((user_dir.name, ws.name))
+    # El workspace propio gana sin ambigüedad: es el único que el reconciliador
+    # posee y adelanta. Los demás sólo cuentan si no existe.
+    owned = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
+    if len(owned) == 1:
+        user_id, workspace_id = owned[0]
+        logger.info("Registro de INC (propio): %s/%s", user_id, workspace_id)
+        return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id)
+    if not found:
+        logger.info("Registro de INC: ningún workspace contiene %s", INCIDENTS_DIR)
+        return None
+    if len(found) > 1:
+        logger.warning(
+            "Registro de INC ambiguo (%d): %s. El reconciliador no origina "
+            "trabajo hasta que quede uno.",
+            len(found),
+            ", ".join(f"{u}/{w}" for u, w in found),
         )
         return None
+    user_id, workspace_id = found[0]
+    logger.info("Registro de INC: %s/%s", user_id, workspace_id)
     return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id)
 
 

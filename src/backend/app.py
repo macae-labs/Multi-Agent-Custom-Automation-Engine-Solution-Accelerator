@@ -29,11 +29,11 @@ async def lifespan(app: FastAPI):
     # Work-event reconciler: the only path that transitions parked plans.
     # Pending events survive a restart; this task drains them.
     from v4.control.reconciler import Reconciler, get_reconciler, set_reconciler
-    from v4.control.workspace_capability import bind, from_config
+    from v4.control.workspace_capability import bind, discover
 
     # Incremento 4: con la referencia durable del registro configurada el loop
     # además origina trabajo (INC vencidos); sin ella, sólo eventos humanos.
-    capability = from_config()
+    capability = discover()
     if capability is not None:
         registry, execute = bind(capability)
         set_reconciler(Reconciler(registry=registry, execute=execute))

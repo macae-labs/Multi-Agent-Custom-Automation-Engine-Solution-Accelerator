@@ -90,12 +90,19 @@ class MCPConnectionsService:
             self._client = CosmosClient(
                 url=endpoint, credential=config.get_cosmos_credential_async()
             )
-            db = self._client.get_database_client(config.COSMOSDB_DATABASE)
-
-            # Provisionado por infra/main.bicep; la cuenta prohíbe crear
-            # contenedores por data-plane, así que aquí sólo se abre.
-            self._container = db.get_container_client(container_name)
-            await self._container.read()
+            # El ciclo de vida se guarda desde la ADQUISICIÓN: cualquier fallo
+            # tras crear el cliente lo cierra, o queda una sesión aiohttp abierta.
+            try:
+                db = self._client.get_database_client(config.COSMOSDB_DATABASE)
+                # Provisionado por infra/main.bicep; la cuenta prohíbe crear
+                # contenedores por data-plane, así que aquí sólo se abre.
+                self._container = db.get_container_client(container_name)
+                await self._container.read()
+            except BaseException:
+                self._container = None
+                await self._client.close()
+                self._client = None
+                raise
 
             self._initialized = True
             logger.info(

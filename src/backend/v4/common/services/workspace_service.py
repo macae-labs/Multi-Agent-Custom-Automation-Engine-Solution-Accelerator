@@ -45,6 +45,10 @@ WORKSPACE_ROOT = Path(
 MAX_FILE_BYTES = 1 * 1024 * 1024  # 1 MB
 MAX_LIST_ENTRIES = 1000
 _META_FILE = ".macae_workspace_meta.json"
+#: Workspace propio del reconciliador (registro de incidentes). Convención, no
+#: configuración: si existe con este id, él lo mantiene al día; cualquier otro
+#: workspace se lee tal cual porque es del usuario o de los agentes.
+REGISTRY_WORKSPACE_ID = "incident-registry"
 
 # Leading alphanumeric forbids dotfiles, "." and ".." outright; no separators.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")

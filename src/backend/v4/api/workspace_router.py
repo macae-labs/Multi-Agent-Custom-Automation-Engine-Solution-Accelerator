@@ -43,6 +43,7 @@ from v4.common.services.workspace_service import (
     _SAFE_REF,
     MAX_FILE_BYTES,
     MAX_LIST_ENTRIES,
+    REGISTRY_WORKSPACE_ID,
     WORKSPACE_ROOT,
     _clone_into,
     _contained,
@@ -595,6 +596,13 @@ class WorkspaceSummary(BaseModel):
     name: str
     created_at: str  # ISO-8601
     file_count: int
+    #: Rama actual del workspace: lo que el usuario necesita ver para saber
+    #: contra qué trabaja, sin leer logs. Vacío si no es un repo con ramas.
+    branch: str = ""
+    #: Este workspace es el registro de incidentes: contiene docs/incidents.
+    #: Cuando además es el propio del reconciliador, él lo mantiene al día.
+    is_incident_registry: bool = False
+    reconciler_owned: bool = False
 
 
 class WorkspaceListResponse(BaseModel):
@@ -633,10 +641,18 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
         if not (entry / _META_FILE).exists():
             continue
         meta = _read_meta(entry)
+        head = _git(entry, "rev-parse", "--abbrev-ref", "HEAD")
         results.append(
             WorkspaceSummary(
                 workspace_id=entry.name,
                 name=meta.get("name", entry.name),
+                branch=(
+                    head.stdout.decode("utf-8", errors="replace").strip()
+                    if head.returncode == 0
+                    else ""
+                ),
+                is_incident_registry=any((entry / "docs/incidents").glob("*.json")),
+                reconciler_owned=entry.name == REGISTRY_WORKSPACE_ID,
                 created_at=meta.get(
                     "created_at",
                     datetime.fromtimestamp(

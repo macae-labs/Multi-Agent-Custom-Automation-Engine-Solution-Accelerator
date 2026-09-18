@@ -41,12 +41,17 @@ class Evidence:
     exit_code: int
     stdout: str
     stderr: str
+    #: Commit del registro contra el que corrió la sonda. Sin esto un
+    #: ``reconciled`` dice "sano" sin decir de qué árbol, y un registro viejo
+    #: produce alarmas falsas en silencio.
+    source: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "exit_code": self.exit_code,
             "stdout": self.stdout[-EVIDENCE_TAIL:],
             "stderr": self.stderr[-EVIDENCE_TAIL:],
+            "source": self.source,
         }
 
 

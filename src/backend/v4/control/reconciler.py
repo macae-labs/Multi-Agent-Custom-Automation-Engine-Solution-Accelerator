@@ -24,6 +24,7 @@ apila ``incident_expiry`` por vencimiento (``rearm_due``).
 import asyncio
 import logging
 from datetime import datetime
+from time import monotonic
 from typing import Any, Callable, Optional
 
 from agent_framework import Content
@@ -58,6 +59,10 @@ logger = logging.getLogger(__name__)
 
 LEASE_TTL_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 5.0
+# El loop de eventos late cada 5 s porque una decisión humana debe aplicarse ya.
+# El registro de INC no: sus vencimientos son de días y escanearlo cada vuelta
+# haría glob y lectura de todos los JSON sobre el share cada 5 s.
+REGISTRY_SCAN_INTERVAL_SECONDS = 300.0
 
 
 async def find_parked_plan(
@@ -154,6 +159,7 @@ class Reconciler:
         self._registry = registry
         self._execute = execute
         self._now = now
+        self._next_scan = 0.0
         self.holder = new_holder_id()
         self._wake = asyncio.Event()
         # Tokens OBO por evento, sólo en proceso: el documento nunca los lleva.
@@ -187,7 +193,8 @@ class Reconciler:
         if self._last_seen_holder != self.holder:
             logger.info("Lease acquired by %s", self.holder)
             self._last_seen_holder = self.holder
-        if self._registry is not None:
+        if self._registry is not None and monotonic() >= self._next_scan:
+            self._next_scan = monotonic() + REGISTRY_SCAN_INTERVAL_SECONDS
             await rearm_due(await self._registry(), self.store, self._now())
         applied = 0
         for event in await self.store.pending():

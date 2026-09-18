@@ -15,7 +15,11 @@ import pytest
 
 import v4.common.services.workspace_service as ws_mod
 import v4.control.workspace_capability as wc
-from v4.control.workspace_capability import WorkspaceCapability, from_config
+from v4.control.workspace_capability import (
+    REGISTRY_WORKSPACE_ID,
+    WorkspaceCapability,
+    discover,
+)
 
 INC = {
     "incident_id": "INC-2026-004",
@@ -65,6 +69,7 @@ class FakeTool:
 def clone(tmp_path, monkeypatch):
     root = tmp_path / "workspaces"
     monkeypatch.setattr(ws_mod, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(wc, "WORKSPACE_ROOT", root)
     ws = root / "reg-user" / "macae-clone"
     (ws / "docs" / "incidents" / "probes").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(ws)], check=True)
@@ -109,15 +114,79 @@ async def test_tool_error_is_a_capability_failure_not_evidence(cap):
         await cap.execute("boom", ".")
 
 
-def test_from_config_requires_the_durable_reference(monkeypatch):
-    monkeypatch.setattr(wc.config, "INCIDENT_REGISTRY_USER_ID", None, raising=False)
-    monkeypatch.setattr(
-        wc.config, "INCIDENT_REGISTRY_WORKSPACE_ID", "ws", raising=False
+def test_discover_finds_the_workspace_that_holds_the_registry(clone):
+    """Cero configuración: el registro es el workspace que tiene docs/incidents."""
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("reg-user", "macae-clone")
+
+
+def test_discover_returns_nothing_when_no_workspace_holds_a_registry(
+    tmp_path, monkeypatch
+):
+    empty = tmp_path / "vacia"
+    (empty / "otro-user" / "sin-registro").mkdir(parents=True)
+    monkeypatch.setattr(ws_mod, "WORKSPACE_ROOT", empty)
+    monkeypatch.setattr(wc, "WORKSPACE_ROOT", empty)
+
+    assert discover() is None
+
+
+def test_discover_refuses_to_guess_between_two_registries(clone, caplog):
+    root = clone.parent.parent
+    second = root / "otro-user" / "otro-clon"
+    (second / "docs" / "incidents").mkdir(parents=True)
+    (second / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+
+    with caplog.at_level("WARNING"):
+        assert discover() is None
+
+    assert "ambiguo" in caplog.text
+    assert "otro-user/otro-clon" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_workspace_is_read_as_is_never_fast_forwarded(cap, caplog):
+    """El workspace del usuario en Monaco no recibe merge por debajo."""
+    assert cap.owned is False
+
+    with caplog.at_level("INFO"):
+        await cap.registry()
+        await cap.registry()
+        await cap.registry()
+
+    # Condición estable: se dice una vez, no en cada vuelta del reconciliador.
+    assert caplog.text.count("se lee tal cual, sin adelantar") == 1
+    assert [name for name, _ in cap._tool.calls] == []
+
+
+@pytest.mark.asyncio
+async def test_the_reconcilers_own_workspace_is_fast_forwarded_before_reading(clone):
+    own = clone.parent / REGISTRY_WORKSPACE_ID
+    clone.rename(own)
+    cap = WorkspaceCapability(
+        user_id="reg-user", workspace_id=REGISTRY_WORKSPACE_ID, tool=FakeTool()
     )
-    monkeypatch.setattr(
-        wc.config, "MCP_SERVER_ENDPOINT", "http://mcp/mcp", raising=False
-    )
-    assert from_config() is None
-    monkeypatch.setattr(wc.config, "INCIDENT_REGISTRY_USER_ID", "u", raising=False)
-    cap = from_config()
-    assert cap is not None and (cap.user_id, cap.workspace_id) == ("u", "ws")
+
+    assert cap.owned is True
+    incidents = await cap.registry()
+
+    name, args = cap._tool.calls[0]
+    assert name == "workspace_exec"
+    assert args["command"].startswith("git fetch --quiet origin && git merge --ff-only")
+    assert args["path"] == ""
+    assert [i["incident_id"] for i in incidents] == ["INC-2026-004"]
+
+
+def test_the_own_workspace_wins_over_any_other_registry(clone, caplog):
+    root = clone.parent.parent
+    own = root / "otro-user" / REGISTRY_WORKSPACE_ID
+    (own / "docs" / "incidents").mkdir(parents=True)
+    (own / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("otro-user", REGISTRY_WORKSPACE_ID)
+    assert cap.owned is True

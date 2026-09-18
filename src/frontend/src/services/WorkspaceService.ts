@@ -12,6 +12,12 @@ export interface WorkspaceSummary {
   name: string;
   created_at: string; // ISO-8601
   file_count: number;
+  /** Current branch; empty when the workspace has no branches. */
+  branch: string;
+  /** Holds docs/incidents, so the reconciler reads its registry from here. */
+  is_incident_registry: boolean;
+  /** The reconciler owns this one and keeps it up to date. */
+  reconciler_owned: boolean;
 }
 
 export interface WorkspaceCreateRequest {

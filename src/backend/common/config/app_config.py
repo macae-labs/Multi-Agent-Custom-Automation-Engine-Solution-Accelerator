@@ -100,14 +100,22 @@ class AppConfig:
         # global por contenedor, así que un backend de desarrollo que comparta
         # `work_events` con producción entregaría sus planes al loop de
         # producción. El .env local apunta a `work_events_dev`.
-        self.WORK_EVENTS_CONTAINER = self._get_optional(
-            "WORK_EVENTS_CONTAINER", "work_events"
-        )
 
         self.APPLICATIONINSIGHTS_CONNECTION_STRING = self._get_required(
             "APPLICATIONINSIGHTS_CONNECTION_STRING"
         )
         self.APP_ENV = self._get_required("APP_ENV", "prod")
+
+        # El contenedor por defecto NO puede ser el de producción: un proceso de
+        # desarrollo sin configurar nada se uniría en silencio al plano de
+        # control real y, al expirar el lease de la revisión viva, procesaría
+        # eventos de producción desde un portátil. Fuera de prod el defecto es
+        # el contenedor de desarrollo; si no está provisionado, el EventStore
+        # lo dice por su nombre y el reconciliador no origina trabajo.
+        self.WORK_EVENTS_CONTAINER = self._get_optional(
+            "WORK_EVENTS_CONTAINER",
+            "work_events" if self.APP_ENV.lower() == "prod" else "work_events_dev",
+        )
 
         self.AZURE_COGNITIVE_SERVICES = self._get_optional(
             "AZURE_COGNITIVE_SERVICES", "https://cognitiveservices.azure.com/.default"
@@ -221,13 +229,6 @@ class AppConfig:
         # Optional MCP server endpoint (for local MCP server or remote)
         # Example: http://127.0.0.1:8000/mcp
         self.MCP_SERVER_ENDPOINT = self._get_optional("MCP_SERVER_ENDPOINT")
-        # Incident registry: durable reference for the reconciler to read INC
-        # definitions and execute revalidation probes. Without these the
-        # reconciler only reacts to human events (clarification, plan_review).
-        self.INCIDENT_REGISTRY_USER_ID = self._get_optional("INCIDENT_REGISTRY_USER_ID")
-        self.INCIDENT_REGISTRY_WORKSPACE_ID = self._get_optional(
-            "INCIDENT_REGISTRY_WORKSPACE_ID"
-        )
         # PUBLIC ca-mcp (MacaeMcpServer) endpoint reachable by the Azure model
         # service when the Responses API attaches ca-mcp DIRECTLY (needed so the
         # identity header survives — the Foundry Toolbox proxy strips it). In prod
