@@ -85,5 +85,6 @@ def test_toolbox_parsing_and_headers_for_each_toolbox(monkeypatch):
         "https://acct.example.com/api/projects/proj/toolboxes/Ops/versions/v2/mcp?api-version=v1",
     ]
     assert all(
-        tool["headers"].get("Foundry-Features") == "Toolboxes=V1Preview" for tool in tools
+        tool["headers"].get("Foundry-Features") == "Toolboxes=V1Preview"
+        for tool in tools
     )

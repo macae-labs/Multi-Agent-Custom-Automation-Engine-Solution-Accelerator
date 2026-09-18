@@ -1273,7 +1273,11 @@ const PlanPage: React.FC = () => {
       // If a plan is present, loadPlanData already merges the related
       // chat session history. Loading /session first creates duplicate
       // GETs and races the plan state.
-      if (routeSessionId && !planId) {
+      // El stream crea la sesión y navega a /session/:id EN PLENO streaming.
+      // Recargar el historial aquí reemplaza la lista viva por lo persistido a
+      // medias: corta el texto, borra la burbuja del usuario y rotula
+      // Group_Chat_Manager lo que el agente ya había firmado.
+      if (routeSessionId && !planId && !chatAbortRef.current) {
         await loadSessionHistory(routeSessionId);
       }
 
