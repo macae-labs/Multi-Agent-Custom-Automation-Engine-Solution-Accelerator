@@ -123,7 +123,7 @@ async def apply_incident_expiry(
             )
         if decision["payload"].get("decision") != "approve":
             raise RuntimeError(f"{incident_id}: sonda rechazada por humano")
-    evidence = await execute(probe["command_or_test"], probe["cwd"])
+    evidence = await execute(probe["command_or_test"], probe.get("cwd", ""))
     operational = evidence.exit_code == 0
     await store.append(
         KIND_RECONCILED,
