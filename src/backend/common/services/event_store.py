@@ -174,17 +174,27 @@ class EventStore:
         self._client = CosmosClient(
             url=endpoint, credential=config.get_cosmos_credential_async()
         )
-        database = self._client.get_database_client(db_name)
-        # Provisionado por infra/main.bicep (la cuenta prohíbe crear contenedores
-        # por data-plane: disableKeyBasedMetadataWriteAccess). Aquí sólo se abre.
-        self._container = database.get_container_client(config.WORK_EVENTS_CONTAINER)
+        # El ciclo de vida se guarda desde la ADQUISICIÓN: cualquier fallo tras
+        # crear el cliente lo cierra. Con el try empezando en el read, un fallo
+        # al resolver la base dejaba la sesión aiohttp abierta.
         try:
+            database = self._client.get_database_client(db_name)
+            # Provisionado por infra/main.bicep (la cuenta prohíbe crear
+            # contenedores por data-plane). Aquí sólo se abre.
+            self._container = database.get_container_client(
+                config.WORK_EVENTS_CONTAINER
+            )
             await self._container.read()
-        except exceptions.CosmosResourceNotFoundError as missing:
-            raise RuntimeError(
-                f"Cosmos container '{config.WORK_EVENTS_CONTAINER}' is not provisioned "
-                "(infra/main.bicep declares it; deploy the infra first)"
-            ) from missing
+        except BaseException as failure:
+            self._container = None
+            await self.aclose()
+            if isinstance(failure, exceptions.CosmosResourceNotFoundError):
+                raise RuntimeError(
+                    f"Cosmos container '{config.WORK_EVENTS_CONTAINER}' is not "
+                    "provisioned (infra/main.bicep declares work_events and "
+                    "work_events_dev; deploy the infra first)"
+                ) from failure
+            raise
         logger.info("EventStore listo (container=%s)", config.WORK_EVENTS_CONTAINER)
         return self._container
 
