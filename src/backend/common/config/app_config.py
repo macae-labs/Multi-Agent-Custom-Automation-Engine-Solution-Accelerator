@@ -114,7 +114,7 @@ class AppConfig:
         # lo dice por su nombre y el reconciliador no origina trabajo.
         self.WORK_EVENTS_CONTAINER = self._get_optional(
             "WORK_EVENTS_CONTAINER",
-            "work_events" if self.APP_ENV == "prod" else "work_events_dev",
+            "work_events" if self.APP_ENV.lower() == "prod" else "work_events_dev",
         )
 
         self.AZURE_COGNITIVE_SERVICES = self._get_optional(
