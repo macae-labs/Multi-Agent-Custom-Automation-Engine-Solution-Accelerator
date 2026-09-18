@@ -915,6 +915,22 @@ async def _get_previous_intent(
     return None
 
 
+#: Memoria larga: cuántos resultados pedirle al índice.
+RECALL_TOP_K = 15
+
+
+def _recall_note(hit: dict, content: str) -> str:
+    """Un recuerdo se presenta como recuerdo: de qué sesión y de cuándo."""
+    nombre = str(hit.get("session_name") or "").strip()
+    cuando = str(hit.get("timestamp") or "")[:10]
+    quien = "el usuario" if hit.get("role") == "user" else "el asistente"
+    origen = f"sesión «{nombre}»" if nombre else "otra sesión"
+    return (
+        f"[recuerdo de {origen}{f', {cuando}' if cuando else ''}] "
+        f"{quien} dijo: {content}"
+    )
+
+
 async def _recover_session_context(
     chat_svc: Any,
     session_id: str,
@@ -943,13 +959,24 @@ async def _recover_session_context(
         hits = await search_svc.search_chat_history(
             query=current_message,
             user_id=user_id,
-            top_k=15,
+            top_k=RECALL_TOP_K,
         )
+        # La memoria larga es RECUERDO, no conversación. Antes entraba con el rol
+        # original, así que quince turnos de otras sesiones eran indistinguibles
+        # de lo que el usuario acaba de decir y el modelo planificaba con ellos
+        # (un roster de agentes de audio para auditar un repo). Misma regla que
+        # ya rige para la evidencia de herramientas: atribuida a ``system``.
+        # Sin umbral de relevancia: medido contra el índice real, el reranker
+        # puntúa 1.9–2.9 tanto a lo pertinente como a lo ajeno, así que un piso
+        # no separa nada. Lo que separa es que el recuerdo se vea como recuerdo.
         for h in sorted(hits, key=lambda x: x.get("timestamp", "")):
+            # Esta sesión ya entra completa y en orden por la memoria corta.
+            if h.get("session_id") and h.get("session_id") == session_id:
+                continue
             c = _strip_turn_log_block(h.get("content"))
             if c and c != cur and c not in seen:
                 seen.add(c)
-                history.append({"role": h.get("role", "user"), "content": c})
+                history.append({"role": "system", "content": _recall_note(h, c)})
         session = await chat_svc.get_session(session_id, user_id)
         for m in (session or {}).get("messages", []):
             c = _strip_turn_log_block(m.get("content"))
