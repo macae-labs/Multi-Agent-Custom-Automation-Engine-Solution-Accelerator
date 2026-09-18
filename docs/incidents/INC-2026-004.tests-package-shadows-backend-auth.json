@@ -186,9 +186,9 @@
     "executable_probe": {
       "class": "read-only",
       "cwd": "src/backend",
-      "command_or_test": "PYTHONPATH=$PWD/../../docs/incidents/probes:$PWD/../..:$PWD uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker 2>&1 | grep -c MODTRACK ; find ../tests/backend -name __init__.py | wc -l ; grep -rlE 'sys\\.path\\.(insert|append)' ../tests/backend | wc -l",
-      "expected_signal_when_failing": "≥1 línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO y sesión de pytest en exit 1 (en CI, el job test en rojo), o algún __init__.py bajo src/tests/backend",
-      "expected_signal_when_healthy": "0 líneas MODTRACK, 0 __init__.py y 0 sys.path.insert; lote en un proceso sin xfail"
+      "command_or_test": "m=$(PYTHONPATH=$PWD/../../docs/incidents/probes:$PWD/../..:$PWD uv run python -m pytest ../../src/tests/backend -q -p module_identity_tracker 2>&1 | grep -c MODTRACK); i=$(find ../tests/backend -name __init__.py | wc -l); s=$(grep -rlE 'sys\\.path\\.(insert|append)' ../tests/backend | wc -l); echo \"MODTRACK=$m __init__=$i sys.path=$s\"; test \"$m$i$s\" = 000",
+      "expected_signal_when_failing": "exit 1: alguna cuenta distinta de 0 (línea MODTRACK <test>: <módulo|atributo> REEMPLAZADO|BORRADO, __init__.py bajo src/tests/backend o sys.path.insert)",
+      "expected_signal_when_healthy": "exit 0: MODTRACK=0 __init__=0 sys.path=0 (lote en un proceso sin xfail)"
     },
     "last_verified": "2026-09-16T07:10:52Z",
     "expires_if_not_reverified_by": "2026-12-14T03:44:29Z",

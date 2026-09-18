@@ -14,11 +14,17 @@ Transición por evento (``kind`` = ``waiting_for.kind``):
   ``MagenticPlanReviewResponse``; ``reject`` → ``cancel_parked``.
 Un evento cuyo plan ya no espera esa causa se cierra ``applied`` (la
 transición ya ocurrió: el evento es la causa, no la entrega).
+- ``incident_expiry`` → revalidación del INC (incremento 4): ejecuta la sonda
+  por la capacidad inyectada y persiste ``reconciled``; ``human_authority`` y
+  ``reconciled`` son hechos que esa transición consume por identidad.
+El loop además origina trabajo: con un ``registry`` de INC, cada iteración
+apila ``incident_expiry`` por vencimiento (``rearm_due``).
 """
 
 import asyncio
 import logging
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any, Callable, Optional
 
 from agent_framework import Content
 from agent_framework_orchestrations._magentic import MagenticPlanReviewResponse
@@ -30,21 +36,28 @@ from common.services.event_store import (
     STATUS_APPLIED,
     STATUS_FAILED,
     EventStore,
+    TransitionError,
     get_event_store,
     new_holder_id,
 )
 from v4.common.services.team_service import TeamService
 from v4.config.settings import orchestration_config
+from v4.control.incident_revalidation import (
+    KIND_AUTHORITY,
+    KIND_EXPIRY,
+    KIND_RECONCILED,
+    Executor,
+    Registry,
+    apply_incident_expiry,
+    rearm_due,
+    utcnow,
+)
 from v4.orchestration.orchestration_manager import OrchestrationManager
 
 logger = logging.getLogger(__name__)
 
 LEASE_TTL_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 5.0
-
-
-class TransitionError(Exception):
-    """El evento es válido pero el plan no puede transicionar ahora (409/404)."""
 
 
 async def find_parked_plan(
@@ -70,10 +83,21 @@ def _response_for(kind: str, payload: dict[str, Any]) -> Any:
 
 
 async def apply_event(
-    event: dict[str, Any], *, user_access_token: Optional[str] = None
+    event: dict[str, Any],
+    *,
+    user_access_token: Optional[str] = None,
+    store: Optional[EventStore] = None,
+    execute: Optional[Executor] = None,
 ) -> None:
     """Una transición por evento. Lanza ``TransitionError`` si no puede aún."""
     kind, request_id, payload = event["kind"], event["identity"], event["payload"]
+    if kind == KIND_EXPIRY:
+        await apply_incident_expiry(
+            event, store=store or get_event_store(), execute=execute
+        )
+        return
+    if kind in (KIND_AUTHORITY, KIND_RECONCILED):
+        return  # hechos consumidos por identidad desde la transición de incident_expiry
     user_id = payload["user_id"]
     memory_store = await DatabaseFactory.get_database(
         user_id=user_id, tenant_id=payload.get("tenant_id")
@@ -115,8 +139,21 @@ async def apply_event(
 
 
 class Reconciler:
-    def __init__(self, store: Optional[EventStore] = None) -> None:
+    def __init__(
+        self,
+        store: Optional[EventStore] = None,
+        *,
+        registry: Optional[Registry] = None,
+        execute: Optional[Executor] = None,
+        now: Callable[[], datetime] = utcnow,
+    ) -> None:
         self._store = store
+        # Incremento 4: el registro de INC y la capacidad de ejecución los inyecta
+        # quien arma el loop; sin ellos el reconciliador no origina trabajo y un
+        # ``incident_expiry`` pendiente se difiere con su motivo en el log.
+        self._registry = registry
+        self._execute = execute
+        self._now = now
         self.holder = new_holder_id()
         self._wake = asyncio.Event()
         # Tokens OBO por evento, sólo en proceso: el documento nunca los lleva.
@@ -124,6 +161,7 @@ class Reconciler:
         self._tokens: dict[str, str] = {}
         self._task: Optional[asyncio.Task[None]] = None
         self._stopping = False
+        self._last_seen_holder: Optional[str] = None
 
     @property
     def store(self) -> EventStore:
@@ -140,12 +178,25 @@ class Reconciler:
         """Una iteración: lease → pendientes → una transición cada uno."""
         lease = await self.store.acquire_lease(self.holder, LEASE_TTL_SECONDS)
         if not lease.held:
+            if lease.holder != self._last_seen_holder:
+                logger.info(
+                    "Lease held by %s; this instance is %s", lease.holder, self.holder
+                )
+                self._last_seen_holder = lease.holder
             return 0
+        if self._last_seen_holder != self.holder:
+            logger.info("Lease acquired by %s", self.holder)
+            self._last_seen_holder = self.holder
+        if self._registry is not None:
+            await rearm_due(await self._registry(), self.store, self._now())
         applied = 0
         for event in await self.store.pending():
             try:
                 await apply_event(
-                    event, user_access_token=self._tokens.pop(event["id"], None)
+                    event,
+                    user_access_token=self._tokens.pop(event["id"], None),
+                    store=self.store,
+                    execute=self._execute,
                 )
             except TransitionError as te:
                 logger.info("Event %s deferred: %s", event["id"], te)

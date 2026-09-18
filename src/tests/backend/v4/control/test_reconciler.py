@@ -79,8 +79,11 @@ def manager():
     m.cancel_parked.side_effect = _consume
     get_or_new = AsyncMock()
     with (
-        patch.object(reconciler_mod.DatabaseFactory,
-                     "get_database", AsyncMock(return_value=store)),
+        patch.object(
+            reconciler_mod.DatabaseFactory,
+            "get_database",
+            AsyncMock(return_value=store),
+        ),
         patch.object(reconciler_mod, "OrchestrationManager") as om,
     ):
         om.return_value = m
@@ -99,24 +102,31 @@ def _no_run_active():
 async def test_one_event_one_transition_and_duplicate_does_nothing(events, manager):
     manager.plans.append(_plan())
     rec = Reconciler(store=events)
-    first_append = await events.append("clarification", "req-1", {"user_id": USER, "answer": "sí"})
+    first_append = await events.append(
+        "clarification", "req-1", {"user_id": USER, "answer": "sí"}
+    )
     assert not first_append.duplicate
-    second_append = await events.append("clarification", "req-1", {"user_id": USER, "answer": "otra"})
+    second_append = await events.append(
+        "clarification", "req-1", {"user_id": USER, "answer": "otra"}
+    )
     assert second_append.duplicate
 
     assert await rec.run_once() == 1
     manager.mock.resume_orchestration.assert_awaited_once()
     args = manager.mock.resume_orchestration.await_args.args
     assert args[:4] == (USER, "s1", "p1", "req-1") and args[4].text == "sí"
-    assert [d["status"] for d in events._container.docs.values() if d["pk"] != "lease"] == [
-        STATUS_APPLIED]
+    assert [
+        d["status"] for d in events._container.docs.values() if d["pk"] != "lease"
+    ] == [STATUS_APPLIED]
     # segunda vuelta: nada pendiente, nada transiciona
     assert await rec.run_once() == 0
     manager.mock.resume_orchestration.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_event_for_a_plan_no_longer_parked_is_closed_without_transition(events, manager):
+async def test_event_for_a_plan_no_longer_parked_is_closed_without_transition(
+    events, manager
+):
     manager.plans.append(_plan(request_id="other"))
     await events.append("clarification", "req-1", {"user_id": USER, "answer": "x"})
     assert await Reconciler(store=events).run_once() == 1
@@ -134,7 +144,11 @@ async def test_reject_cancels_and_revise_resumes_with_feedback(events, manager):
     manager.mock.resume_orchestration.assert_not_awaited()
 
     manager.plans[0] = _plan(kind="plan_review", request_id="r2")
-    await events.append("plan_review", "r2", {"user_id": USER, "decision": "revise", "feedback": "más corto"})
+    await events.append(
+        "plan_review",
+        "r2",
+        {"user_id": USER, "decision": "revise", "feedback": "más corto"},
+    )
     await rec.run_once()  # mismo poseedor del lease
     response = manager.mock.resume_orchestration.await_args.args[4]
     assert isinstance(response, MagenticPlanReviewResponse)
@@ -157,7 +171,9 @@ async def test_without_the_lease_no_event_is_read(events, manager):
 
 
 @pytest.mark.asyncio
-async def test_pending_event_survives_the_process_and_a_new_instance_applies_it(events, manager):
+async def test_pending_event_survives_the_process_and_a_new_instance_applies_it(
+    events, manager
+):
     manager.plans.append(_plan())
     await events.append("clarification", "req-1", {"user_id": USER, "answer": "x"})
     first = Reconciler(store=events)
@@ -168,7 +184,9 @@ async def test_pending_event_survives_the_process_and_a_new_instance_applies_it(
 
 
 @pytest.mark.asyncio
-async def test_failed_transition_is_marked_failed_and_does_not_block_others(events, manager):
+async def test_failed_transition_is_marked_failed_and_does_not_block_others(
+    events, manager
+):
     manager.plans.append(_plan(request_id="bad"))
     manager.plans.append(_plan(request_id="good"))
     manager.plans[1].plan_id = "p2"
@@ -184,12 +202,21 @@ async def test_failed_transition_is_marked_failed_and_does_not_block_others(even
     await events.append("clarification", "bad", {"user_id": USER, "answer": "x"})
     await events.append("clarification", "good", {"user_id": USER, "answer": "y"})
     assert await Reconciler(store=events).run_once() == 1
-    statuses = {d["id"]: d["status"]
-                for d in events._container.docs.values() if d["pk"] != "lease"}
-    assert statuses == {"clarification:bad": STATUS_FAILED,
-                        "clarification:good": STATUS_APPLIED}
-    assert "boom" in next(d for d in events._container.docs.values()
-                          if d["id"] == "clarification:bad")["error"]
+    statuses = {
+        d["id"]: d["status"]
+        for d in events._container.docs.values()
+        if d["pk"] != "lease"
+    }
+    assert statuses == {
+        "clarification:bad": STATUS_FAILED,
+        "clarification:good": STATUS_APPLIED,
+    }
+    assert (
+        "boom"
+        in next(
+            d for d in events._container.docs.values() if d["id"] == "clarification:bad"
+        )["error"]
+    )
 
 
 @pytest.mark.asyncio
@@ -209,28 +236,55 @@ async def test_terminal_fold_purges_the_checkpoint_lineage(fake_cosmos_container
     storage = CosmosCheckpointStorage(container=fake_cosmos_container)
     for name in ("wf-a", "wf-b"):
         for i in range(2):
-            await fake_cosmos_container.upsert_item(body={
-                "id": f"{name}-{i}", "checkpoint_id": f"{name}-{i}", "workflow_name": name,
-                "timestamp": f"2026-01-0{i + 1}", "graph_signature_hash": "h", "messages": {}, "state": {},
-                "iteration_count": i, "metadata": {}, "version": "1.0",
-                "pending_request_info_events": {}, "previous_checkpoint_id": None,
-            })
-    await fake_cosmos_container.upsert_item(body={
-        "id": "other-0", "checkpoint_id": "other-0", "workflow_name": "other",
-        "timestamp": "2026-01-01", "graph_signature_hash": "h", "messages": {}, "state": {},
-        "iteration_count": 0, "metadata": {}, "version": "1.0",
-        "pending_request_info_events": {}, "previous_checkpoint_id": None,
-    })
+            await fake_cosmos_container.upsert_item(
+                body={
+                    "id": f"{name}-{i}",
+                    "checkpoint_id": f"{name}-{i}",
+                    "workflow_name": name,
+                    "timestamp": f"2026-01-0{i + 1}",
+                    "graph_signature_hash": "h",
+                    "messages": {},
+                    "state": {},
+                    "iteration_count": i,
+                    "metadata": {},
+                    "version": "1.0",
+                    "pending_request_info_events": {},
+                    "previous_checkpoint_id": None,
+                }
+            )
+    await fake_cosmos_container.upsert_item(
+        body={
+            "id": "other-0",
+            "checkpoint_id": "other-0",
+            "workflow_name": "other",
+            "timestamp": "2026-01-01",
+            "graph_signature_hash": "h",
+            "messages": {},
+            "state": {},
+            "iteration_count": 0,
+            "metadata": {},
+            "version": "1.0",
+            "pending_request_info_events": {},
+            "previous_checkpoint_id": None,
+        }
+    )
     plan = _plan(workflow_names=["wf-a", "wf-b"])
-    with patch("v4.orchestration.orchestration_manager.get_checkpoint_storage", return_value=storage):
+    with patch(
+        "v4.orchestration.orchestration_manager.get_checkpoint_storage",
+        return_value=storage,
+    ):
         await OrchestrationManager()._purge_checkpoint_lineage(plan)
     assert set(fake_cosmos_container.docs) == {"other-0"}
 
 
 @pytest.mark.asyncio
-async def test_token_never_reaches_the_document_and_travels_in_memory_to_the_transition(events, manager):
+async def test_token_never_reaches_the_document_and_travels_in_memory_to_the_transition(
+    events, manager
+):
     manager.plans.append(_plan())
-    result = await events.append("clarification", "req-1", {"user_id": USER, "answer": "x"})
+    result = await events.append(
+        "clarification", "req-1", {"user_id": USER, "answer": "x"}
+    )
     rec = Reconciler(store=events)
     rec.wake(result.id, "obo-token")
     assert await rec.run_once() == 1
@@ -266,10 +320,25 @@ async def test_event_container_name_comes_from_config_per_environment(monkeypatc
         def get_database_client(self, name):
             return _DB()
 
-    monkeypatch.setattr(app_config, "COSMOSDB_ENDPOINT", "https://x.documents.azure.com:443/")
+    monkeypatch.setattr(
+        app_config, "COSMOSDB_ENDPOINT", "https://x.documents.azure.com:443/"
+    )
     monkeypatch.setattr(app_config, "COSMOSDB_DATABASE", "db")
     monkeypatch.setattr(app_config, "WORK_EVENTS_CONTAINER", "work_events_dev")
     monkeypatch.setattr(app_config, "get_cosmos_credential_async", lambda: "key")
     monkeypatch.setattr(es, "CosmosClient", _Client)
     await EventStore()._ensure_initialized()
     assert opened == ["work_events_dev"]
+
+
+@pytest.mark.asyncio
+async def test_lease_document_names_the_revision_that_holds_it(events, monkeypatch):
+    """INC-2026-008: el lease es ciego a la revisión; el holder al menos la nombra."""
+    monkeypatch.setenv("CONTAINER_APP_REVISION", "ca-backend--0000127")
+    rec = Reconciler(store=events)
+    assert rec.holder.startswith("ca-backend--0000127:")
+    await rec.run_once()
+    lease = await events._container.read_item("reconciler", partition_key="lease")
+    assert lease["holder"] == rec.holder
+    monkeypatch.delenv("CONTAINER_APP_REVISION")
+    assert Reconciler(store=events).holder.startswith("local:")
