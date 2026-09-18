@@ -12,7 +12,6 @@ import pytest
 
 import v4.api.workspace_router as wr
 import v4.common.services.workspace_service as ws_mod
-from v4.common.services.workspace_service import REGISTRY_WORKSPACE_ID
 
 USER = "listing-user"
 
@@ -70,9 +69,9 @@ def test_the_users_workspace_with_the_registry_is_marked_but_not_owned(root):
 
 
 def test_the_reconcilers_own_workspace_is_marked_as_owned(root):
-    make(root, REGISTRY_WORKSPACE_ID, branch="main", registry=True)
+    make(root, ws_mod.REGISTRY_WORKSPACE_ID, branch="main", registry=True)
 
-    summary = by_id(wr.list_workspaces(Req()))[REGISTRY_WORKSPACE_ID]
+    summary = by_id(wr.list_workspaces(Req()))[ws_mod.REGISTRY_WORKSPACE_ID]
 
     assert summary.is_incident_registry is True
     assert summary.reconciler_owned is True
