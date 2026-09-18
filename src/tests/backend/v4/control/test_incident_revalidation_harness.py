@@ -106,6 +106,24 @@ async def test_healthy_probe_records_evidence_and_operational_state(events, tmp_
 
 
 @pytest.mark.asyncio
+async def test_probe_without_cwd_runs_from_the_workspace_root(events):
+    """``cwd`` es opcional en incident.v1: ausente no es un fallo, es la raíz."""
+    inc = incident(command="pwd")
+    del inc["learn"]["executable_probe"]["cwd"]
+    seen: list[str] = []
+
+    async def capturing(command, cwd):
+        seen.append(cwd)
+        return ir.Evidence(0, "", "")
+
+    await reconciler(events, [inc], capturing).run_once()
+
+    assert seen == [""]
+    assert (await _event(events, ir.KIND_EXPIRY, inc))["status"] == STATUS_APPLIED
+    assert (await ir.operational_state(events, inc))["operational"] is True
+
+
+@pytest.mark.asyncio
 async def test_failing_probe_marks_needs_revalidation(events, tmp_path):
     inc = incident(command="echo roto >&2; exit 3")
 
