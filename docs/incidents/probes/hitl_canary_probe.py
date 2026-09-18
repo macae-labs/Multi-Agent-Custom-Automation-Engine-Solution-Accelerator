@@ -190,7 +190,8 @@ async def run(rev: str, team_id: str | None):
         check("equipo con ProxyAgent", bool(team_id or with_proxy), f"{len(with_proxy)} de {len(teams)}")
         team_id = team_id or with_proxy[0]["team_id"]
         if os.environ.get("HITL_SMOKE") == "1":
-            print("smoke: llamadas iniciales OK; sin corridas"); return 0 if all(results) else 1
+            print("smoke: llamadas iniciales OK; sin corridas")
+            return 0 if all(results) else 1
         st, body = api.call("POST", "/api/v4/select_team", {"team_id": team_id})
         check("select_team", st == 200, f"team={team_id[:8]}… http={st} {'' if st == 200 else body}")
         st, body = api.call("GET", "/api/v4/init_team?team_switched=true")
@@ -222,7 +223,8 @@ async def run(rev: str, team_id: str | None):
                 else:
                     st, body = api.call("POST", "/api/v4/events", {"kind": "clarification", "request_id": wf2["request_id"], "payload": {"answer": answers[min(i, 1)]}})
                 check(f"{label} clarification #{i + 1} {'user_clarification' if label == 'A' else '/events'}", st == 200, f"http={st} {body}")
-                rids.append(wf2["request_id"]); last = wf2["request_id"]
+                rids.append(wf2["request_id"])
+                last = wf2["request_id"]
             raise RuntimeError(f"{label}: más de 6 clarificaciones seguidas")
 
         # ── A: approve → clarificaciones → terminal (o continuar un plan ya aparcado: RESUME_PLAN_A)

@@ -221,6 +221,13 @@ class AppConfig:
         # Optional MCP server endpoint (for local MCP server or remote)
         # Example: http://127.0.0.1:8000/mcp
         self.MCP_SERVER_ENDPOINT = self._get_optional("MCP_SERVER_ENDPOINT")
+        # Incident registry: durable reference for the reconciler to read INC
+        # definitions and execute revalidation probes. Without these the
+        # reconciler only reacts to human events (clarification, plan_review).
+        self.INCIDENT_REGISTRY_USER_ID = self._get_optional("INCIDENT_REGISTRY_USER_ID")
+        self.INCIDENT_REGISTRY_WORKSPACE_ID = self._get_optional(
+            "INCIDENT_REGISTRY_WORKSPACE_ID"
+        )
         # PUBLIC ca-mcp (MacaeMcpServer) endpoint reachable by the Azure model
         # service when the Responses API attaches ca-mcp DIRECTLY (needed so the
         # identity header survives — the Foundry Toolbox proxy strips it). In prod

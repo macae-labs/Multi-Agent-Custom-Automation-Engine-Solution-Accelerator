@@ -38,13 +38,15 @@ class ManagerClient(BaseChatClient):
     async def _respond(self, messages) -> ChatResponse:
         prompt = (messages[-1].text or "").lower()
         if "is_request_satisfied" in prompt:
-            text = json.dumps({
-                "is_request_satisfied": {"reason": "r", "answer": True},
-                "is_in_loop": {"reason": "r", "answer": False},
-                "is_progress_being_made": {"reason": "r", "answer": True},
-                "next_speaker": {"reason": "r", "answer": "Worker"},
-                "instruction_or_question": {"reason": "r", "answer": "fin"},
-            })
+            text = json.dumps(
+                {
+                    "is_request_satisfied": {"reason": "r", "answer": True},
+                    "is_in_loop": {"reason": "r", "answer": False},
+                    "is_progress_being_made": {"reason": "r", "answer": True},
+                    "next_speaker": {"reason": "r", "answer": "Worker"},
+                    "instruction_or_question": {"reason": "r", "answer": "fin"},
+                }
+            )
         elif "final answer" in prompt:
             text = "FINAL"
         elif "plan" in prompt and "fact" not in prompt:
@@ -55,8 +57,9 @@ class ManagerClient(BaseChatClient):
 
 
 def _workflow(storage):
-    manager = StandardMagenticManager(agent=Agent(
-        client=ManagerClient(), name="MagenticManager"), max_round_count=3)
+    manager = StandardMagenticManager(
+        agent=Agent(client=ManagerClient(), name="MagenticManager"), max_round_count=3
+    )
     return MagenticBuilder(
         participants=[Agent(client=ManagerClient(), name="Worker")],
         manager=manager,
@@ -67,18 +70,26 @@ def _workflow(storage):
 
 async def _park(storage):
     workflow = _workflow(storage)
-    asks = [e async for e in workflow.run("tarea", stream=True) if e.type == "request_info"]
+    asks = [
+        e async for e in workflow.run("tarea", stream=True) if e.type == "request_info"
+    ]
     assert len(asks) == 1
     return workflow, asks[0]
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lineage(fake_cosmos_container):
+async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lineage(
+    fake_cosmos_container,
+):
     storage = CosmosCheckpointStorage(container=fake_cosmos_container)
     first, ask = await _park(storage)
     restored = await storage.get_latest(workflow_name=first.name)
     second = _workflow(storage)
-    await second.run(checkpoint_id=restored.checkpoint_id, checkpoint_storage=storage, responses={ask.request_id: MagenticPlanReviewResponse.approve()})
+    await second.run(
+        checkpoint_id=restored.checkpoint_id,
+        checkpoint_storage=storage,
+        responses={ask.request_id: MagenticPlanReviewResponse.approve()},
+    )
 
     segment2 = await storage.list_checkpoints(workflow_name=second.name)
     assert second.name != first.name and segment2
@@ -87,7 +98,11 @@ async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lin
     walked, current = [], segment2[-1]
     while current is not None:
         walked.append(current.checkpoint_id)
-        current = await storage.load(current.previous_checkpoint_id) if current.previous_checkpoint_id else None
+        current = (
+            await storage.load(current.previous_checkpoint_id)
+            if current.previous_checkpoint_id
+            else None
+        )
     # caminar la cadena deja huérfanos
     assert len(walked) < len(fake_cosmos_container.docs)
 
@@ -101,7 +116,9 @@ async def test_checkpoint_chain_does_not_cross_a_resume_so_retention_goes_by_lin
 
 
 @pytest.mark.asyncio
-async def test_event_identity_makes_the_second_delivery_a_conflict(fake_cosmos_container_factory):
+async def test_event_identity_makes_the_second_delivery_a_conflict(
+    fake_cosmos_container_factory,
+):
     events = fake_cosmos_container_factory(partition_path="pk")
     # Identidad = causa: id = f"{kind}:{identity}", pk = kind (el id es único
     # por partición, y la partición sale del evento, no de quién lo entrega).
@@ -116,19 +133,34 @@ async def test_event_identity_makes_the_second_delivery_a_conflict(fake_cosmos_c
     assert conflict.value.status_code == 409
     # una entrega registrada, una transición
     docs = list(events.docs.values())
-    assert [(d["status"], d["payload"]["decision"])
-            for d in docs] == [("pending", "approve")]
+    assert [(d["status"], d["payload"]["decision"]) for d in docs] == [
+        ("pending", "approve")
+    ]
     assert docs[0]["pk"] == "plan_review"
 
 
 @pytest.mark.asyncio
 async def test_lease_by_etag_rejects_the_stale_holder(fake_cosmos_container_factory):
     leases = fake_cosmos_container_factory(partition_path="pk")
-    doc = await leases.create_item(body={"id": "reconciler", "pk": "lease", "holder": "A"})
+    doc = await leases.create_item(
+        body={"id": "reconciler", "pk": "lease", "holder": "A"}
+    )
     etag_a = doc["_etag"]
-    held_by_b = await leases.replace_item("reconciler", {"id": "reconciler", "pk": "lease", "holder": "B"}, etag=etag_a, match_condition=MatchConditions.IfNotModified)
+    held_by_b = await leases.replace_item(
+        "reconciler",
+        {"id": "reconciler", "pk": "lease", "holder": "B"},
+        etag=etag_a,
+        match_condition=MatchConditions.IfNotModified,
+    )
     assert held_by_b["holder"] == "B" and held_by_b["_etag"] != etag_a
     with pytest.raises(exceptions.CosmosAccessConditionFailedError) as stale:
-        await leases.replace_item("reconciler", {"id": "reconciler", "pk": "lease", "holder": "A"}, etag=etag_a, match_condition=MatchConditions.IfNotModified)
+        await leases.replace_item(
+            "reconciler",
+            {"id": "reconciler", "pk": "lease", "holder": "A"},
+            etag=etag_a,
+            match_condition=MatchConditions.IfNotModified,
+        )
     assert stale.value.status_code == 412
-    assert (await leases.read_item("reconciler", partition_key="lease"))["holder"] == "B"
+    assert (await leases.read_item("reconciler", partition_key="lease"))[
+        "holder"
+    ] == "B"

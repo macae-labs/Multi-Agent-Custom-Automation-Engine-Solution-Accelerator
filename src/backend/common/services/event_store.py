@@ -15,6 +15,7 @@ Sin ``COSMOSDB_ENDPOINT`` el contenedor es en memoria con la misma semántica
 """
 
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,7 +29,17 @@ from common.config.app_config import config
 
 logger = logging.getLogger(__name__)
 
-EVENT_KINDS = frozenset({"clarification", "plan_review"})
+EVENT_KINDS = frozenset(
+    {
+        "clarification",
+        "plan_review",
+        # Incremento 4 (v4/control/incident_revalidation.py): la ocurrencia del
+        # vencimiento de un INC, la decisión humana por techo y la evidencia.
+        "incident_expiry",
+        "human_authority",
+        "reconciled",
+    }
+)
 LEASE_PK = "lease"
 LEASE_ID = "reconciler"
 
@@ -39,6 +50,10 @@ STATUS_FAILED = "failed"
 
 def event_id(kind: str, identity: str) -> str:
     return f"{kind}:{identity}"
+
+
+class TransitionError(Exception):
+    """El evento es válido pero no puede transicionar ahora: se difiere, no se cierra."""
 
 
 @dataclass(frozen=True)
@@ -204,6 +219,17 @@ class EventStore:
             return AppendResult(id=doc_id, duplicate=True)
         return AppendResult(id=doc_id, duplicate=False)
 
+    async def find(self, kind: str, identity: str) -> Optional[dict[str, Any]]:
+        """El evento de esa causa o ``None``: lectura por identidad, sin consulta."""
+        container = await self._ensure_initialized()
+        try:
+            doc = await container.read_item(
+                event_id(kind, identity), partition_key=kind
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        return dict(doc)
+
     async def pending(self) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
         docs = [
@@ -302,7 +328,14 @@ class EventStore:
 
 
 def new_holder_id() -> str:
-    return uuid.uuid4().hex
+    """``<revision>:<uuid>``: el documento del lease dice qué revisión lo tiene.
+
+    ``CONTAINER_APP_REVISION`` lo inyecta Container Apps; en local el prefijo
+    es ``local``. El lease es por contenedor y ciego a la revisión
+    (INC-2026-008): el prefijo es diagnóstico, no cerca.
+    """
+    revision = os.environ.get("CONTAINER_APP_REVISION") or "local"
+    return f"{revision}:{uuid.uuid4().hex}"
 
 
 _store: Optional[EventStore] = None

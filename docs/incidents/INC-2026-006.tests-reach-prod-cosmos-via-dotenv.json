@@ -222,9 +222,9 @@
     "executable_probe": {
       "class": "read-only",
       "cwd": "src/backend",
-      "command_or_test": "PYTHONPATH=$PWD/../..:$PWD:$PWD/../../docs/incidents/probes uv run python -m pytest ../../src/tests/backend/test_app.py -q -p module_identity_tracker -o log_cli=true 2>&1 | grep -cE 'documents\\.azure\\.com|20\\.15\\.9\\.68|Forbidden'",
-      "expected_signal_when_failing": "≥1 (hay tráfico o rechazo de Cosmos de producción durante test_app)",
-      "expected_signal_when_healthy": "0"
+      "command_or_test": "c=$(PYTHONPATH=$PWD/../..:$PWD:$PWD/../../docs/incidents/probes uv run python -m pytest ../../src/tests/backend/test_app.py -q -p module_identity_tracker -o log_cli=true 2>&1 | grep -cE 'documents\\.azure\\.com|20\\.15\\.9\\.68|Forbidden'); echo \"cosmos_prod_signals=$c\"; test \"$c\" = 0",
+      "expected_signal_when_failing": "exit 1: cosmos_prod_signals≥1 (hay tráfico o rechazo de Cosmos de producción durante test_app)",
+      "expected_signal_when_healthy": "exit 0: cosmos_prod_signals=0"
     },
     "last_verified": "2026-09-17T04:27:55Z",
     "expires_if_not_reverified_by": "2026-12-16T04:27:55Z",

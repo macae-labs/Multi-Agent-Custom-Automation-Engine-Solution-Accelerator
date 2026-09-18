@@ -5286,6 +5286,13 @@ async def post_work_event(event: WorkEventIn, request: Request):
             and not str(event.payload.get("feedback") or "").strip()
         ):
             raise HTTPException(status_code=400, detail="revise requires feedback")
+    if event.kind == "human_authority" and event.payload.get("decision") not in (
+        "approve",
+        "reject",
+    ):
+        raise HTTPException(
+            status_code=400, detail="decision must be approve or reject"
+        )
     duplicate = await _append_event(
         kind=event.kind,
         request_id=event.request_id,

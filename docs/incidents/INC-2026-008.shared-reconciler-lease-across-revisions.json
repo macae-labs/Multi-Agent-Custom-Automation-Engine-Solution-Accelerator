@@ -2,7 +2,7 @@
   "schema_version": "1",
   "incident_id": "INC-2026-008",
   "domain": "canary",
-  "status": "open",
+  "status": "closed",
   "invariant": {
     "id": "INV-ONE-RECONCILER-REVISION-PER-CONTAINER",
     "statement": "Por cada contenedor work_events hay exactamente una revisión ACTIVA (con réplica, sin importar el peso de tráfico) cuya imagen lleva el reconciliador: el lease no distingue revisiones, así que una revisión antigua activa procesa, con su código, los eventos que la nueva escribe. Tráfico 0 no es revisión desactivada."
@@ -82,6 +82,15 @@
       "human_approved_at": "2026-09-17T09:10:00Z",
       "executed_at": "2026-09-17T09:10:30Z",
       "description": "Winston desactivó la revisión 125 (az containerapp revision deactivate → 'Deactivate succeeded'); la réplica desapareció (RevisionNotFound) y el holder del lease cambió a la 126. Sonda ejecutable = 1."
+    },
+    {
+      "stage": "commit",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-17T23:30:00Z",
+      "description": "new_holder_id() = f\"{CONTAINER_APP_REVISION or 'local'}:{uuid4().hex}\" (common/services/event_store.py); el reconciliador registra en log quién posee el lease cuando cambia (v4/control/reconciler.py). Test: tests/backend/v4/control/test_reconciler.py::test_lease_document_names_the_revision_that_holds_it lee el documento del lease y afirma el prefijo de revisión."
     }
   ],
   "probe_budget": {
@@ -125,26 +134,26 @@
     "Promoción a la 126 y desactivación de revisiones antiguas con reconciliador en canaries futuros: regla operativa hasta que el lease lleve una cerca de época por revisión."
   ],
   "residual_risk": [
-    "Cualquier canary futuro con dos revisiones con reconciliador reproduce la firma mientras el lease sea ciego a la revisión; la regla operativa depende de un click humano hasta que el holder lleve la revisión y el reconciliador la registre."
+    "El lease sigue siendo por contenedor y ciego a la revisión: dos revisiones con reconciliador compiten igual; el holder sólo hace legible quién ganó. La cerca de época por revisión es un incremento aparte; hasta entonces rige la regla operativa de una sola revisión activa con reconciliador por contenedor."
   ],
   "validate": {
     "closing_layer": "L6",
     "layers": {
       "L0": {
-        "result": "n/a",
-        "observed": "Sin cambio de código en este ciclo."
+        "result": "pass",
+        "observed": "ruff check/format y mypy limpios en event_store.py y reconciler.py."
       },
       "L1": {
-        "result": "n/a",
-        "observed": "Sin cambio de código."
+        "result": "pass",
+        "observed": "tests/backend/v4/control: 14 passed (incluye el test del holder con revisión)."
       },
       "L2": {
-        "result": "n/a",
-        "observed": "Sin cambio de código."
+        "result": "pass",
+        "observed": "Suite de control con doble Cosmos del conftest; el documento del lease muestra holder=<revision>:<uuid>."
       },
       "L3": {
-        "result": "n/a",
-        "observed": "Sin cambio de código."
+        "result": "pass",
+        "observed": "Control negativo: sin CONTAINER_APP_REVISION el prefijo es 'local', afirmado en el mismo test."
       },
       "L4": {
         "result": "n/a",
@@ -177,12 +186,38 @@
     "executable_probe": {
       "class": "read-only",
       "cwd": ".",
-      "command_or_test": "az containerapp revision list -n ca-pslc25991vme66zmins -g arg-macaev4-8d1cceac --query \"[?properties.active && properties.replicas > `0`].properties.template.containers[0].image\" -o tsv | sed -E 's/.*:sha-//' | while read sha; do git merge-base --is-ancestor 89c8ff34 \"$sha\" 2>/dev/null && echo \"$sha\"; done | wc -l",
-      "expected_signal_when_failing": ">1 (varias revisiones activas con réplica cuya imagen desciende de #218, el commit que introdujo v4/control/reconciler.py)",
-      "expected_signal_when_healthy": "1"
+      "command_or_test": "n=$(az containerapp revision list -n ca-pslc25991vme66zmins -g arg-macaev4-8d1cceac --query \"[?properties.active && properties.replicas > `0`].properties.template.containers[0].image\" -o tsv | sed -E 's/.*:sha-//' | while read sha; do git merge-base --is-ancestor 89c8ff34 \"$sha\" 2>/dev/null && echo \"$sha\"; done | wc -l); echo \"reconciler_revisions=$n\"; test \"$n\" = 1",
+      "expected_signal_when_failing": "exit 1: reconciler_revisions>1 (varias revisiones activas con réplica cuya imagen desciende de #218, el commit que introdujo v4/control/reconciler.py)",
+      "expected_signal_when_healthy": "exit 0: reconciler_revisions=1"
     },
     "last_verified": "2026-09-17T09:35:36Z",
     "expires_if_not_reverified_by": "2026-12-16T09:05:18Z",
     "operational": true
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "ccfc26aa",
+      "commit_or_pr": "árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/common/services/event_store.py",
+      "src/backend/v4/control/reconciler.py",
+      "src/tests/backend/v4/control/test_reconciler.py"
+    ],
+    "new_functions_introduced": [],
+    "justification_if_new_functions": null
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Sin CONTAINER_APP_REVISION el holder queda 'local:<uuid>' (afirmado en test_lease_document_names_the_revision_that_holds_it); con la variable, el documento del lease nombra la revisión. El lease sigue ciego a la revisión: la competencia la evita la regla operativa (sonda ejecutable = 1)."
+    }
   }
 }

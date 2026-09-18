@@ -28,8 +28,15 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting MACAE application...")
     # Work-event reconciler: the only path that transitions parked plans.
     # Pending events survive a restart; this task drains them.
-    from v4.control.reconciler import get_reconciler
+    from v4.control.reconciler import Reconciler, get_reconciler, set_reconciler
+    from v4.control.workspace_capability import bind, from_config
 
+    # Incremento 4: con la referencia durable del registro configurada el loop
+    # además origina trabajo (INC vencidos); sin ella, sólo eventos humanos.
+    capability = from_config()
+    if capability is not None:
+        registry, execute = bind(capability)
+        set_reconciler(Reconciler(registry=registry, execute=execute))
     reconciler = get_reconciler()
     reconciler.start()
     yield
@@ -38,6 +45,8 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down MACAE application...")
     try:
         await reconciler.stop()
+        if capability is not None:
+            await capability.aclose()
     except Exception as rec_e:
         logger.warning(f"Reconciler stop warning (non-fatal): {rec_e}")
     try:
