@@ -1,27 +1,16 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Add the backend path to sys.path so we can import v4 modules
 backend_path = Path(__file__).parent.parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
-# Guard against sys.modules mock contamination from backend unit tests.
-# test_orchestration_manager.py sets:
-#   sys.modules["v4.orchestration.human_approval_manager"] = Mock(
-#       HumanApprovalMagenticManager=MockHumanApprovalMagenticManager
-#   )
-# which replaces real classes with test doubles that lack plan_to_obj etc.
-from unittest.mock import Mock as _MockCls
-
-_ham_module = sys.modules.get("v4.orchestration.human_approval_manager")
-if isinstance(_ham_module, _MockCls):
-    pytest.skip(
-        "Skipping: sys.modules mock contamination from backend unit tests",
-        allow_module_level=True,
-    )
-
+# El guardián que había aquí —un ``pytest.skip`` de módulo si
+# ``v4.orchestration.human_approval_manager`` venía mockeado— cubría una
+# contaminación que ya no existe: ``test_orchestration_manager.py`` instala sus
+# dobles con ``patch.dict(sys.modules, ...)``, con alcance. Lo único que podía
+# hacer era borrar estos ocho tests sin que nada lo dijera.
 from v4.models.models import MPlan
 from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
 
@@ -31,8 +20,16 @@ from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
 
 
 class _Obj:
-    def __init__(self, content: str):
-        self.content = content
+    """El ledger real entrega mensajes del framework, y esos exponen ``.text``.
+
+    ``_MagenticTaskLedger(facts=facts_msg, plan=plan_msg)`` en
+    ``agent_framework_orchestrations/_magentic.py``, que lee ``plan_msg.text``.
+    El doble exponía ``.content``: ``plan_to_obj`` caía al ``getattr(..., "")``
+    y devolvía un plan de cero pasos sin que nada fallara.
+    """
+
+    def __init__(self, text: str):
+        self.text = text
 
 
 class DummyLedger:
@@ -166,10 +163,7 @@ def test_plan_to_obj_resets_agent_each_line():
     assert mplan.steps[1].agent == "MagenticAgent"
 
 
-@pytest.mark.xfail(
-    reason="Current implementation duplicates text when a line ends with ':' due to prefix handling."
-)
-def test_plan_to_obj_colon_prefix_current_behavior():
+def test_plan_to_obj_keeps_a_line_ending_in_colon_intact():
     plan_text = """
 - **ResearchAgent** to gather quarterly metrics:
 """
@@ -186,10 +180,10 @@ def test_plan_to_obj_colon_prefix_current_behavior():
 
     # Expect 1 step
     assert len(mplan.steps) == 1
-    # Current code creates duplicated phrase if colon is present (likely a bug)
-    action = mplan.steps[0].action
-    # This assertion documents present behavior; adjust when you fix prefix logic.
-    assert action.count("gather quarterly metrics") == 1  # Will fail until fixed
+    # El xfail que cubría esto afirmaba una duplicación por el ':' final. Medido
+    # contra el converter real: action == "to gather quarterly metrics:", sin
+    # duplicar. El fallo venía del doble, que entregaba un plan vacío.
+    assert mplan.steps[0].action.count("gather quarterly metrics") == 1
 
 
 def test_plan_to_obj_empty_or_whitespace_plan():
