@@ -16,7 +16,7 @@ from agent_framework import (
 )
 
 # agent_framework imports
-from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
+from agent_framework_azure_ai import AzureAIClient
 from agent_framework_orchestrations import MagenticBuilder
 from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatRequestSentEvent,
@@ -287,9 +287,6 @@ class OrchestrationManager:
             manager_agent = Agent(
                 client=chat_client,
                 name="MagenticManager",
-                default_options=AzureAIProjectAgentOptions(
-                    store=True
-                ),  # Foundry persists conversation so the published agent keeps context across rounds
             )
 
             cls.logger.info(
