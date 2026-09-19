@@ -26,6 +26,30 @@ class InvalidConfigurationError(Exception):
     """Raised when agent configuration is invalid."""
 
 
+def _with_workspace(
+    instructions: str, user_id: str, workspace_id: Optional[str], has_mcp: bool
+) -> str:
+    """Decirle al agente CUÁL es su workspace, o se lo inventa.
+
+    El carril de chat ya lo hace; el de plan no lo hacía, y un agente con las
+    tools de MacaeMcpServer pero sin el identificador llamaba ``workspace_exec``
+    con un nombre inventado (``macae-local``) y respondía que no tenía acceso.
+    Sólo aplica a agentes con MCP: los demás no pueden tocar el workspace.
+    """
+    if not (has_mcp and workspace_id):
+        return instructions
+    return instructions + (
+        f"\n\nWORKSPACE: trabajas sobre el workspace persistente '{workspace_id}' "
+        f"del usuario '{user_id}'. Es el ÚNICO que puedes ver y ya está montado; "
+        "no existe ningún otro y no debes inventar su nombre. Para mirarlo usa "
+        "las tools de MacaeMcpServer pasando exactamente esos dos valores: "
+        f"workspace_list_entries {{user_id='{user_id}', workspace_id='{workspace_id}', "
+        "path=''}}, workspace_read_file, workspace_search_content y workspace_exec "
+        "para comandos (git status, git log, pruebas). Nunca afirmes que no tienes "
+        "acceso sin haber llamado antes a una de esas tools."
+    )
+
+
 class MagenticAgentFactory:
     """Factory for creating and managing magentic agents from JSON configurations."""
 
@@ -52,6 +76,7 @@ class MagenticAgentFactory:
         team_config: TeamConfiguration,
         memory_store: DatabaseBase,
         user_access_token: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> Union[FoundryAgentTemplate, ProxyAgent]:
         """
         Create an agent from configuration object.
@@ -146,7 +171,12 @@ class MagenticAgentFactory:
         agent = FoundryAgentTemplate(
             agent_name=agent_obj.name,
             agent_description=getattr(agent_obj, "description", ""),
-            agent_instructions=getattr(agent_obj, "system_message", ""),
+            agent_instructions=_with_workspace(
+                getattr(agent_obj, "system_message", ""),
+                user_id,
+                workspace_id,
+                use_mcp_value,
+            ),
             use_reasoning=use_reasoning,
             model_deployment_name=deployment_name,
             enable_code_interpreter=getattr(agent_obj, "coding_tools", False),
@@ -184,6 +214,7 @@ class MagenticAgentFactory:
         team_config_input: TeamConfiguration,
         memory_store: DatabaseBase,
         user_access_token: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> List:
         """
         Create and return a team of agents from JSON configuration.
@@ -215,6 +246,7 @@ class MagenticAgentFactory:
                         team_config_input,
                         memory_store,
                         user_access_token=user_access_token,
+                        workspace_id=workspace_id,
                     )
                     initalized_agents.append(agent)
                     self._agent_list.append(agent)  # Keep track for cleanup

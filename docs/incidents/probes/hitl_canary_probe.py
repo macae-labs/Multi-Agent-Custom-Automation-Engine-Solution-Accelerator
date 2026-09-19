@@ -113,7 +113,13 @@ class Api:
 
 
 class Cosmos:
-    def __init__(self):
+    def __init__(self, local: bool = False):
+        # El contenedor de eventos es el del ENTORNO BAJO PRUEBA: validando una
+        # revisión desplegada es el de producción, aunque el .env local apunte
+        # al de desarrollo. Leerlo del .env daba FAIL con los eventos en None.
+        self.events_container = (
+            os.environ.get("WORK_EVENTS_CONTAINER", "work_events") if local else "work_events"
+        )
         self.client = CosmosClient(url=os.environ["COSMOSDB_ENDPOINT"], credential=os.environ["COSMOSDB_KEY"])
         self.db = self.client.get_database_client(os.environ["COSMOSDB_DATABASE"])
         self.memory = self.db.get_container_client(os.environ["COSMOSDB_CONTAINER"])
@@ -126,7 +132,7 @@ class Cosmos:
         return None
 
     async def event(self, kind: str, identity: str):
-        c = self.db.get_container_client(os.environ.get("WORK_EVENTS_CONTAINER", "work_events"))
+        c = self.db.get_container_client(self.events_container)
         items = c.query_items(query="SELECT c.id, c.status, c.error, c.payload FROM c WHERE c.id=@i",
                               parameters=[{"name": "@i", "value": f"{kind}:{identity}"}])
         async for doc in items:
@@ -173,7 +179,8 @@ def terminal(d):
 
 
 async def run(rev: str, team_id: str | None):
-    api, cos, results, created = Api(rev), Cosmos(), [], []
+    api = Api(rev)
+    cos, results, created = Cosmos(local=api.local), [], []
 
     def check(stage, ok, detail=""):
         results.append(ok)
@@ -245,7 +252,9 @@ async def run(rev: str, team_id: str | None):
               f"{[(e and e['status']) for e in events]}")
         check("A sin token en los eventos", all("user_access_token" not in json.dumps(e.get("payload", {})) for e in events if e))
         names = doc.get("workflow_names") or []
-        check("A checkpoints del linaje purgados", len(names) >= 2 and await cos.checkpoints(names) == 0, f"segmentos={len(names)}")
+        # Cuántos segmentos haya depende de si la orquestación se reutilizó: no
+        # es invariante. Lo que sí lo es: ninguno conserva checkpoints al terminar.
+        check("A checkpoints del linaje purgados", bool(names) and await cos.checkpoints(names) == 0, f"segmentos={len(names)}")
 
         # ── B: revise → nuevo plan_review → approve → terminal
         _, plan_b = await new_plan("B")
@@ -263,7 +272,8 @@ async def run(rev: str, team_id: str | None):
         check("B terminal completed", doc.get("overall_status") == "completed", f"status={doc.get('overall_status')}")
         evr = await cos.event("plan_review", wfb["request_id"])
         check("B evento revise aplicado", bool(evr and evr["status"] == "applied"), f"{evr and evr['status']}")
-        check("B checkpoints purgados", await cos.checkpoints(doc.get("workflow_names") or []) == 0, f"segmentos={len(doc.get('workflow_names') or [])}")
+        _names_b = doc.get("workflow_names") or []
+        check("B checkpoints purgados", bool(_names_b) and await cos.checkpoints(_names_b) == 0, f"segmentos={len(_names_b)}")
     except Exception as e:
         check("excepción", False, f"{type(e).__name__}: {e}")
     finally:

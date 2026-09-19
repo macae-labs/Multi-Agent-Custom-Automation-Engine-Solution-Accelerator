@@ -819,6 +819,9 @@ async def _create_plan_and_start(
             team_config=team,
             team_switched=False,
             team_service=team_service,
+            # El workspace que el usuario tiene activo: los agentes lo necesitan
+            # para llamar a las tools de MacaeMcpServer con el id real.
+            workspace_id=workspace_id,
             force_rebuild=True,  # Always rebuild workflow for new tasks
             # OBO: agents built here run in a BackgroundTask under the app MI unless
             # they carry the user's assertion. Thread it so orchestration agents
@@ -5050,6 +5053,7 @@ async def resume_plan(
         team_service=team_service,
         force_rebuild=True,
         user_access_token=user_access_token,  # OBO: run agents as the user
+        workspace_id=(plan.waiting_for or {}).get("workspace_id") if plan else None,
     )
 
     input_task = InputTask(description=plan.initial_goal, session_id=plan.session_id)

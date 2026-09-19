@@ -129,6 +129,9 @@ async def apply_event(
         team_switched=False,
         team_service=TeamService(memory_store),
         user_access_token=user_access_token,  # sólo en memoria; nunca en el documento
+        # El workspace viaja en el aparcado: al reanudar, los agentes vuelven a
+        # saber sobre cuál trabajan.
+        workspace_id=(plan.waiting_for or {}).get("workspace_id"),
     )
     orchestration_config.mark_run_active(session_id)
     try:
