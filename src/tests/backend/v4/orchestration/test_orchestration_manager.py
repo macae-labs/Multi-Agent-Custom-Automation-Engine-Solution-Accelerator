@@ -147,8 +147,16 @@ class MockMagenticAgentFactory:
         self.team_service = team_service
 
     async def get_agents(
-        self, user_id, team_config_input, memory_store, user_access_token=None
+        self,
+        user_id,
+        team_config_input,
+        memory_store,
+        user_access_token=None,
+        workspace_id=None,
     ):
+        # El workspace activo llega hasta la fábrica: sin él los agentes con MCP
+        # llaman a las tools con un id inventado.
+        self.workspace_id = workspace_id
         # Create mock agents
         agent1 = Mock()
         agent1.agent_name = "TestAgent1"
@@ -277,9 +285,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         self.assertIn("Client creation failed", str(context.exception))
 
-    @patch(
-        "v4.orchestration.orchestration_manager.HumanApprovalMagenticManager"
-    )
+    @patch("v4.orchestration.orchestration_manager.HumanApprovalMagenticManager")
     async def test_init_orchestration_manager_creation_failure(
         self, mock_manager_class
     ):
@@ -447,15 +453,34 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         mock_workflow = Mock()
         # El producto despacha por isinstance sobre las clases reales del framework.
         mock_events = [
-            Mock(type="magentic_orchestrator", data=Message(role="assistant", text="Plan message")),
-            Mock(type="group_chat", data=GroupChatRequestSentEvent(round_index=1, participant_name="agent_1")),
+            Mock(
+                type="magentic_orchestrator",
+                data=Message(role="assistant", text="Plan message"),
+            ),
+            Mock(
+                type="group_chat",
+                data=GroupChatRequestSentEvent(
+                    round_index=1, participant_name="agent_1"
+                ),
+            ),
             Mock(
                 type="output",
                 executor_id="agent_1",
-                data=AgentResponseUpdate(contents=[Content.from_text("Agent streaming update")]),
+                data=AgentResponseUpdate(
+                    contents=[Content.from_text("Agent streaming update")]
+                ),
             ),
-            Mock(type="group_chat", data=GroupChatResponseReceivedEvent(round_index=1, participant_name="agent_1")),
-            Mock(type="output", executor_id=None, data=Message(role="assistant", text="Final result")),
+            Mock(
+                type="group_chat",
+                data=GroupChatResponseReceivedEvent(
+                    round_index=1, participant_name="agent_1"
+                ),
+            ),
+            Mock(
+                type="output",
+                executor_id=None,
+                data=Message(role="assistant", text="Final result"),
+            ),
         ]
         mock_workflow.run = AsyncGeneratorMock(mock_events)
         mock_workflow.executors = {
@@ -718,14 +743,29 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         """Test processing of all event types."""
         mock_workflow = Mock()
         events = [
-            Mock(type="magentic_orchestrator", data=Message(role="assistant", text="Plan message")),
-            Mock(type="group_chat", data=GroupChatRequestSentEvent(round_index=1, participant_name="agent_1")),
+            Mock(
+                type="magentic_orchestrator",
+                data=Message(role="assistant", text="Plan message"),
+            ),
+            Mock(
+                type="group_chat",
+                data=GroupChatRequestSentEvent(
+                    round_index=1, participant_name="agent_1"
+                ),
+            ),
             Mock(
                 type="output",
                 executor_id="agent_1",
-                data=AgentResponseUpdate(contents=[Content.from_text("Agent streaming update")]),
+                data=AgentResponseUpdate(
+                    contents=[Content.from_text("Agent streaming update")]
+                ),
             ),
-            Mock(type="group_chat", data=GroupChatResponseReceivedEvent(round_index=1, participant_name="agent_1")),
+            Mock(
+                type="group_chat",
+                data=GroupChatResponseReceivedEvent(
+                    round_index=1, participant_name="agent_1"
+                ),
+            ),
             Mock(type="executor_completed", executor_id="agent_1"),
             Mock(),  # Unknown event type - should be safely ignored
         ]
@@ -773,7 +813,9 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         input_task = Mock()
         input_task.description = "Test task"
-        input_task.context = ""  # local seeding does len(context) — a bare Mock breaks it
+        input_task.context = (
+            ""  # local seeding does len(context) — a bare Mock breaks it
+        )
 
         with patch.dict(
             sys.modules,
@@ -802,11 +844,15 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         orchestration_config.get_current_orchestration.return_value = mock_workflow
 
         db_factory_mock = Mock()
-        db_factory_mock.get_database = AsyncMock(side_effect=Exception("DB unavailable"))
+        db_factory_mock.get_database = AsyncMock(
+            side_effect=Exception("DB unavailable")
+        )
 
         input_task = Mock()
         input_task.description = "Test task"
-        input_task.context = ""  # local seeding does len(context) — a bare Mock breaks it
+        input_task.context = (
+            ""  # local seeding does len(context) — a bare Mock breaks it
+        )
 
         with patch.dict(
             sys.modules,
@@ -833,7 +879,9 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         input_task = Mock()
         input_task.description = "Test task"
-        input_task.context = ""  # local seeding does len(context) — a bare Mock breaks it
+        input_task.context = (
+            ""  # local seeding does len(context) — a bare Mock breaks it
+        )
 
         with patch.dict(
             sys.modules,
@@ -910,7 +958,10 @@ class TestExtractResponseText(IsolatedAsyncioTestCase):
 
         executor_resp = Mock(spec_set=["agent_response", "full_conversation"])
         executor_resp.agent_response = agent_resp
-        executor_resp.full_conversation = [Message(role="assistant", text="First"), last_msg]
+        executor_resp.full_conversation = [
+            Message(role="assistant", text="First"),
+            last_msg,
+        ]
 
         result = self.manager._extract_response_text(executor_resp)
         self.assertEqual(result, "Last conversation message")

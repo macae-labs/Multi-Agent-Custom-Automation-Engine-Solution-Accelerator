@@ -16,7 +16,7 @@ from agent_framework import (
 )
 
 # agent_framework imports
-from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
+from agent_framework_azure_ai import AzureAIClient
 from agent_framework_orchestrations import MagenticBuilder
 from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatRequestSentEvent,
@@ -39,6 +39,30 @@ from v4.config.settings import connection_config, orchestration_config
 from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
 from v4.models.messages import WebsocketMessageType
 from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
+
+
+async def _team_capabilities(memory_store: Any, team_id: Optional[str]) -> dict:
+    """Capacidades reales del equipo, leídas de su configuración.
+
+    Sin agentes con MCP no hay tools de workspace en toda la corrida: el equipo
+    no puede leer el repo ni ejecutar nada en él, por mucho que el plan lo
+    prometa. Dicho aquí, el humano lo ve ANTES de aprobar.
+    """
+    if not team_id:
+        return {}
+    try:
+        team = await memory_store.get_team_by_id(team_id=team_id)
+    except Exception:  # la ausencia de este dato nunca debe tumbar el aparcado
+        return {}
+    agents = list(getattr(team, "agents", None) or []) if team else []
+    con_mcp = [a.name for a in agents if getattr(a, "use_mcp", False)]
+    return {
+        "team_name": getattr(team, "name", "") if team else "",
+        "agents": [a.name for a in agents],
+        "workspace_agents": con_mcp,
+        "can_see_workspace": bool(con_mcp),
+        "coding_agents": [a.name for a in agents if getattr(a, "coding_tools", False)],
+    }
 
 
 async def _materialize_hosted_file_to_workspace(
@@ -263,9 +287,6 @@ class OrchestrationManager:
             manager_agent = Agent(
                 client=chat_client,
                 name="MagenticManager",
-                default_options=AzureAIProjectAgentOptions(
-                    store=True
-                ),  # Foundry persists conversation so the published agent keeps context across rounds
             )
 
             cls.logger.info(
@@ -362,6 +383,7 @@ class OrchestrationManager:
         team_service: Optional[TeamService] = None,
         force_rebuild: bool = False,
         user_access_token: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ):
         """
         Return an existing workflow for the user or create a new one if:
@@ -440,6 +462,9 @@ class OrchestrationManager:
                         # self-renews downstream, so it survives long/approval-gated
                         # runs without recreating agents. Falls back to app MI if None.
                         user_access_token=user_access_token,
+                        # Sin esto el agente no sabe sobre qué workspace trabaja
+                        # y llama a las tools con un nombre inventado.
+                        workspace_id=workspace_id,
                     )
                     cls.logger.info(
                         "Created %d agents for user '%s'", len(agents), user_id
@@ -666,7 +691,7 @@ class OrchestrationManager:
             if plan_id:
                 mplan.plan_id = plan_id
             waiting_for["m_plan_id"] = mplan.id
-            waiting_for["is_stalled"] = bool(data.is_stalled)
+            waiting_for["is_stalled"] = bool(getattr(data, "is_stalled", False))
         if plan_id:
             from common.database.database_factory import DatabaseFactory
 
@@ -679,6 +704,13 @@ class OrchestrationManager:
                     )
             else:
                 waiting_for["team_id"] = plan.team_id
+                # Qué puede hacer REALMENTE este equipo. Es un hecho de su
+                # configuración, no una suposición sobre la tarea: si ningún
+                # agente tiene MCP, el workspace es invisible para toda la
+                # corrida y el usuario aprueba un plan que no puede cumplirse.
+                waiting_for["team_capabilities"] = await _team_capabilities(
+                    memory_store, plan.team_id
+                )
                 if mplan is not None:
                     mplan.team_id = plan.team_id or ""
                     # Re-sent on WS reconnect from the store (router).
@@ -697,7 +729,7 @@ class OrchestrationManager:
                     status=V4PlanStatus.PENDING_APPROVAL,
                     context={
                         "request_id": event.request_id,
-                        "is_stalled": bool(data.is_stalled),
+                        "is_stalled": bool(getattr(data, "is_stalled", False)),
                     },
                 ),
                 user_id=user_id,
