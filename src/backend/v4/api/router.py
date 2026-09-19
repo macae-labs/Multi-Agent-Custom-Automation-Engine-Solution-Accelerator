@@ -529,7 +529,11 @@ _COMPOSED_TEAM_MAX_AGENTS = 4
 
 
 async def _team_from_router_roster(
-    roster: list, description: str, user_id: str, memory_store: Any
+    roster: list,
+    description: str,
+    user_id: str,
+    memory_store: Any,
+    workspace_id: Optional[str] = None,
 ) -> TeamConfiguration:
     """Turn the Model Router's ``run_plan`` roster into a persisted team.
 
@@ -541,8 +545,8 @@ async def _team_from_router_roster(
 
     Factory constraints are re-checked HERE, in code (the prompt orients the
     Router; it guarantees nothing): supported deployment, reasoning XOR coding
-    tools, no RAG (no index to point at), reserved/duplicate names dropped,
-    ProxyAgent appended (the human-in-the-loop clarification channel the
+    tools, no RAG (no index to point at), workspace access when the request
+    carries one, reserved/duplicate names dropped, ProxyAgent appended (the human-in-the-loop clarification channel the
     factory special-cases by name). The team NAME is fixed: it becomes the
     Magentic manager's Foundry agent name (``sanitize(team.name)`` in
     ``init_orchestration``), and a per-task name would publish a new manager
@@ -607,6 +611,30 @@ async def _team_from_router_roster(
 
     if not agents:
         raise ValueError("router roster contained no usable agents")
+
+    # Un workspace montado es parte del contrato de la petición, no una
+    # preferencia del Router. El esquema de ``run_plan`` describe ``use_mcp``
+    # como "external systems or live data" y no lo exige, así que el Router lo
+    # reparte mal para un trabajo sobre el repositorio del propio usuario:
+    # medido el 2026-09-19, una vez lo omitió en los cuatro agentes (rev 0000130:
+    # auditoría entera fabricada — config.yaml, pyaudio, Dockerfile, nada de eso
+    # existe) y otra se lo dio sólo al agente de cloud, dejando ciego al
+    # RepositoryForensicsAgent, que era justamente el que debía leer el árbol.
+    # Por eso NO es un piso ("que al menos uno vea") sino el contrato completo:
+    # el manager Magentic reparte los pasos por nombre y descripción, sin saber
+    # quién tiene herramientas, y al agente ciego que le toque mirar el árbol le
+    # queda responder de memoria. Sólo añade capacidad; nunca quita la que el
+    # Router pidió.
+    if workspace_id:
+        blind = [a["name"] for a in agents if not a["use_mcp"]]
+        for a in agents:
+            a["use_mcp"] = True
+        if blind:
+            logger.info(
+                "Workspace %s montado; MCP concedido a %s",
+                workspace_id,
+                blind,
+            )
 
     agents.append(
         {
@@ -698,7 +726,11 @@ async def _create_plan_and_start(
         if composed_agents:
             try:
                 team = await _team_from_router_roster(
-                    composed_agents, description, user_id, memory_store
+                    composed_agents,
+                    description,
+                    user_id,
+                    memory_store,
+                    workspace_id,
                 )
             except Exception as compose_err:
                 # A malformed roster must never block the request — fall back

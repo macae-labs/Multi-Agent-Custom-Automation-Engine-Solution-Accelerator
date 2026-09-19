@@ -1,0 +1,216 @@
+{
+ "schema_version": "1",
+ "incident_id": "INC-2026-009",
+ "domain": "runtime",
+ "status": "closed",
+ "invariant": {
+  "id": "INV-COMPOSED-TEAM-SEES-MOUNTED-WORKSPACE",
+  "statement": "Si la petición trae un workspace montado, NINGÚN agente del equipo que el Model Router compone puede quedar sin acceso a ese workspace. No alcanza con que uno lo vea: el manager Magentic reparte los pasos por nombre y descripción, sin saber quién tiene herramientas, así que el paso que mira el árbol puede caerle a cualquiera. Un agente sin herramientas al que le toque mirar responde de memoria."
+ },
+ "signature": {
+  "family": "semantic_contradiction",
+  "id": "SIG-plan-lane-fabricates-audit-without-workspace-tools",
+  "structural_match": {
+   "trigger": "El Router escala a run_plan con WORKSPACE_ID=<ws> y compone el roster; use_mcp es opcional en el esquema y se describe como 'true ONLY if it needs external systems or live data', que no cubre el repositorio del propio usuario",
+   "observed_factory": "'Creating agent ... use_mcp=False' para los agentes de auditoría; mcp_config=None",
+   "observed_tool_traffic": "cero llamadas a workspace_exec/workspace_list_entries/workspace_read_file durante todo el run",
+   "observed_output": "informe completo con rutas y dependencias que no existen en el árbol (config.yaml, requirements.txt con flask/numpy/pyaudio/speechrecognition, Dockerfile python 3.8, tests/test_speech_agent.py)",
+   "observed_plan_document": "waiting_for.team_capabilities.workspace_agents con MENOS agentes que agents, y m_plan.steps[0] (leer rama/commit/estructura) asignado a un agente ausente de workspace_agents; can_see_workspace=true porque uno veía",
+   "consequence": "el carril de chat, con las mismas credenciales y herramientas reales, reporta el árbol verdadero al mismo tiempo: la contradicción entre carriles es el síntoma visible",
+   "where_observed": "Firma observada en prod (revisión 0000130, App Insights); diagnóstico y validación en backend dev :8010 con identidad por cabecera de principal."
+  }
+ },
+ "env_fingerprint": {
+  "where": "local",
+  "env_names_present": [
+   "MCP_SERVER_ENDPOINT",
+   "MACAE_WORKSPACE_ROOT",
+   "CONTAINER_APP_REVISION"
+  ],
+  "credential_mode": "static_dev_token",
+  "dotenv_present": true,
+  "network_scope": "egress_allowed",
+  "git": {
+   "branch": "stable/v4-baseline",
+   "base_sha": "60c5f35a",
+   "dirty": true
+  }
+ },
+ "authority_ceiling": {
+  "fixed_before_diagnose": true,
+  "max_level": "patch_and_pr",
+  "max_action_class_without_human": "write-scratch",
+  "human_required_for": [
+   "write-shared",
+   "merge",
+   "traffic_promotion"
+  ]
+ },
+ "actions": [
+  {
+   "stage": "observe",
+   "class": "read-only",
+   "blast_radius": "none",
+   "reversible": true,
+   "human_required": false,
+   "executed_at": "2026-09-19T07:20:00Z",
+   "description": "Contraste del informe contra el árbol: config.yaml, requirements.txt, Dockerfile y tests/test_speech_agent.py no existen; pyaudio/speechrecognition/flask no aparecen en ningún manifiesto. Lo que el carril de chat reportó (package.json, pyrightconfig.json, .flake8, src/tests, infra, docs, .github) sí existe."
+  },
+  {
+   "stage": "observe",
+   "class": "read-only",
+   "blast_radius": "none",
+   "reversible": true,
+   "human_required": false,
+   "executed_at": "2026-09-19T07:25:00Z",
+   "description": "App Insights (appi-pslc25991vme66zmins), ventana 06:45-07:00 de la revisión 0000130: 'Composed team Auto Team ... RepositoryAuditAgent(code=False,mcp=False) ValidationAgent(code=True,mcp=False) DevSecOpsAuditAgent(code=False,mcp=False)'; las tres líneas 'Creating agent ... use_mcp=False'; union traces/dependencies sin una sola llamada a herramientas de workspace (único tráfico MCP: el polling de la UI a /api/v4/mcp/inspector/status)."
+  },
+  {
+   "stage": "diagnose",
+   "class": "read-only",
+   "blast_radius": "none",
+   "reversible": true,
+   "human_required": false,
+   "executed_at": "2026-09-19T07:39:32Z",
+   "description": "composed_roster_workspace_probe.py contra backend dev :8010 (identidad por cabecera de principal, MCP propio en :9001 con log). El Router compuso RepositoryForensicsAgent/ApplicationSecurityAgent/CloudDeliveryAgent/QualityPerformanceAgent y concedió use_mcp SÓLO a CloudDeliveryAgent; el documento del plan 56def965 registra workspace_agents=['CloudDeliveryAgent'], can_see_workspace=true y m_plan.steps[0] ('verificar acceso real al workspace... rama, último commit, estructura de archivos') asignado a RepositoryForensicsAgent, que quedó con coding_tools (sandbox vacío) y sin workspace."
+  },
+  {
+   "stage": "validate",
+   "class": "read-only",
+   "blast_radius": "none",
+   "reversible": true,
+   "human_required": false,
+   "executed_at": "2026-09-19T07:48:25Z",
+   "description": "Misma sonda, mismo mensaje, con la regla completa: 'Workspace ... montado; MCP concedido a [RepositoryForensicsAgent, CodeSecurityAgent, DevOpsInfrastructureAgent, TestValidationAgent]'; los cuatro creados con use_mcp=True; plan 6e7720f6 con workspace_agents = todos los agentes y el paso que mira el árbol asignado a uno que ve. 5/5 PASS."
+  }
+ ],
+ "probe_budget": {
+  "max_probes": 3,
+  "used": 3,
+  "exhausted_outcome": null
+ },
+ "diagnose": {
+  "symptom": "El carril de plan devuelve una auditoría completa y coherente de un proyecto que no es el del usuario, mientras el carril de chat, en la misma sesión, reporta el árbol real.",
+  "candidate_causes": [
+   "El carril de plan está validando OTRO árbol (otro clon del share, o el sandbox del code interpreter)",
+   "El contexto recuperado del índice contamina la composición del equipo",
+   "Ningún agente del equipo compuesto tiene herramientas para leer el workspace"
+  ],
+  "discriminating_probe": {
+   "class": "read-only",
+   "cwd": ".",
+   "command_or_test": "traces/dependencies de App Insights en la ventana del run: líneas 'Composed team' y 'Creating agent ... use_mcp=', y presencia o ausencia de llamadas a workspace_*",
+   "expected_signal_when_failing": "use_mcp=False en los agentes de auditoría y cero llamadas a herramientas de workspace",
+   "expected_signal_when_healthy": "los agentes del roster con use_mcp=True y llamadas reales a workspace_*"
+  },
+  "confirmed_cause": {
+   "statement": "En el esquema de la capacidad run_plan (v4/api/router.py) 'use_mcp' es opcional —no está en required— y se describe como 'true ONLY if it needs external systems or live data'. El repositorio del propio usuario no encaja en esa descripción, así que el Router lo omite o lo reparte mal. _team_from_router_roster tomaba bool(raw.get('use_mcp')) tal cual, y el docstring de esa misma función ya fija la regla de la casa: 'Factory constraints are re-checked HERE, in code (the prompt orients the Router; it guarantees nothing)'. A ese re-chequeo le faltaba el acceso al workspace.",
+   "confirmed_by_signal": true,
+   "evidence_ref": "App Insights rev 0000130 06:54:34; documento del plan 56def965 (workspace_agents vs agents); backend8010.log 07:48:25"
+  },
+  "false_leads": [
+   {
+    "hypothesis": "El carril de plan validó otro árbol",
+    "discarded_by": "Cero llamadas a herramientas de workspace en todo el run: no leyó otro árbol, no leyó ninguno. El único otro sistema de archivos en juego era el sandbox del code interpreter de ValidationAgent, vacío y sin relación con el repositorio.",
+    "side_effect_kept": null
+   },
+   {
+    "hypothesis": "Basta con garantizar que ALGÚN agente vea el workspace",
+    "discarded_by": "Medido en el plan 56def965: el Router dio use_mcp sólo al agente de cloud y el manager asignó el paso de leer el árbol al agente forense, ciego. can_see_workspace=true no impide la fabricación.",
+    "side_effect_kept": "La regla quedó como contrato completo (todos), no como piso (alguno)."
+   }
+  ]
+ },
+ "lanes_not_covered": [
+  "Equipo SELECCIONADO por el usuario desde el selector: si sus agentes no tienen use_mcp y hay workspace montado, el mismo agujero existe. No se toca la configuración explícita del usuario sin su decisión.",
+  "team_capabilities.can_see_workspace sigue siendo verdadero cuando sólo un agente ve; con equipo compuesto ya no puede darse, con equipo seleccionado sí."
+ ],
+ "residual_risk": [
+  "Cada agente compuesto abre ahora su propia sesión MCP contra MacaeMcpServer (tope de 4 agentes por equipo compuesto).",
+  "La concesión sólo añade capacidad; si el Router pide use_mcp para un agente, se respeta."
+ ],
+ "validate": {
+  "closing_layer": "L6",
+  "layers": {
+   "L0": {
+    "result": "pass",
+    "observed": "ruff check, ruff format --check y mypy limpios en src/backend (77 archivos)."
+   },
+   "L1": {
+    "result": "pass",
+    "observed": "test_composed_roster_sees_the_workspace.py: 4 passed sobre la función real y el TeamService real; sólo la capa Cosmos es doble."
+   },
+   "L2": {
+    "result": "pass",
+    "observed": "Suite canónica completa: 997 passed, 4 skipped, 0 failed (antes del trabajo, HEAD estaba en 990 passed / 6 failed por un doble desfasado en test_human_approval_manager.py)."
+   },
+   "L3": {
+    "result": "pass",
+    "observed": "Control negativo medido: con la condición desactivada (if False and workspace_id...), test_a_roster_composed_for_a_workspace_can_read_it falla y los otros tres pasan; restaurada, 4 passed."
+   },
+   "L4": {
+    "result": "pass",
+    "observed": "Sesión MCP real establecida por los agentes contra un MacaeMcpServer propio en :9001 (POST /mcp, ListTools, 'Added MCP tool: MacaeMcpServer', 'Total tools collected (MCP path): 1')."
+   },
+   "L5": {
+    "result": "n/a",
+    "observed": "Sin navegador: el defecto queda fijado al componer el equipo, antes de cualquier render; la evidencia es el documento del plan (waiting_for.team_capabilities), no la pantalla."
+   },
+   "L6": {
+    "result": "pass",
+    "observed": "Camino real POST /api/v4/chat/message/stream con allow_plan y workspace_id, Router escalando a run_plan por su cuenta: 'MCP concedido a [RepositoryForensicsAgent, CodeSecurityAgent, DevOpsInfrastructureAgent, TestValidationAgent]', los cuatro creados con use_mcp=True, plan 6e7720f6 con workspace_agents = todos y el paso que mira el árbol asignado a uno que ve. 5/5 PASS. Control negativo con la misma sonda y el mismo mensaje contra el código anterior: plan 56def965 con workspace_agents=['CloudDeliveryAgent'] y el paso 1 en un agente ciego."
+   },
+   "L7": {
+    "result": "n/a",
+    "observed": "Sin promoción de tráfico: commit y despliegue son decisión de Winston."
+   }
+  }
+ },
+ "learn": {
+  "retrieval_keys": [
+   "plan lane fabricated audit",
+   "composed roster use_mcp false",
+   "agents created with mcp_config None",
+   "workspace_agents fewer than agents",
+   "can_see_workspace true but blind reader",
+   "chat lane truth plan lane fiction",
+   "run_plan schema use_mcp optional"
+  ],
+  "executable_probe": {
+   "class": "read-only",
+   "cwd": ".",
+   "command_or_test": "uv run --project src/backend pytest src/tests/backend/v4/api/test_composed_roster_sees_the_workspace.py -q",
+   "expected_signal_when_failing": "exit != 0: un roster compuesto con workspace montado deja agentes sin use_mcp",
+   "expected_signal_when_healthy": "exit 0: 4 passed"
+  },
+  "last_verified": "2026-09-19T07:55:00Z",
+  "expires_if_not_reverified_by": "2026-12-18T07:55:00Z",
+  "operational": true
+ },
+ "patch": {
+  "identity": {
+   "branch": "stable/v4-baseline",
+   "base_sha": "60c5f35a",
+   "commit_or_pr": "árbol de trabajo, commit de Winston",
+   "etag_or_dirty": "dirty"
+  },
+  "changed_paths": [
+   "src/backend/v4/api/router.py",
+   "src/tests/backend/v4/api/test_composed_roster_sees_the_workspace.py",
+   "docs/incidents/probes/composed_roster_workspace_probe.py"
+  ],
+  "new_functions_introduced": [],
+  "justification_if_new_functions": null
+ },
+ "compare": {
+  "same_repro": true,
+  "same_env_fingerprint": true,
+  "failure_absent_after_patch": true,
+  "functional_behavior_unchanged": true,
+  "negative_control": {
+   "performed": true,
+   "reverting_patch_reproduces_failure": true,
+   "how": "Dos controles. (1) En el harness, desactivando la condición (if False and workspace_id...) falla test_a_roster_composed_for_a_workspace_can_read_it y pasan los otros tres; restaurada, 4 passed. (2) En el camino real, la misma sonda con el mismo mensaje contra el código anterior produjo el plan 56def965 con workspace_agents=['CloudDeliveryAgent'] y m_plan.steps[0] (leer rama, commit y estructura) asignado a RepositoryForensicsAgent, ciego; con el parche, el plan 6e7720f6 tiene workspace_agents = todos los agentes."
+  }
+ }
+}
