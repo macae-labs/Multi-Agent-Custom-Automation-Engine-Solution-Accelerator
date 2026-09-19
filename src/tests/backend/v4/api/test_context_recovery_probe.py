@@ -121,6 +121,8 @@ async def test_recovered_search_hits_are_sanitized_too():
         "role": "assistant",
         "content": LEGACY_CONTENT,
         "timestamp": "2026-09-13T23:45:00Z",
+        # De OTRA sesión: la memoria corta ya trae la actual en orden.
+        "session_id": "sess-vieja",
     }
     with patch(
         "common.services.search_index_service.get_search_index_service",

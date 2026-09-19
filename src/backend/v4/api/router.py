@@ -819,6 +819,9 @@ async def _create_plan_and_start(
             team_config=team,
             team_switched=False,
             team_service=team_service,
+            # El workspace que el usuario tiene activo: los agentes lo necesitan
+            # para llamar a las tools de MacaeMcpServer con el id real.
+            workspace_id=workspace_id,
             force_rebuild=True,  # Always rebuild workflow for new tasks
             # OBO: agents built here run in a BackgroundTask under the app MI unless
             # they carry the user's assertion. Thread it so orchestration agents
@@ -915,6 +918,22 @@ async def _get_previous_intent(
     return None
 
 
+#: Memoria larga: cuántos resultados pedirle al índice.
+RECALL_TOP_K = 15
+
+
+def _recall_note(hit: dict, content: str) -> str:
+    """Un recuerdo se presenta como recuerdo: de qué sesión y de cuándo."""
+    nombre = str(hit.get("session_name") or "").strip()
+    cuando = str(hit.get("timestamp") or "")[:10]
+    quien = "el usuario" if hit.get("role") == "user" else "el asistente"
+    origen = f"sesión «{nombre}»" if nombre else "otra sesión"
+    return (
+        f"[recuerdo de {origen}{f', {cuando}' if cuando else ''}] "
+        f"{quien} dijo: {content}"
+    )
+
+
 async def _recover_session_context(
     chat_svc: Any,
     session_id: str,
@@ -943,13 +962,24 @@ async def _recover_session_context(
         hits = await search_svc.search_chat_history(
             query=current_message,
             user_id=user_id,
-            top_k=15,
+            top_k=RECALL_TOP_K,
         )
+        # La memoria larga es RECUERDO, no conversación. Antes entraba con el rol
+        # original, así que quince turnos de otras sesiones eran indistinguibles
+        # de lo que el usuario acaba de decir y el modelo planificaba con ellos
+        # (un roster de agentes de audio para auditar un repo). Misma regla que
+        # ya rige para la evidencia de herramientas: atribuida a ``system``.
+        # Sin umbral de relevancia: medido contra el índice real, el reranker
+        # puntúa 1.9–2.9 tanto a lo pertinente como a lo ajeno, así que un piso
+        # no separa nada. Lo que separa es que el recuerdo se vea como recuerdo.
         for h in sorted(hits, key=lambda x: x.get("timestamp", "")):
+            # Esta sesión ya entra completa y en orden por la memoria corta.
+            if h.get("session_id") and h.get("session_id") == session_id:
+                continue
             c = _strip_turn_log_block(h.get("content"))
             if c and c != cur and c not in seen:
                 seen.add(c)
-                history.append({"role": h.get("role", "user"), "content": c})
+                history.append({"role": "system", "content": _recall_note(h, c)})
         session = await chat_svc.get_session(session_id, user_id)
         for m in (session or {}).get("messages", []):
             c = _strip_turn_log_block(m.get("content"))
@@ -5023,6 +5053,7 @@ async def resume_plan(
         team_service=team_service,
         force_rebuild=True,
         user_access_token=user_access_token,  # OBO: run agents as the user
+        workspace_id=(plan.waiting_for or {}).get("workspace_id") if plan else None,
     )
 
     input_task = InputTask(description=plan.initial_goal, session_id=plan.session_id)
