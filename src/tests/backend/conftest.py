@@ -92,7 +92,12 @@ class TelemetryStub:
 
     def envelopes(self, path_part: str = "track") -> list:
         with self._lock:
-            return [e for r in self.received if path_part in r["path"] for e in r["envelopes"]]
+            return [
+                e
+                for r in self.received
+                if path_part in r["path"]
+                for e in r["envelopes"]
+            ]
 
     def clear(self) -> None:
         with self._lock:
@@ -117,23 +122,23 @@ def telemetry_stub() -> TelemetryStub:
 def _setup_environment_variables():
     """Set up required environment variables for testing."""
     env_vars = {
-        'AZURE_AI_SUBSCRIPTION_ID': 'test-subscription',
-        'AZURE_AI_RESOURCE_GROUP': 'test-rg',
-        'AZURE_AI_PROJECT_NAME': 'test-project',
-        'AZURE_AI_AGENT_ENDPOINT': 'https://test.agent.endpoint.com',
-        'AZURE_OPENAI_ENDPOINT': 'https://test.openai.azure.com/',
-        'AZURE_OPENAI_API_KEY': 'test-key',
-        'AZURE_OPENAI_API_VERSION': '2023-05-15',
-        'AZURE_OPENAI_DEPLOYMENT_NAME': 'test-deployment',
-        'PROJECT_CONNECTION_STRING': 'test-connection',
-        'AZURE_COSMOS_ENDPOINT': 'https://test.cosmos.azure.com',
-        'AZURE_COSMOS_KEY': 'test-key',
-        'AZURE_COSMOS_DATABASE_NAME': 'test-db',
-        'AZURE_COSMOS_CONTAINER_NAME': 'test-container',
-        'FRONTEND_SITE_NAME': 'http://localhost:3000',
-        'AZURE_STORAGE_BLOB_URL': 'https://test.blob.core.windows.net',
-        'APP_ENV': 'dev',
-        'AZURE_OPENAI_RAI_DEPLOYMENT_NAME': 'test-rai-deployment',
+        "AZURE_AI_SUBSCRIPTION_ID": "test-subscription",
+        "AZURE_AI_RESOURCE_GROUP": "test-rg",
+        "AZURE_AI_PROJECT_NAME": "test-project",
+        "AZURE_AI_AGENT_ENDPOINT": "https://test.agent.endpoint.com",
+        "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
+        "AZURE_OPENAI_API_KEY": "test-key",
+        "AZURE_OPENAI_API_VERSION": "2023-05-15",
+        "AZURE_OPENAI_DEPLOYMENT_NAME": "test-deployment",
+        "PROJECT_CONNECTION_STRING": "test-connection",
+        "AZURE_COSMOS_ENDPOINT": "https://test.cosmos.azure.com",
+        "AZURE_COSMOS_KEY": "test-key",
+        "AZURE_COSMOS_DATABASE_NAME": "test-db",
+        "AZURE_COSMOS_CONTAINER_NAME": "test-container",
+        "FRONTEND_SITE_NAME": "http://localhost:3000",
+        "AZURE_STORAGE_BLOB_URL": "https://test.blob.core.windows.net",
+        "APP_ENV": "dev",
+        "AZURE_OPENAI_RAI_DEPLOYMENT_NAME": "test-rai-deployment",
     }
     for key, value in env_vars.items():
         os.environ.setdefault(key, value)
@@ -147,7 +152,9 @@ def _setup_environment_variables():
     global TELEMETRY_STUB
     if TELEMETRY_STUB is None:
         TELEMETRY_STUB = TelemetryStub()
-    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = TELEMETRY_STUB.connection_string
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = (
+        TELEMETRY_STUB.connection_string
+    )
     # Los otros dos canales remotos del exportador, apagados con sus switches:
     # statsbeat (westus-0.in.applicationinsights.azure.com) y el control plane
     # OneSettings (settings.sdk.monitor.azure.com).
@@ -192,10 +199,10 @@ def _no_interactive_credential_under_pytest(monkeypatch):
 def mock_azure_services():
     """Fixture to provide common Azure service mocks."""
     return {
-        'cosmos_client': Mock(),
-        'openai_client': Mock(),
-        'ai_project_client': Mock(),
-        'credential': Mock(),
+        "cosmos_client": Mock(),
+        "openai_client": Mock(),
+        "ai_project_client": Mock(),
+        "credential": Mock(),
     }
 
 
@@ -215,6 +222,16 @@ class FakeCosmosContainer:
         self._version = 0
 
     def _stamp(self, body):
+        import json
+
+        from azure.cosmos import exceptions
+
+        # El servicio real rechaza items de más de 2 MB (413); sin esto el
+        # doble aceptaría lo que producción rechaza (RequestEntityTooLarge).
+        if len(json.dumps(body).encode("utf-8")) > 2 * 1024 * 1024:
+            raise exceptions.CosmosHttpResponseError(
+                status_code=413, message='{"Errors":["Request size is too large"]}'
+            )
         self._version += 1
         doc = dict(body)
         doc["_etag"] = f'"{self._version}"'
@@ -230,25 +247,33 @@ class FakeCosmosContainer:
             return
         current = self.docs.get(item_id, {}).get("_etag")
         if match_condition == MatchConditions.IfNotModified and current != etag:
-            raise exceptions.CosmosAccessConditionFailedError(status_code=412, message="etag mismatch")
+            raise exceptions.CosmosAccessConditionFailedError(
+                status_code=412, message="etag mismatch"
+            )
 
     async def create_item(self, body, **kwargs):
         from azure.cosmos import exceptions
 
         if body["id"] in self.docs:
-            raise exceptions.CosmosResourceExistsError(status_code=409, message="conflict")
+            raise exceptions.CosmosResourceExistsError(
+                status_code=409, message="conflict"
+            )
         return self._stamp(body)
 
     async def upsert_item(self, body, *, etag=None, match_condition=None, **kwargs):
         self._check_etag(body["id"], etag, match_condition)
         return self._stamp(body)
 
-    async def replace_item(self, item, body, *, etag=None, match_condition=None, **kwargs):
+    async def replace_item(
+        self, item, body, *, etag=None, match_condition=None, **kwargs
+    ):
         from azure.cosmos import exceptions
 
         item_id = item if isinstance(item, str) else item["id"]
         if item_id not in self.docs:
-            raise exceptions.CosmosResourceNotFoundError(status_code=404, message="not found")
+            raise exceptions.CosmosResourceNotFoundError(
+                status_code=404, message="not found"
+            )
         self._check_etag(item_id, etag, match_condition)
         return self._stamp(body)
 
@@ -257,7 +282,9 @@ class FakeCosmosContainer:
 
         doc = self.docs.get(item)
         if doc is None or doc.get(self.partition_path) != partition_key:
-            raise exceptions.CosmosResourceNotFoundError(status_code=404, message="not found")
+            raise exceptions.CosmosResourceNotFoundError(
+                status_code=404, message="not found"
+            )
         return dict(doc)
 
     async def delete_item(self, item, partition_key, **kwargs):
@@ -269,9 +296,16 @@ class FakeCosmosContainer:
 
         async def _gen():
             for doc in list(self.docs.values()):
-                if partition_key is not None and doc.get(self.partition_path) != partition_key:
+                if (
+                    partition_key is not None
+                    and doc.get(self.partition_path) != partition_key
+                ):
                     continue
-                if any(k != "@" + self.partition_path and doc.get(k[1:]) != v for k, v in params.items() if k.startswith("@")):
+                if any(
+                    k != "@" + self.partition_path and doc.get(k[1:]) != v
+                    for k, v in params.items()
+                    if k.startswith("@")
+                ):
                     continue
                 yield dict(doc)
 

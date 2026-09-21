@@ -16,6 +16,7 @@ determinan los participantes (nombres y orden) de la team-config, así que
 quien reanude debe verificar antes que la team-config no cambió.
 """
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -39,6 +40,35 @@ logger = logging.getLogger(__name__)
 CHECKPOINTS_CONTAINER_NAME = "workflow_checkpoints"
 # Campos que Cosmos añade al documento y que no pertenecen al checkpoint.
 _COSMOS_FIELDS = frozenset({"id", "_rid", "_self", "_etag", "_attachments", "_ts"})
+
+# Cosmos rechaza un item de más de 2 MB (413 RequestEntityTooLarge). El
+# checkpoint del framework es el ESTADO ENTERO del workflow —cada mensaje y
+# cada salida de tool—, así que un ``cat`` de 2,5 MB dentro de una conversación
+# lo desborda. Medido en producción (rev 132, 2026-09-20/21): el runner
+# registra un WARNING y sigue sin checkpoint; al aparcar, nada conserva el
+# ``request_info`` y el plan muere ("sin checkpoint que lo conserve").
+#
+# El documento principal es una PROYECCIÓN del checkpoint: cabecera, petición
+# pendiente y referencia. El cuerpo voluminoso (``messages`` y ``state``) va en
+# partes hermanas bajo el límite, en la misma partición, y ``load`` reconstruye
+# el checkpoint exacto. Un checkpoint pequeño sigue siendo un solo documento.
+COSMOS_MAX_ITEM_BYTES = 2 * 1024 * 1024
+_PART_BYTES = 1_500_000  # margen para el sobre del documento y los campos de sistema
+_PART_KIND = "checkpoint_part"
+_BULK_FIELDS = ("messages", "state")
+
+
+def _utf8_parts(data: bytes, limit: int) -> list[bytes]:
+    """Trocea sin partir un carácter multibyte (retrocede al inicio del carácter)."""
+    parts: list[bytes] = []
+    start = 0
+    while start < len(data):
+        end = min(start + limit, len(data))
+        while end < len(data) and (data[end] & 0xC0) == 0x80:
+            end -= 1
+        parts.append(data[start:end])
+        start = end
+    return parts
 
 
 class CosmosCheckpointStorage:
@@ -106,56 +136,117 @@ class CosmosCheckpointStorage:
             return dict(doc)
         return None
 
-    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+    async def _parts(self, head: dict[str, Any]) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
-        body = encode_checkpoint_value(checkpoint.to_dict())
-        body["id"] = checkpoint.checkpoint_id
-        await container.upsert_item(body=body)
-        logger.debug(
-            "Checkpoint %s guardado (%s)",
-            checkpoint.checkpoint_id,
-            checkpoint.workflow_name,
+        items = container.query_items(
+            query=(
+                "SELECT * FROM c WHERE c.kind = @kind "
+                "AND c.checkpoint_id = @checkpoint_id"
+            ),
+            parameters=[
+                {"name": "@kind", "value": _PART_KIND},
+                {"name": "@checkpoint_id", "value": head["id"]},
+            ],
+            partition_key=head["workflow_name"],
         )
-        return checkpoint.checkpoint_id
+        parts = [dict(doc) async for doc in items]
+        parts.sort(key=lambda part: part["index"])
+        return parts
 
-    async def load(self, checkpoint_id: str) -> WorkflowCheckpoint:
-        doc = await self._find(checkpoint_id)
-        if doc is None:
+    async def _hydrate(self, head: dict[str, Any]) -> dict[str, Any]:
+        """Devuelve el checkpoint completo: la cabecera más su cuerpo, si va aparte."""
+        if "parts" not in head:
+            return head
+        parts = await self._parts(head)
+        if [part["index"] for part in parts] != list(range(head["parts"])):
             raise WorkflowCheckpointException(
-                f"No checkpoint found with ID {checkpoint_id}"
+                f"Checkpoint {head['id']} incompleto: {len(parts)}/{head['parts']} partes"
             )
-        return self._to_checkpoint(doc)
+        doc = {k: v for k, v in head.items() if k != "parts"}
+        doc.update(json.loads("".join(part["data"] for part in parts)))
+        return doc
 
-    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
+    async def _heads(self, workflow_name: str) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
         items = container.query_items(
             query="SELECT * FROM c WHERE c.workflow_name = @workflow_name",
             parameters=[{"name": "@workflow_name", "value": workflow_name}],
             partition_key=workflow_name,
         )
-        checkpoints = [self._to_checkpoint(dict(doc)) async for doc in items]
-        checkpoints.sort(key=lambda c: c.timestamp)
-        return checkpoints
+        heads = [dict(doc) async for doc in items if doc.get("kind") != _PART_KIND]
+        heads.sort(key=lambda head: head["timestamp"])
+        return heads
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+        container = await self._ensure_initialized()
+        head = encode_checkpoint_value(checkpoint.to_dict())
+        head["id"] = checkpoint.checkpoint_id
+        bulk = {field: head.pop(field) for field in _BULK_FIELDS}
+        body = json.dumps(bulk, separators=(",", ":")).encode("utf-8")
+        if len(json.dumps(head).encode("utf-8")) + len(body) <= _PART_BYTES:
+            head.update(bulk)
+            await container.upsert_item(body=head)
+        else:
+            # Primero las partes, después la cabecera que las referencia: un
+            # lector nunca ve una cabecera cuyo cuerpo aún no existe.
+            parts = _utf8_parts(body, _PART_BYTES - 1024)
+            for index, part in enumerate(parts):
+                await container.upsert_item(
+                    body={
+                        "id": f"{checkpoint.checkpoint_id}#{index}",
+                        "workflow_name": checkpoint.workflow_name,
+                        "kind": _PART_KIND,
+                        "checkpoint_id": checkpoint.checkpoint_id,
+                        "index": index,
+                        "data": part.decode("utf-8"),
+                    }
+                )
+            head["parts"] = len(parts)
+            await container.upsert_item(body=head)
+        logger.debug(
+            "Checkpoint %s guardado (%s, %d bytes de cuerpo)",
+            checkpoint.checkpoint_id,
+            checkpoint.workflow_name,
+            len(body),
+        )
+        return checkpoint.checkpoint_id
+
+    async def load(self, checkpoint_id: str) -> WorkflowCheckpoint:
+        head = await self._find(checkpoint_id)
+        if head is None:
+            raise WorkflowCheckpointException(
+                f"No checkpoint found with ID {checkpoint_id}"
+            )
+        return self._to_checkpoint(await self._hydrate(head))
+
+    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
+        return [
+            self._to_checkpoint(await self._hydrate(head))
+            for head in await self._heads(workflow_name)
+        ]
 
     async def delete(self, checkpoint_id: str) -> bool:
-        doc = await self._find(checkpoint_id)
-        if doc is None:
+        head = await self._find(checkpoint_id)
+        if head is None:
             return False
         container = await self._ensure_initialized()
+        for part in await self._parts(head):
+            await container.delete_item(
+                item=part["id"], partition_key=head["workflow_name"]
+            )
         await container.delete_item(
-            item=checkpoint_id, partition_key=doc["workflow_name"]
+            item=checkpoint_id, partition_key=head["workflow_name"]
         )
         return True
 
     async def get_latest(self, *, workflow_name: str) -> Optional[WorkflowCheckpoint]:
-        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
-        return checkpoints[-1] if checkpoints else None
+        heads = await self._heads(workflow_name)
+        if not heads:
+            return None
+        return self._to_checkpoint(await self._hydrate(heads[-1]))
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[str]:
-        return [
-            c.checkpoint_id
-            for c in await self.list_checkpoints(workflow_name=workflow_name)
-        ]
+        return [head["id"] for head in await self._heads(workflow_name)]
 
 
 _storage: Optional[CheckpointStorage] = None
