@@ -215,6 +215,7 @@ class TestOrchestrationConfig(unittest.IsolatedAsyncioTestCase):
         # not fail the suite — a plan needs at least one round to execute.
         self.assertIsInstance(config.max_rounds, int)
         self.assertGreaterEqual(config.max_rounds, 1)
+        self.assertEqual(config.max_rounds, 8)
         self.assertEqual(config.default_timeout, 1800.0)
         self.assertIsInstance(config.active_runs, set)
 

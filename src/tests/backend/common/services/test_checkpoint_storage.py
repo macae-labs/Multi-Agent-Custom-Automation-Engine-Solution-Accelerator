@@ -250,3 +250,25 @@ async def test_failed_large_rewrite_cleans_staged_parts_and_keeps_previous_check
     assert container.docs == original_docs
     loaded = await storage.load(checkpoint.checkpoint_id)
     assert loaded.to_dict() == checkpoint.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_delete_purges_superseded_parts_from_older_tokens(storage, container):
+    checkpoint = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
+    await storage.save(checkpoint)
+    await container.upsert_item(
+        body={
+            "id": f"{checkpoint.checkpoint_id}:stale:0",
+            "workflow_name": "wf",
+            "kind": "checkpoint_part",
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "parts_token": "stale",
+            "index": 0,
+            "data": "{}",
+        }
+    )
+
+    deleted = await storage.delete(checkpoint.checkpoint_id)
+
+    assert deleted is True
+    assert container.docs == {}

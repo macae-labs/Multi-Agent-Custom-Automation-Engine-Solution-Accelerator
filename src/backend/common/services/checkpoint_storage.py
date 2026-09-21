@@ -202,9 +202,10 @@ class CosmosCheckpointStorage:
         workflow_name = checkpoint.workflow_name
         bulk = {field: head.pop(field) for field in _BULK_FIELDS}
         body = json.dumps(bulk, separators=(",", ":")).encode("utf-8")
-        if len(json.dumps(head).encode("utf-8")) + len(body) <= COSMOS_MAX_ITEM_BYTES:
-            head.update(bulk)
-            await container.upsert_item(body=head)
+        inline_doc = dict(head)
+        inline_doc.update(bulk)
+        if len(json.dumps(inline_doc).encode("utf-8")) <= COSMOS_MAX_ITEM_BYTES:
+            await container.upsert_item(body=inline_doc)
             await self._delete_superseded_parts(workflow_name, checkpoint.checkpoint_id)
         else:
             # Primero las partes, después la cabecera que las referencia: un
@@ -267,10 +268,7 @@ class CosmosCheckpointStorage:
         if head is None:
             return False
         container = await self._ensure_initialized()
-        for part in await self._parts(head):
-            await container.delete_item(
-                item=part["id"], partition_key=head["workflow_name"]
-            )
+        await self._delete_superseded_parts(head["workflow_name"], checkpoint_id)
         await container.delete_item(
             item=checkpoint_id, partition_key=head["workflow_name"]
         )
