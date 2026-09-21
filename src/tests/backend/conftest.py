@@ -222,8 +222,6 @@ class FakeCosmosContainer:
         self._version = 0
 
     def _stamp(self, body):
-        import json
-
         from azure.cosmos import exceptions
 
         # El servicio real rechaza items de más de 2 MB (413); sin esto el
