@@ -96,7 +96,7 @@ class OrchestrationConfig:
             str, List[Any]
         ] = {}  # user_id -> list of lifecycle-managed agent wrappers (for proper close)
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
-        self.max_rounds: int = 5  # Maximum replanning rounds
+        self.max_rounds: int = 8  # Maximum replanning rounds
 
         # No in-process waits for humans. Plan review and clarification are
         # native request_info events: the workflow goes idle, the pending
