@@ -139,7 +139,9 @@ class CosmosCheckpointStorage:
             return dict(doc)
         return None
 
-    async def _part_docs(self, workflow_name: str, checkpoint_id: str) -> list[dict[str, Any]]:
+    async def _part_docs(
+        self, workflow_name: str, checkpoint_id: str
+    ) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
         items = container.query_items(
             query=(
@@ -163,7 +165,11 @@ class CosmosCheckpointStorage:
         return parts
 
     async def _delete_superseded_parts(
-        self, workflow_name: str, checkpoint_id: str, *, keep_token: Optional[str] = None
+        self,
+        workflow_name: str,
+        checkpoint_id: str,
+        *,
+        keep_token: Optional[str] = None,
     ) -> None:
         container = await self._ensure_initialized()
         for part in await self._part_docs(workflow_name, checkpoint_id):
@@ -234,7 +240,9 @@ class CosmosCheckpointStorage:
             except Exception:
                 for part_id in written_part_ids:
                     try:
-                        await container.delete_item(item=part_id, partition_key=workflow_name)
+                        await container.delete_item(
+                            item=part_id, partition_key=workflow_name
+                        )
                     except CosmosResourceNotFoundError:
                         pass
                 raise
