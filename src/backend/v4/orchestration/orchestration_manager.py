@@ -1181,22 +1181,14 @@ class OrchestrationManager:
             self.logger.info("\nFinal result:\n%s", final_text)
             self.logger.info("=" * 50)
 
-            # Send final result via WebSocket
-            # send_status_update_async already wraps this in {type, data}.
-            # Pre-wrapping here produced {type, data:{type, data:{...}}} on the
-            # wire — the frontend only survived it via defensive fallbacks.
-            await connection_config.send_status_update_async(
-                {
-                    "content": final_text,
-                    "status": "completed",
-                    "timestamp": asyncio.get_event_loop().time(),
-                },
-                user_id,
-                message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
-            )
-            self.logger.info("Final result sent via WebSocket to user '%s'", user_id)
-
-            # ── Persist final + mark plan completed (BACKEND-owned) ───────────
+            # ── Persist BEFORE signalling ─────────────────────────────────────
+            # The FINAL_RESULT_MESSAGE makes the UI drop planId and reload the
+            # session from Cosmos. Measured on revision 132: WS final at
+            # 13.859 → client GET /chat/sessions at 14.444 → write-back at
+            # 14.868. The reload ran 424 ms before the result existed, so the
+            # page showed the previous state until a manual refresh. Durable
+            # writes (plan store + chat session) therefore precede the signal.
+            #
             # is_final=True routes through PlanService.handle_agent_messages, which
             # persists the final agent message to the plan store AND flips the plan
             # to overall_status=completed — the state that USED to happen only when
@@ -1209,15 +1201,6 @@ class OrchestrationManager:
                     content=final_text,
                     is_final=True,
                 )
-            if plan_id:
-                try:
-                    await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
-                except Exception as cleanup_error:
-                    self.logger.warning(
-                        "Checkpoint cleanup failed for plan %s: %s",
-                        plan_id,
-                        cleanup_error,
-                    )
 
             # ── Write Plan result back to chat session ────────────────────────
             # This closes the visibility gap: after Plan execution the chat
@@ -1247,6 +1230,32 @@ class OrchestrationManager:
                         "Could not write Plan result to chat session %s: %s",
                         session_id,
                         _wb_err,
+                    )
+
+            # ── Signal the UI: everything it will reload is already durable ──
+            # send_status_update_async already wraps this in {type, data}.
+            # Pre-wrapping here produced {type, data:{type, data:{...}}} on the
+            # wire — the frontend only survived it via defensive fallbacks.
+            await connection_config.send_status_update_async(
+                {
+                    "content": final_text,
+                    "status": "completed",
+                    "timestamp": asyncio.get_event_loop().time(),
+                },
+                user_id,
+                message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+            )
+            self.logger.info("Final result sent via WebSocket to user '%s'", user_id)
+
+            # Checkpoint lineage is not read by the UI; it can go last.
+            if plan_id:
+                try:
+                    await self._purge_checkpoint_lineage_by_id(user_id, plan_id)
+                except Exception as cleanup_error:
+                    self.logger.warning(
+                        "Checkpoint cleanup failed for plan %s: %s",
+                        plan_id,
+                        cleanup_error,
                     )
 
         except Exception as e:

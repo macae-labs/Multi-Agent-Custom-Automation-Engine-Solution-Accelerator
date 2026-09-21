@@ -509,6 +509,60 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         # Verify final result was sent
         connection_config.send_status_update_async.assert_called()
 
+    async def test_final_result_is_durable_before_the_websocket_signal(self):
+        """The UI reloads the session the moment FINAL_RESULT arrives (it drops
+        planId → GET /chat/sessions). Measured on revision 132 the reload ran
+        424 ms before the write-back, so the page showed stale state. Every
+        durable write (plan store, chat session) must precede the signal."""
+        order: list[str] = []
+        mock_workflow = Mock()
+        mock_workflow.name = "wf"
+        mock_workflow.run = AsyncGeneratorMock(
+            [
+                Mock(
+                    type="output",
+                    executor_id=None,
+                    data=Message(role="assistant", text="Final result"),
+                )
+            ]
+        )
+        mock_workflow.executors = {}
+        orchestration_config.get_current_orchestration.return_value = mock_workflow
+
+        async def _persist(**_kw):
+            order.append("plan_store")
+
+        async def _signal(_payload, _user, message_type=None):
+            order.append(f"ws:{getattr(message_type, 'value', message_type)}")
+
+        chat_svc = Mock()
+
+        async def _add_message(**_kw):
+            order.append("chat_session")
+
+        chat_svc.add_message = _add_message
+        self.orchestration_manager._persist_agent_message = _persist
+        self.orchestration_manager._purge_checkpoint_lineage_by_id = AsyncMock()
+        connection_config.send_status_update_async.side_effect = _signal
+
+        input_task = Mock()
+        input_task.description = "Test task"
+        input_task.context = ""
+        with patch(
+            "common.services.chat_cosmos_service.get_chat_cosmos_service",
+            AsyncMock(return_value=chat_svc),
+        ):
+            await self.orchestration_manager.run_orchestration(
+                user_id=self.test_user_id,
+                session_id=self.test_session_id,
+                input_task=input_task,
+                plan_id="plan-1",
+            )
+
+        final_idx = order.index("ws:final_result_message")
+        self.assertIn("plan_store", order[:final_idx])
+        self.assertIn("chat_session", order[:final_idx])
+
     async def test_run_orchestration_no_workflow(self):
         """Test run_orchestration when no workflow exists."""
         orchestration_config.get_current_orchestration.return_value = None
