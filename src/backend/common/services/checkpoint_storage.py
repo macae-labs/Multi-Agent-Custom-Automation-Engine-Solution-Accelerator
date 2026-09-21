@@ -206,7 +206,7 @@ class CosmosCheckpointStorage:
         head = encode_checkpoint_value(checkpoint.to_dict())
         head["id"] = checkpoint.checkpoint_id
         workflow_name = checkpoint.workflow_name
-        bulk = {field: head.pop(field) for field in _BULK_FIELDS}
+        bulk = {field: head.pop(field) for field in _BULK_FIELDS if field in head}
         body = json.dumps(bulk, separators=(",", ":")).encode("utf-8")
         inline_doc = dict(head)
         inline_doc.update(bulk)
