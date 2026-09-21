@@ -250,7 +250,11 @@ class CosmosCheckpointStorage:
                             item=part_id, partition_key=workflow_name
                         )
                     except CosmosResourceNotFoundError:
-                        pass
+                        # Best-effort rollback: the part may have been removed
+                        # concurrently or never fully persisted; safe to ignore.
+                        logger.debug(
+                            "Rollback cleanup skipped; part not found: %s", part_id
+                        )
                 raise
             await self._delete_superseded_parts(
                 workflow_name, checkpoint.checkpoint_id, keep_token=parts_token
