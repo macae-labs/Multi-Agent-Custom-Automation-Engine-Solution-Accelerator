@@ -172,6 +172,20 @@ async def test_a_checkpoint_over_the_limit_round_trips_exactly(storage, containe
 
 
 @pytest.mark.asyncio
+async def test_a_checkpoint_below_the_cosmos_limit_stays_in_one_document(storage, container):
+    checkpoint = _checkpoint_with_tool_output("wf-grande", 275_000)
+
+    await storage.save(checkpoint)
+
+    assert set(container.docs) == {checkpoint.checkpoint_id}
+    assert len(json.dumps(container.docs[checkpoint.checkpoint_id]).encode("utf-8")) <= (
+        COSMOS_MAX_ITEM_BYTES
+    )
+    loaded = await storage.load(checkpoint.checkpoint_id)
+    assert loaded.to_dict() == checkpoint.to_dict()
+
+
+@pytest.mark.asyncio
 async def test_a_lineage_mixes_small_and_large_and_purges_whole(storage, container):
     small = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig")
     large = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
