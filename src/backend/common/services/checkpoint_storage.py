@@ -169,14 +169,8 @@ class CosmosCheckpointStorage:
     async def _heads(self, workflow_name: str) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
         items = container.query_items(
-            query=(
-                "SELECT * FROM c WHERE c.workflow_name = @workflow_name "
-                "AND (NOT IS_DEFINED(c.kind) OR c.kind != @kind)"
-            ),
-            parameters=[
-                {"name": "@workflow_name", "value": workflow_name},
-                {"name": "@kind", "value": _PART_KIND},
-            ],
+            query="SELECT * FROM c WHERE c.workflow_name = @workflow_name",
+            parameters=[{"name": "@workflow_name", "value": workflow_name}],
             partition_key=workflow_name,
         )
         heads = [dict(doc) async for doc in items if doc.get("kind") != _PART_KIND]
