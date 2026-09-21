@@ -19,6 +19,7 @@ quien reanude debe verificar antes que la team-config no cambió.
 import json
 import logging
 from typing import Any, Optional
+from uuid import uuid4
 
 from agent_framework import (
     CheckpointStorage,
@@ -39,7 +40,9 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINTS_CONTAINER_NAME = "workflow_checkpoints"
 # Campos que Cosmos añade al documento y que no pertenecen al checkpoint.
-_COSMOS_FIELDS = frozenset({"id", "_rid", "_self", "_etag", "_attachments", "_ts"})
+_COSMOS_FIELDS = frozenset(
+    {"id", "parts_token", "_rid", "_self", "_etag", "_attachments", "_ts"}
+)
 
 # Cosmos rechaza un item de más de 2 MB (413 RequestEntityTooLarge). El
 # checkpoint del framework es el ESTADO ENTERO del workflow —cada mensaje y
@@ -136,7 +139,7 @@ class CosmosCheckpointStorage:
             return dict(doc)
         return None
 
-    async def _parts(self, head: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _part_docs(self, workflow_name: str, checkpoint_id: str) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
         items = container.query_items(
             query=(
@@ -145,13 +148,28 @@ class CosmosCheckpointStorage:
             ),
             parameters=[
                 {"name": "@kind", "value": _PART_KIND},
-                {"name": "@checkpoint_id", "value": head["id"]},
+                {"name": "@checkpoint_id", "value": checkpoint_id},
             ],
-            partition_key=head["workflow_name"],
+            partition_key=workflow_name,
         )
-        parts = [dict(doc) async for doc in items]
+        return [dict(doc) async for doc in items]
+
+    async def _parts(self, head: dict[str, Any]) -> list[dict[str, Any]]:
+        parts = await self._part_docs(head["workflow_name"], head["id"])
+        parts_token = head.get("parts_token")
+        if parts_token is not None:
+            parts = [part for part in parts if part.get("parts_token") == parts_token]
         parts.sort(key=lambda part: part["index"])
         return parts
+
+    async def _delete_superseded_parts(
+        self, workflow_name: str, checkpoint_id: str, *, keep_token: Optional[str] = None
+    ) -> None:
+        container = await self._ensure_initialized()
+        for part in await self._part_docs(workflow_name, checkpoint_id):
+            if keep_token is not None and part.get("parts_token") == keep_token:
+                continue
+            await container.delete_item(item=part["id"], partition_key=workflow_name)
 
     async def _hydrate(self, head: dict[str, Any]) -> dict[str, Any]:
         """Devuelve el checkpoint completo: la cabecera más su cuerpo, si va aparte."""
@@ -181,32 +199,51 @@ class CosmosCheckpointStorage:
         container = await self._ensure_initialized()
         head = encode_checkpoint_value(checkpoint.to_dict())
         head["id"] = checkpoint.checkpoint_id
+        workflow_name = checkpoint.workflow_name
         bulk = {field: head.pop(field) for field in _BULK_FIELDS}
         body = json.dumps(bulk, separators=(",", ":")).encode("utf-8")
         if len(json.dumps(head).encode("utf-8")) + len(body) <= _PART_BYTES:
             head.update(bulk)
             await container.upsert_item(body=head)
+            await self._delete_superseded_parts(workflow_name, checkpoint.checkpoint_id)
         else:
             # Primero las partes, después la cabecera que las referencia: un
             # lector nunca ve una cabecera cuyo cuerpo aún no existe.
+            parts_token = uuid4().hex
             parts = _utf8_parts(body, _PART_BYTES - 1024)
-            for index, part in enumerate(parts):
-                await container.upsert_item(
-                    body={
-                        "id": f"{checkpoint.checkpoint_id}:{index}",
-                        "workflow_name": checkpoint.workflow_name,
-                        "kind": _PART_KIND,
-                        "checkpoint_id": checkpoint.checkpoint_id,
-                        "index": index,
-                        "data": part.decode("utf-8"),
-                    }
-                )
-            head["parts"] = len(parts)
-            await container.upsert_item(body=head)
+            written_part_ids: list[str] = []
+            try:
+                for index, part in enumerate(parts):
+                    part_id = f"{checkpoint.checkpoint_id}:{parts_token}:{index}"
+                    await container.upsert_item(
+                        body={
+                            "id": part_id,
+                            "workflow_name": workflow_name,
+                            "kind": _PART_KIND,
+                            "checkpoint_id": checkpoint.checkpoint_id,
+                            "parts_token": parts_token,
+                            "index": index,
+                            "data": part.decode("utf-8"),
+                        }
+                    )
+                    written_part_ids.append(part_id)
+                head["parts"] = len(parts)
+                head["parts_token"] = parts_token
+                await container.upsert_item(body=head)
+            except BaseException:
+                for part_id in written_part_ids:
+                    try:
+                        await container.delete_item(item=part_id, partition_key=workflow_name)
+                    except CosmosResourceNotFoundError:
+                        pass
+                raise
+            await self._delete_superseded_parts(
+                workflow_name, checkpoint.checkpoint_id, keep_token=parts_token
+            )
         logger.debug(
             "Checkpoint %s guardado (%s, %d bytes de cuerpo)",
             checkpoint.checkpoint_id,
-            checkpoint.workflow_name,
+            workflow_name,
             len(body),
         )
         return checkpoint.checkpoint_id

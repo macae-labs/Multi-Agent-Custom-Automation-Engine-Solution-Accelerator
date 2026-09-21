@@ -191,3 +191,48 @@ async def test_a_lineage_mixes_small_and_large_and_purges_whole(storage, contain
         deleted = await storage.delete(checkpoint_id)
         assert deleted is True
     assert container.docs == {}
+
+
+@pytest.mark.asyncio
+async def test_rewriting_a_large_checkpoint_with_a_small_one_purges_old_parts(
+    storage, container
+):
+    large = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
+    await storage.save(large)
+    old_part_ids = set(container.docs) - {large.checkpoint_id}
+    assert old_part_ids
+
+    small = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig")
+    small.checkpoint_id = large.checkpoint_id
+    await storage.save(small)
+
+    assert set(container.docs) == {large.checkpoint_id}
+    loaded = await storage.load(large.checkpoint_id)
+    assert loaded.to_dict() == small.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_failed_large_rewrite_cleans_staged_parts_and_keeps_previous_checkpoint(
+    storage, container
+):
+    checkpoint = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
+    await storage.save(checkpoint)
+    original_docs = {doc_id: dict(doc) for doc_id, doc in container.docs.items()}
+    original_upsert = container.upsert_item
+
+    async def fail_on_new_head(*args, **kwargs):
+        body = kwargs.get("body") or args[0]
+        if body.get("id") == checkpoint.checkpoint_id and body.get("parts_token"):
+            raise RuntimeError("boom")
+        return await original_upsert(*args, **kwargs)
+
+    container.upsert_item = fail_on_new_head
+    rewritten = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
+    rewritten.checkpoint_id = checkpoint.checkpoint_id
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await storage.save(rewritten)
+
+    assert container.docs == original_docs
+    loaded = await storage.load(checkpoint.checkpoint_id)
+    assert loaded.to_dict() == checkpoint.to_dict()
