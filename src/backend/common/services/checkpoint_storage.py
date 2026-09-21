@@ -199,7 +199,7 @@ class CosmosCheckpointStorage:
             for index, part in enumerate(parts):
                 await container.upsert_item(
                     body={
-                        "id": f"{checkpoint.checkpoint_id}#{index}",
+                        "id": f"{checkpoint.checkpoint_id}:{index}",
                         "workflow_name": checkpoint.workflow_name,
                         "kind": _PART_KIND,
                         "checkpoint_id": checkpoint.checkpoint_id,
