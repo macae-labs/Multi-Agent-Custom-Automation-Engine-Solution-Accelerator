@@ -188,5 +188,6 @@ async def test_a_lineage_mixes_small_and_large_and_purges_whole(storage, contain
 
     # La purga del manager: ids + delete; se lleva cabeceras y partes.
     for checkpoint_id in await storage.list_checkpoint_ids(workflow_name="wf"):
-        assert await storage.delete(checkpoint_id) is True
+        deleted = await storage.delete(checkpoint_id)
+        assert deleted is True
     assert container.docs == {}
