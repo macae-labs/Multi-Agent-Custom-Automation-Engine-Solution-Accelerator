@@ -231,7 +231,7 @@ class CosmosCheckpointStorage:
                 head["parts"] = len(parts)
                 head["parts_token"] = parts_token
                 await container.upsert_item(body=head)
-            except BaseException:
+            except Exception:
                 for part_id in written_part_ids:
                     try:
                         await container.delete_item(item=part_id, partition_key=workflow_name)
