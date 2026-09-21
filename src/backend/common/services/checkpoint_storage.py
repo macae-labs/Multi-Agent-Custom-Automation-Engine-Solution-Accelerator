@@ -182,9 +182,15 @@ class CosmosCheckpointStorage:
         if "parts" not in head:
             return head
         parts = await self._parts(head)
-        if [part["index"] for part in parts] != list(range(head["parts"])):
+        expected_parts = head["parts"]
+        indexes = [part["index"] for part in parts]
+        if (
+            len(parts) != expected_parts
+            or len(set(indexes)) != expected_parts
+            or sorted(indexes) != list(range(expected_parts))
+        ):
             raise WorkflowCheckpointException(
-                f"Checkpoint {head['id']} incompleto: {len(parts)}/{head['parts']} partes"
+                f"Checkpoint {head['id']} incompleto: {len(parts)}/{expected_parts} partes"
             )
         doc = {k: v for k, v in head.items() if k not in {"parts", "parts_token"}}
         doc.update(json.loads("".join(part["data"] for part in parts)))

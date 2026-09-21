@@ -214,6 +214,18 @@ async def test_save_tolerates_missing_bulk_fields(storage, container, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_load_rejects_duplicate_part_indexes(storage, container):
+    checkpoint = _checkpoint_with_tool_output("wf-grande", 3 * 1024 * 1024)
+    await storage.save(checkpoint)
+
+    part_ids = sorted(doc_id for doc_id in container.docs if doc_id != checkpoint.checkpoint_id)
+    container.docs[part_ids[-1]]["index"] = container.docs[part_ids[0]]["index"]
+
+    with pytest.raises(WorkflowCheckpointException, match="incompleto"):
+        await storage.load(checkpoint.checkpoint_id)
+
+
+@pytest.mark.asyncio
 async def test_a_lineage_mixes_small_and_large_and_purges_whole(storage, container):
     small = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig")
     large = _checkpoint_with_tool_output("wf", 3 * 1024 * 1024)
