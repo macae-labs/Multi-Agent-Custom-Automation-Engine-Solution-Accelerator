@@ -186,7 +186,7 @@ class CosmosCheckpointStorage:
             raise WorkflowCheckpointException(
                 f"Checkpoint {head['id']} incompleto: {len(parts)}/{head['parts']} partes"
             )
-        doc = {k: v for k, v in head.items() if k != "parts"}
+        doc = {k: v for k, v in head.items() if k not in {"parts", "parts_token"}}
         doc.update(json.loads("".join(part["data"] for part in parts)))
         return doc
 

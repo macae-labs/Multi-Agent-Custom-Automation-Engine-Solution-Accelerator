@@ -160,6 +160,8 @@ async def test_a_checkpoint_over_the_limit_round_trips_exactly(storage, containe
     # La petición pendiente y la cabecera viven en el documento principal.
     head = container.docs[checkpoint.checkpoint_id]
     assert "state" not in head and head["parts"] == len(container.docs) - 1
+    assert "parts_token" in head
+    assert "parts_token" not in await storage._hydrate(dict(head))
 
     loaded = await storage.load(checkpoint.checkpoint_id)
     assert loaded.to_dict() == checkpoint.to_dict()
