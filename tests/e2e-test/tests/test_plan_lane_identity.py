@@ -121,7 +121,8 @@ def _wire(page: Page, oid: str) -> Wire:
                 wire.plan_id = data.get("plan_id") or wire.plan_id
                 wire.session_id = data.get("session_id") or wire.session_id
             except ValueError:
-                pass
+                # Keep test flow resilient: some responses may be non-JSON.
+                log.debug("Non-JSON API response ignored for %s", path)
 
     def on_websocket(ws):
         def on_frame(payload):
