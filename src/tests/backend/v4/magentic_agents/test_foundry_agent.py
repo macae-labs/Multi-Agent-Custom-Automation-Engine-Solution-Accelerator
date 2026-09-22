@@ -1221,3 +1221,56 @@ class TestFoundryAgentTemplate:
         )
 
         assert agent._ephemeral is False
+
+    @pytest.mark.asyncio
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
+    async def test_invoke_keeps_the_tool_exchange_out_of_the_agent_voice(
+        self, mock_get_logger, mock_config
+    ):
+        """What leaves the wrapper is text. A function_call that reached the
+        shared Magentic history without its function_call_output made the
+        Responses API reject the next agent's turn (prod rev 134, 2026-09-22:
+        "No tool output found for function call")."""
+        from types import SimpleNamespace
+
+        from agent_framework import Content
+
+        mock_get_logger.return_value = Mock()
+        call = SimpleNamespace(
+            contents=[
+                Content.from_function_call(
+                    call_id="c1", name="workspace_exec", arguments={"command": "ls"}
+                )
+            ]
+        )
+        result = SimpleNamespace(
+            contents=[Content.from_function_result(call_id="c1", result="ok")]
+        )
+        mixed = SimpleNamespace(
+            contents=[
+                Content.from_text("Rama: main"),
+                Content.from_function_call(call_id="c2", name="x", arguments={}),
+            ]
+        )
+        text = SimpleNamespace(contents=[Content.from_text(" y commit 4e1b6baa")])
+
+        async def mock_run(messages, stream=True):
+            for update in (call, result, mixed, text):
+                yield update
+
+        agent = FoundryAgentTemplate(
+            agent_name="TestAgent",
+            agent_description="Test Description",
+            agent_instructions="Test Instructions",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+        )
+        agent._agent = SimpleNamespace(run=mock_run)
+        agent.save_database_team_agent = AsyncMock()
+
+        updates = [u async for u in agent.invoke("Test prompt")]
+
+        assert updates == [mixed, text]
+        assert [c.type for c in mixed.contents] == ["text"]

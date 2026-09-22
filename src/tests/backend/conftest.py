@@ -35,7 +35,7 @@ class TelemetryStub:
             def do_POST(self):
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length) if length else b""
-                envelopes: list = []
+                envelopes: list[dict] = []
                 try:
                     parsed = json.loads(body.decode("utf-8")) if body else []
                     envelopes = parsed if isinstance(parsed, list) else [parsed]

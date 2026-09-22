@@ -218,16 +218,6 @@ export class APIService {
   }
 
   /**
-   * Resume orchestration for an orphaned in_progress plan (m_plan is null).
-   * Called by PlanPage when it detects a plan stuck without steps.
-   */
-  async triggerPlanOrchestration(planId: string): Promise<void> {
-    console.log('🔄 Re-triggering orchestration for plan:', planId);
-    await apiClient.post(API_ENDPOINTS.RESUME_PLAN, { plan_id: planId });
-    console.log('✅ Orchestration re-triggered for plan:', planId);
-  }
-
-  /**
    * Submit clarification for a plan
    * @param planId Plan ID
    * @param sessionId Session ID
@@ -486,6 +476,17 @@ export class APIService {
       timestamp: string;
       metadata: Record<string, unknown>;
     }>;
+    /** What this session waits from the human, from the plan's durable waiting_for. */
+    pending_clarification?: {
+      plan_id: string;
+      request_id: string;
+      question: string;
+    } | null;
+    pending_plan_review?: {
+      plan_id: string;
+      request_id: string;
+      question: string;
+    } | null;
   }> {
     return apiClient.get(`${API_ENDPOINTS.CHAT_SESSIONS}/${sessionId}`);
   }

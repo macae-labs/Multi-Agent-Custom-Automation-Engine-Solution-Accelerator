@@ -263,9 +263,11 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config = ConnectionConfig()
 
-        # Test initialization
+        # Test initialization: sockets are keyed by plan only — no user map,
+        # no pending buffer (both delivered other plans' messages).
         self.assertIsInstance(config.connections, dict)
-        self.assertIsInstance(config.user_to_process, dict)
+        self.assertFalse(hasattr(config, "user_to_process"))
+        self.assertFalse(hasattr(config, "pending_messages"))
 
     def test_add_and_get_connection(self):
         """Test adding and getting connection."""
@@ -277,9 +279,8 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        # Test that connection and user mapping are added
+        # Test that the plan's connection is added
         self.assertEqual(config.connections[process_id], connection)
-        self.assertEqual(config.user_to_process[user_id], process_id)
 
         # Test getting connection
         retrieved_connection = config.get_connection(process_id)
@@ -306,9 +307,8 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         config.add_connection(process_id, connection, user_id)
         config.remove_connection(process_id)
 
-        # Test that connection and user mapping are removed
+        # Test that the plan's connection is removed
         self.assertNotIn(process_id, config.connections)
-        self.assertNotIn(user_id, config.user_to_process)
 
     async def test_close_connection(self):
         """Test closing connection."""
@@ -369,7 +369,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        await config.send_status_update_async(message, user_id)
+        await config.send_status_update_async(message, user_id, process_id=process_id)
 
         connection.send_text.assert_called_once()
         sent_data = json.loads(connection.send_text.call_args[0][0])
@@ -398,7 +398,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        await config.send_status_update_async(message, user_id)
+        await config.send_status_update_async(message, user_id, process_id=process_id)
 
         connection.send_text.assert_called_once()
         sent_data = json.loads(connection.send_text.call_args[0][0])
@@ -419,7 +419,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        await config.send_status_update_async(message, user_id)
+        await config.send_status_update_async(message, user_id, process_id=process_id)
 
         connection.send_text.assert_called_once()
         sent_data = json.loads(connection.send_text.call_args[0][0])
@@ -443,7 +443,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
 
         config.add_connection(process_id, connection, user_id)
 
-        await config.send_status_update_async(message, user_id)
+        await config.send_status_update_async(message, user_id, process_id=process_id)
 
         connection.send_text.assert_called_once()
         sent_data = json.loads(connection.send_text.call_args[0][0])
@@ -465,7 +465,7 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         config.add_connection(process_id, connection, user_id)
 
         with patch("v4.config.settings.logger") as mock_logger:
-            await config.send_status_update_async(message, user_id)
+            await config.send_status_update_async(message, user_id, process_id=process_id)
 
             mock_logger.error.assert_called()
             connection.send_text.assert_called_once()
@@ -485,14 +485,17 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         config.add_connection(process_id, connection, user_id)
 
         with patch("v4.config.settings.logger") as mock_logger:
-            await config.send_status_update_async("test", user_id)
+            await config.send_status_update_async(
+                "test", user_id, process_id=process_id
+            )
 
             mock_logger.error.assert_called()
             # Connection should be removed after error
             self.assertNotIn(process_id, config.connections)
 
     def test_add_connection_with_existing_user(self):
-        """Test adding connection when user already has a different connection."""
+        """Two plans of one user keep their own sockets: a second plan page
+        never closes the first (sockets are the plan's, not the user's)."""
 
         config = ConnectionConfig()
         user_id = "user-123"
@@ -503,57 +506,12 @@ class TestConnectionConfig(unittest.IsolatedAsyncioTestCase):
         new_connection = Mock()
         new_connection.close = AsyncMock(return_value=None)
 
-        # Add first connection
         config.add_connection(old_process_id, old_connection, user_id)
-        self.assertEqual(config.user_to_process[user_id], old_process_id)
+        config.add_connection(new_process_id, new_connection, user_id)
 
-        # Consume coroutine to avoid unawaited coroutine warning in sync test context
-        def consume_coro(coro):
-            coro.close()
-            return None
-
-        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
-            mock_create_task.side_effect = consume_coro
-            with patch("v4.config.settings.logger") as mock_logger:
-                # Add second connection for same user
-                config.add_connection(new_process_id, new_connection, user_id)
-
-                # New connection should be active and user should be mapped to new process
-                self.assertEqual(config.connections[new_process_id], new_connection)
-                self.assertEqual(config.user_to_process[user_id], new_process_id)
-                # Logger should be called for the old connection handling
-                self.assertTrue(mock_logger.info.called or mock_logger.error.called)
-
-    def test_add_connection_old_connection_close_error(self):
-        """Test adding connection when closing old connection fails."""
-
-        config = ConnectionConfig()
-        user_id = "user-123"
-        old_process_id = "old-process"
-        new_process_id = "new-process"
-        old_connection = Mock()
-        old_connection.close = AsyncMock(return_value=None)
-        new_connection = Mock()
-        new_connection.close = AsyncMock(return_value=None)
-
-        # Add first connection
-        config.connections[old_process_id] = old_connection
-        config.user_to_process[user_id] = old_process_id
-
-        # Consume coroutine before raising exception to avoid warning
-        def consume_and_raise(coro):
-            coro.close()
-            raise Exception("Close error")
-
-        with patch("v4.config.settings.asyncio.create_task") as mock_create_task:
-            mock_create_task.side_effect = consume_and_raise
-            with patch("v4.config.settings.logger") as mock_logger:
-                # Add second connection for same user
-                config.add_connection(new_process_id, new_connection, user_id)
-
-                # Error should be logged
-                mock_logger.error.assert_called()
-                self.assertEqual(config.connections[new_process_id], new_connection)
+        self.assertEqual(config.connections[old_process_id], old_connection)
+        self.assertEqual(config.connections[new_process_id], new_connection)
+        old_connection.close.assert_not_called()
 
     def test_add_connection_existing_process_close_error(self):
         """Test adding connection when closing existing process connection fails."""

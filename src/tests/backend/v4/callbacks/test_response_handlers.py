@@ -545,11 +545,13 @@ class TestStreamingAgentResponseCallback:
                 agent_name="agent_123", content="Test streaming text ", is_final=True
             )
 
-            # Verify send_status_update_async was called
+            # Verify send_status_update_async was called, addressed by plan
+            # (None here: the caller passed no process_id, so nothing is sent).
             connection_config.send_status_update_async.assert_called_with(
                 mock_streaming_obj,
                 "user_456",
                 message_type=WebsocketMessageType.AGENT_MESSAGE_STREAMING,
+                process_id=None,
             )
 
     @pytest.mark.asyncio

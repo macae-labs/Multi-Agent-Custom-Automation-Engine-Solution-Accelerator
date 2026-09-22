@@ -352,6 +352,12 @@ class ChatMessageRequest(BaseModel):
     # identidad (POST /chat/turns/{turn_id}/abort): el ingress no propaga el
     # cierre del cliente al contenedor, así que el transporte no sirve de señal.
     turn_id: Optional[str] = None
+    # Identidad de la clarificación que este mensaje responde. Sin ella el
+    # mensaje es una tarea nueva: el backend nunca decide por sesión que un
+    # texto es "la respuesta" a una pregunta que el usuario no vio (prod
+    # 2026-09-22, autonoma-001: dos tareas nuevas tragadas como respuestas a
+    # c817f2a3 / df7940b6 del plan e5b31dda, aparcado desde el día anterior).
+    clarification_request_id: Optional[str] = None
 
 
 class ResumePlanRequest(BaseModel):

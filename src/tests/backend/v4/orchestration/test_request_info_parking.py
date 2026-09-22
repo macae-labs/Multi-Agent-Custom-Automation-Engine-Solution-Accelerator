@@ -57,8 +57,12 @@ async def test_park_persists_waiting_for_and_notifies_the_ui(parked):
         "team_capabilities": {},
     }
     assert parked.store.updates == [parked.plan.waiting_for]
+    # Addressed to the plan's socket, never to "the user's socket".
     parked.sender.send_status_update_async.assert_awaited_once_with(
-        {"question": "¿Cuál?", "request_id": "req-1"}, user_id="u1", message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST
+        {"question": "¿Cuál?", "request_id": "req-1"},
+        user_id="u1",
+        message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
+        process_id="p1",
     )
     assert parked.chat.add_message.await_args.kwargs["metadata"]["clarification_id"] == "req-1"
 
