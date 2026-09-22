@@ -2489,7 +2489,13 @@ class _RouterChatClient:
                 status_code=422,
                 detail="Tool call sin función en la respuesta del Router",
             )
-        args = _json.loads(func.arguments or "{}")
+        try:
+            args = _json.loads(func.arguments or "{}")
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid Router tool arguments: {e}",
+            ) from e
         logger.info(
             "Router composed plan for selector: task=%s agents=%s",
             str(args.get("task") or "")[:120],
