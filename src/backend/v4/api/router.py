@@ -2474,7 +2474,9 @@ class _RouterChatClient:
             )
         finally:
             await router.close()
-        calls = completion.choices[0].message.tool_calls or []
+        choice = completion.choices[0] if getattr(completion, "choices", None) else None
+        message = getattr(choice, "message", None) if choice else None
+        calls = getattr(message, "tool_calls", None) or []
         if not calls:
             raise HTTPException(
                 status_code=422,
