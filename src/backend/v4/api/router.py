@@ -280,12 +280,17 @@ async def start_comms(
             ws_props["session_id"] = session_id
         track_event_if_configured("WebSocket_Connected", ws_props)
 
-        # Re-send any pending plan approval that was missed before WS connected
-        # (race: backend parks on plan review before the frontend connects the WS).
-        # Durable source: the user's plan whose waiting_for is a plan_review.
+        # Re-send whatever the parked plan is waiting for and this socket never
+        # saw: a plan review (race: backend parks before the frontend connects)
+        # or a clarification (a refresh while the plan waits on a question opens
+        # a new socket; without the USER_CLARIFICATION_REQUEST the input stays
+        # locked and the question can never be answered — measured 2026-09-21,
+        # plan e5b31dda). Durable source: the plan's waiting_for, never memory.
         try:
             _ws_store = await DatabaseFactory.get_database(user_id=user_id)
-            _parked = await _plan_waiting_for(_ws_store, kind="plan_review")
+            _parked = await _plan_waiting_for(
+                _ws_store, kind="plan_review", plan_id=process_id
+            )
             if _parked is not None and (_parked.waiting_for or {}).get("m_plan"):
                 _wf = _parked.waiting_for or {}
                 await connection_config.send_status_update_async(
@@ -305,8 +310,26 @@ async def start_comms(
                     _parked.plan_id,
                     user_id,
                 )
+            _asked = await _plan_waiting_for(
+                _ws_store, kind="clarification", plan_id=process_id
+            )
+            if _asked is not None:
+                _wfq = _asked.waiting_for or {}
+                await connection_config.send_status_update_async(
+                    {
+                        "question": _wfq.get("question") or "",
+                        "request_id": _wfq.get("request_id"),
+                    },
+                    user_id,
+                    message_type=messages.WebsocketMessageType.USER_CLARIFICATION_REQUEST,
+                )
+                logging.info(
+                    "Re-sent pending USER_CLARIFICATION_REQUEST for plan %s to user %s",
+                    _asked.plan_id,
+                    user_id,
+                )
         except Exception as e:
-            logging.warning("Failed to re-send pending approval on WS connect: %s", e)
+            logging.warning("Failed to re-send pending request on WS connect: %s", e)
 
         # Keep the connection open - FastAPI will close the connection if this returns
         try:
@@ -505,14 +528,29 @@ async def process_request(
     if span:
         span.set_attribute("session_id", input_task.session_id)
 
+    # Plan position of the chat|plan selector: the roster is composed by the
+    # Router from THIS request, exactly like the chat lane's escalation. The
+    # selected-team default that used to live here handed a repository audit
+    # to 'Product Marketing Team' (measured in Chrome, 2026-09-22).
+    composer = _RouterChatClient(
+        "Hosted Orchestrator",
+        user_access_token=user_access_token,
+        user_id=user_id,
+        workspace_id=input_task.workspace_id,
+    )
+    try:
+        task, roster = await composer.compose_plan(input_task.description)
+    finally:
+        await composer.close()
     plan_id = await _create_plan_and_start(
         background_tasks=background_tasks,
         user_id=user_id,
         tenant_id=tenant_id,
         user_access_token=user_access_token,
-        description=input_task.description,
+        description=task,
         session_id=input_task.session_id,
         persist_user_task=True,
+        composed_agents=roster,
         workspace_id=input_task.workspace_id,
     )
     return {
@@ -733,28 +771,17 @@ async def _create_plan_and_start(
                     workspace_id,
                 )
             except Exception as compose_err:
-                # A malformed roster must never block the request — fall back
-                # to the user's selected team (the pre-existing behavior).
-                logger.warning(
-                    "Router roster rejected (%s); using the selected team",
-                    compose_err,
-                )
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Roster del Router inutilizable: {compose_err}",
+                ) from compose_err
         if team is None:
-            user_current_team = await memory_store.get_current_team(user_id=user_id)
-            selected_team_id: str | None = (
-                user_current_team.team_id if user_current_team else None
+            # No roster, no plan. The selected-team / first-available default
+            # predates Auto Team and composed blind teams for any task.
+            raise HTTPException(
+                status_code=422,
+                detail="Un plan requiere el roster compuesto por el Router",
             )
-            if not selected_team_id:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No team configured. Please select a team first.",
-                )
-            team = await memory_store.get_team_by_id(team_id=selected_team_id)
-            if not team:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Team configuration '{selected_team_id}' not found or access denied",
-                )
         team_id: str | None = team.team_id
     except HTTPException:
         raise
@@ -2416,6 +2443,65 @@ class _RouterChatClient:
             f"{account}/openai/deployments/{config.CHAT_ROUTER_MODEL}"
         )
         self._router_api_version = config.CHAT_ROUTER_API_VERSION
+
+    async def compose_plan(self, prompt: str) -> tuple[str, list]:
+        """The plan selector's way to the roster: ONE Router call with ``run_plan``
+        forced — the same capability the chat lane escalates through, minus the
+        conversation (the roster follows the request, not the past). This is what
+        replaces the formal lane's selected-team / first-available default.
+        """
+        import json as _json
+
+        from openai import AsyncOpenAI
+
+        run_plan = next(
+            t for t in _ROUTER_FUNCTIONS if t["function"]["name"] == "run_plan"
+        )
+        router = AsyncOpenAI(
+            api_key=await self._bearer(),
+            base_url=self._router_base_url,
+            default_query={"api-version": self._router_api_version},
+            timeout=120,
+        )
+        try:
+            completion = await router.chat.completions.create(
+                model=self._router_model,
+                messages=cast(Any, [{"role": "user", "content": prompt}]),
+                tools=cast(Any, [run_plan]),
+                tool_choice=cast(
+                    Any, {"type": "function", "function": {"name": "run_plan"}}
+                ),
+            )
+        finally:
+            await router.close()
+        choice = completion.choices[0] if getattr(completion, "choices", None) else None
+        message = getattr(choice, "message", None) if choice else None
+        calls = getattr(message, "tool_calls", None) or []
+        if not calls:
+            raise HTTPException(
+                status_code=422,
+                detail="El Router no compuso un plan para esta petición",
+            )
+        call = calls[0]
+        func = getattr(call, "function", None)
+        if func is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Tool call sin función en la respuesta del Router",
+            )
+        try:
+            args = _json.loads(func.arguments or "{}")
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid Router tool arguments: {e}",
+            ) from e
+        logger.info(
+            "Router composed plan for selector: task=%s agents=%s",
+            str(args.get("task") or "")[:120],
+            [a.get("name") for a in args.get("agents") or [] if isinstance(a, dict)],
+        )
+        return str(args.get("task") or prompt), list(args.get("agents") or [])
 
     async def _bearer(self) -> str:
         from common.config.app_config import config
