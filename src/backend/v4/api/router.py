@@ -288,7 +288,9 @@ async def start_comms(
         # plan e5b31dda). Durable source: the plan's waiting_for, never memory.
         try:
             _ws_store = await DatabaseFactory.get_database(user_id=user_id)
-            _parked = await _plan_waiting_for(_ws_store, kind="plan_review")
+            _parked = await _plan_waiting_for(
+                _ws_store, kind="plan_review", plan_id=process_id
+            )
             if _parked is not None and (_parked.waiting_for or {}).get("m_plan"):
                 _wf = _parked.waiting_for or {}
                 await connection_config.send_status_update_async(
