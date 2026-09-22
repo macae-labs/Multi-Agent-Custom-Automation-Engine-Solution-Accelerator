@@ -9,7 +9,7 @@
 // Evidencia en $SHOTS: net.jsonl (POSTs y respuestas), ws_frames.jsonl (frames del socket), sse.txt,
 // page_final.txt, page_after_refresh.txt y capturas 01..07. Escribe planes/sesiones bajo OID (write-shared).
 // identidad real inyectada en /.auth/me (objectidentifier = oid). Sin relojes en las esperas de estado.
-import { chromium } from '/home/vscode/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { appendFileSync, writeFileSync } from 'node:fs';
 // argumentos: --oid <oid> --lane Plan|Chat --shots <dir> --chrome <binario>  (o las variables OID/LANE/SHOTS/CHROME)
 const argv = process.argv.slice(2); const arg = (k) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : undefined; };
