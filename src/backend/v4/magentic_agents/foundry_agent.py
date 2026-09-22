@@ -26,6 +26,36 @@ from v4.magentic_agents.common.lifecycle import (
 from v4.magentic_agents.common.self_heal_middleware import SelfHealToolMiddleware
 from v4.magentic_agents.models.agent_models import MCPConfig, SearchConfig
 
+_TOOL_EXCHANGE_TYPES = frozenset({"function_call", "function_result"})
+
+
+def _without_tool_exchange(update):
+    """What leaves the agent for the workflow is the agent's voice, not its
+    exchange with the tools.
+
+    The executor merges the yielded updates into messages and the Magentic
+    orchestrator appends those messages to the shared history that every
+    participant receives as input. A ``function_call`` that reaches that
+    history without its ``function_call_output`` makes the Responses API
+    reject the next agent's turn: "No tool output found for function call"
+    (prod rev 134, 2026-09-22 07:05, CheckpointValidationAgent's first turn
+    after RepositoryValidationAgent's five workspace_exec calls; the plan
+    failed). The exchange already happened in the agent's own thread; the
+    UI does not render tool messages (PlanPage only logs them).
+    Returns the update with the exchange removed, or ``None`` if nothing
+    else was in it."""
+    contents = getattr(update, "contents", None)
+    if not isinstance(contents, list) or not contents:
+        return update
+    kept = [c for c in contents if getattr(c, "type", None) not in _TOOL_EXCHANGE_TYPES]
+    if len(kept) == len(contents):
+        return update
+    if not kept:
+        return None
+    update.contents = kept
+    return update
+
+
 CHAT_HISTORY_WINDOW: int = 60
 
 
@@ -554,11 +584,15 @@ class FoundryAgentTemplate(AzureAgentBase):
                 file_ids,
             )
             async for update in self._agent.run(messages, stream=True):
-                yield update
+                voice = _without_tool_exchange(update)
+                if voice is not None:
+                    yield voice
         else:
             messages.append(Message(role="user", text=prompt))
             async for update in self._agent.run(messages, stream=True):
-                yield update
+                voice = _without_tool_exchange(update)
+                if voice is not None:
+                    yield voice
 
     # -------------------------
     # Cleanup (optional override if you want to delete server-side agent)

@@ -519,6 +519,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-regex" },
     { name = "types-requests" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -579,6 +580,7 @@ dev = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20260815,<7" },
     { name = "types-regex" },
     { name = "types-requests" },
+    { name = "websockets", specifier = ">=17.0.1,<18" },
 ]
 
 [[package]]

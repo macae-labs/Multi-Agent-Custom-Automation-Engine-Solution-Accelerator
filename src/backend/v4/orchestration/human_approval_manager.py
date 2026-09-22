@@ -271,6 +271,12 @@ Never present invented figures, statistics or research as findings.
                 message=final_message,
                 user_id=self.current_user_id,
                 message_type=messages.WebsocketMessageType.FINAL_RESULT_MESSAGE,
+                # The plan this run belongs to: stamped on the MPlan when it parked
+                # for review. Without it the message has no socket to go to.
+                process_id=getattr(
+                    getattr(self, "magentic_plan", None), "plan_id", None
+                )
+                or None,
             )
 
             # Call base class to get the proper ledger type, then raise to terminate

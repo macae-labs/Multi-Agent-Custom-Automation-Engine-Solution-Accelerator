@@ -103,4 +103,7 @@ dev = [
     # Mock httpx requests in unit tests
     "respx>=0.23.1,<1",
     "types-pyyaml>=6.0.12.20260815,<7",
+    # docs/incidents/probes/plan_lane_e2e_probe.py abre el WS del plan; antes
+    # sólo llegaba transitivo vía uvicorn[standard]
+    "websockets>=17.0.1,<18",
 ]

@@ -304,6 +304,7 @@ async def start_comms(
                     ),
                     user_id=user_id,
                     message_type=messages.WebsocketMessageType.PLAN_APPROVAL_REQUEST,
+                    process_id=process_id,
                 )
                 logging.info(
                     "Re-sent pending PLAN_APPROVAL_REQUEST for plan %s to user %s",
@@ -322,6 +323,7 @@ async def start_comms(
                     },
                     user_id,
                     message_type=messages.WebsocketMessageType.USER_CLARIFICATION_REQUEST,
+                    process_id=process_id,
                 )
                 logging.info(
                     "Re-sent pending USER_CLARIFICATION_REQUEST for plan %s to user %s",
@@ -3943,18 +3945,14 @@ async def chat_message_stream(
         chat_svc, chat_request.session_id, user_id
     )
 
-    # A pending clarification is authoritative on its own, regardless of
-    # previous_intent: if the orchestration registered a question for this
-    # session, THIS message is the answer — deliver it to the waiting plan and
-    # never fall through to a direct (conversational) response. Gating this on
-    # previous_intent=="task" broke the loop: once any turn went to direct
-    # response it persisted intent="conversational", so the next answer skipped
-    # this guard and went to direct response again.
-    pending_plan = await _plan_waiting_for(
-        memory_store,
-        session_id=chat_request.session_id,
-        plan_id=chat_request.plan_id or None,
-    )
+    # Una respuesta a clarificación lleva la identidad de su pregunta
+    # (clarification_request_id). Sin ella este mensaje es una tarea nueva,
+    # aunque la sesión tenga un plan aparcado. Decidir por sesión que "este
+    # mensaje es la respuesta" secuestraba tareas nuevas como respuestas a
+    # preguntas que el usuario nunca vio: prod 2026-09-22, autonoma-001, plan
+    # e5b31dda aparcado desde el día anterior, dos tareas tragadas como
+    # respuestas a c817f2a3 y df7940b6, y el run acabó en 400.
+    pending_plan = await _clarification_answer_target(memory_store, chat_request)
     if pending_plan is not None:
         pending_request_id = (pending_plan.waiting_for or {})["request_id"]
         logger.info(
@@ -5061,6 +5059,28 @@ async def get_chat_session(session_id: str, request: Request):
     session = await chat_svc.get_session(session_id, user_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    # Lo que esta sesión espera del humano vive en waiting_for del plan, no en
+    # memoria del proceso: la UI abre ese plan y responde con su request_id.
+    # Sin esto la pregunta era invisible desde la vista de sesión y el chat
+    # tragaba cualquier texto como respuesta (prod 2026-09-22, autonoma-001).
+    memory_store = await DatabaseFactory.get_database(
+        user_id=user_id, tenant_id=tenant_id
+    )
+    for kind, key in (
+        ("clarification", "pending_clarification"),
+        ("plan_review", "pending_plan_review"),
+    ):
+        parked = await _plan_waiting_for(memory_store, kind=kind, session_id=session_id)
+        waiting = (parked.waiting_for or {}) if parked is not None else None
+        session[key] = (
+            {
+                "plan_id": parked.plan_id,
+                "request_id": waiting.get("request_id"),
+                "question": waiting.get("question") or "",
+            }
+            if parked is not None and waiting is not None
+            else None
+        )
     return session
 
 
@@ -5122,13 +5142,17 @@ async def resume_plan(
     request: Request,
 ):
     """
-    Resume orchestration for an existing in_progress plan whose m_plan is null.
-    Used by the frontend when it detects an orphaned plan on page load.
+    Re-run an in_progress plan that has no run and nothing durable to resume
+    from (explicit operator action; the page never calls this on load).
 
-    Idempotent: if an orchestration run is already in flight for this session
-    (e.g. the plan was just created by process_request and PlanPage's orphan
-    recovery fires immediately), this is a no-op — it does NOT start a second
-    run, which would create a duplicate plan.
+    A parked plan is not an orphan: its state lives in ``waiting_for`` and its
+    checkpoint, and the human answer (plan_approval / user_clarification) is
+    what resumes it, from that checkpoint. Re-running it here re-planned
+    (measured 2026-09-22, plan 6b204c5e: second "Plan created", second
+    approval card, first approve answered 404).
+
+    Idempotent: if an orchestration run is already in flight for this session,
+    this is a no-op — it does NOT start a second run.
     """
     user_id, tenant_id, user_access_token = _extract_auth_with_token(request)
     plan_id = payload.plan_id
@@ -5146,6 +5170,16 @@ async def resume_plan(
         return {
             "status": "skipped",
             "reason": f"Plan status is '{plan.overall_status}', not in_progress",
+        }
+
+    parked = plan.waiting_for or {}
+    if parked:
+        return {
+            "status": "skipped",
+            "reason": (
+                f"plan parked on {parked.get('kind')}; "
+                f"answer request_id {parked.get('request_id')} to resume it"
+            ),
         }
 
     # Idempotency guard: a run is already in flight for this session → don't
@@ -5307,6 +5341,7 @@ async def plan_approval(
             },
             user_id,
             message_type=WebsocketMessageType.ERROR_MESSAGE,
+            process_id=plan.plan_id,
         )
 
     decision = human_feedback.decision
@@ -5387,6 +5422,35 @@ async def _plan_waiting_for(
             continue
         return plan
     return None
+
+
+async def _clarification_answer_target(
+    memory_store: DatabaseBase, chat_request: ChatMessageRequest
+) -> Optional[Plan]:
+    """The parked plan this chat message answers, by identity only.
+
+    ``clarification_request_id`` names the question. Without it the message is
+    a new task and no plan is touched, whatever the session has parked. An id
+    that no parked plan of this session holds is a contract error (409), never
+    a silent fallthrough to "some other plan of the user"."""
+    request_id = chat_request.clarification_request_id
+    if not request_id:
+        return None
+    plan = await _plan_waiting_for(
+        memory_store,
+        request_id=request_id,
+        session_id=chat_request.session_id,
+        plan_id=chat_request.plan_id or None,
+    )
+    if plan is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No plan in session '{chat_request.session_id}' waits for "
+                f"clarification '{request_id}'"
+            ),
+        )
+    return plan
 
 
 async def _append_event(

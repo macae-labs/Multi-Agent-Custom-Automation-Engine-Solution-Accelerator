@@ -780,25 +780,14 @@ const PlanPage: React.FC = () => {
 
         if (isInProgress) {
           setShowApprovalButtons(true);
-          // Connect WebSocket so infrastructure events are received.
+          // Connect WebSocket so infrastructure events are received. The page
+          // never originates orchestration: what an in_progress plan waits
+          // for lives in its durable waiting_for, and the socket endpoint
+          // re-sends it for THIS plan on connect. Re-triggering from here
+          // (/resume_plan on "m_plan is null") re-planned an already parked
+          // plan: measured 2026-09-22, plan 6b204c5e, second "Plan created",
+          // second approval card, first approve answered 404.
           setContinueWithWebsocketFlow(true);
-
-          // Orphan recovery: plan is in_progress but backend never sent m_plan
-          // (e.g. page refreshed mid-orchestration). Re-trigger the workflow.
-          if (!planResult?.mplan) {
-            console.warn(
-              '⚠️ Plan in_progress but m_plan is null — re-triggering orchestration.'
-            );
-            try {
-              await apiService.triggerPlanOrchestration(planId);
-              console.log('✅ Orchestration re-triggered for plan:', planId);
-            } catch (triggerErr) {
-              console.warn(
-                '⚠️ Could not re-trigger orchestration (non-fatal):',
-                triggerErr
-              );
-            }
-          }
         } else {
           setShowApprovalButtons(false);
         }
@@ -846,6 +835,18 @@ const PlanPage: React.FC = () => {
       setLoading(true);
       try {
         const sessionData = await apiService.getChatSession(sessionId);
+        // What this session waits from the human lives in the plan's durable
+        // waiting_for. The session opens on that plan: there the question is
+        // rendered and answered with its request_id. Rendering the session
+        // without it hid the question, and the chat swallowed the next task
+        // typed here as "the answer" (prod 2026-09-22, autonoma-001).
+        const parked =
+          sessionData?.pending_clarification ||
+          sessionData?.pending_plan_review;
+        if (parked?.plan_id) {
+          navigate(`/plan/${parked.plan_id}`);
+          return;
+        }
         const chatHistory = (sessionData?.messages || []).map(
           (msg): AgentMessageData => {
             const role = (msg as any).role || (msg as any).sender;
@@ -887,7 +888,7 @@ const PlanPage: React.FC = () => {
         setLoading(false);
       }
     },
-    [dispatch, resetPlanVariables]
+    [dispatch, navigate, resetPlanVariables]
   );
 
   // Handle plan approval

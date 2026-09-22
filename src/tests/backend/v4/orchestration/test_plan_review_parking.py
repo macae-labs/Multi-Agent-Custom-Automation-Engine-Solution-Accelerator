@@ -106,6 +106,8 @@ async def test_park_persists_mplan_in_waiting_for_and_asks_the_ui_once(parked):
     kwargs = parked.sender.send_status_update_async.await_args.kwargs
     assert kwargs["message_type"] == WebsocketMessageType.PLAN_APPROVAL_REQUEST
     assert kwargs["user_id"] == "u1"
+    # Addressed to the plan's socket, never to "the user's socket".
+    assert kwargs["process_id"] == "p1"
     msg = kwargs["message"]
     assert msg.plan is parked.mplan
     assert msg.context == {"request_id": "req-1", "is_stalled": False}

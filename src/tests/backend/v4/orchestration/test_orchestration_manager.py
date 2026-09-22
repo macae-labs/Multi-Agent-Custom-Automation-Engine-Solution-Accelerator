@@ -532,7 +532,7 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         async def _persist(**_kw):
             order.append("plan_store")
 
-        async def _signal(_payload, _user, message_type=None):
+        async def _signal(_payload, _user, message_type=None, process_id=None):
             order.append(f"ws:{getattr(message_type, 'value', message_type)}")
 
         chat_svc = Mock()

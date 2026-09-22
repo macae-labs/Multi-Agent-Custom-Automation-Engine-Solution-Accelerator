@@ -607,6 +607,7 @@ class OrchestrationManager:
             },
             user_id,
             message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+            process_id=plan.plan_id,
         )
         self.logger.info(
             "Parked %s %s cancelled by user (plan %s)",
@@ -734,12 +735,14 @@ class OrchestrationManager:
                 ),
                 user_id=user_id,
                 message_type=WebsocketMessageType.PLAN_APPROVAL_REQUEST,
+                process_id=plan_id,
             )
         if is_clarification:
             await connection_config.send_status_update_async(
                 {"question": question, "request_id": event.request_id},
                 user_id=user_id,
                 message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
+                process_id=plan_id,
             )
             if session_id:
                 try:
@@ -1008,6 +1011,7 @@ class OrchestrationManager:
                                         agent_msg,
                                         user_id,
                                         message_type=WebsocketMessageType.AGENT_MESSAGE,
+                                        process_id=plan_id,
                                     )
                                     self.logger.info(
                                         "Sent AGENT_MESSAGE for '%s' (%d chars)",
@@ -1087,6 +1091,7 @@ class OrchestrationManager:
                                         output_data,
                                         False,
                                         user_id,
+                                        process_id=plan_id,
                                     )
                                 except Exception as e:
                                     self.logger.error(
@@ -1244,6 +1249,7 @@ class OrchestrationManager:
                 },
                 user_id,
                 message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+                process_id=plan_id,
             )
             self.logger.info("Final result sent via WebSocket to user '%s'", user_id)
 
@@ -1298,6 +1304,7 @@ class OrchestrationManager:
                     },
                     user_id,
                     message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
+                    process_id=plan_id,
                 )
             except Exception as send_error:
                 self.logger.error("Failed to send error status: %s", send_error)

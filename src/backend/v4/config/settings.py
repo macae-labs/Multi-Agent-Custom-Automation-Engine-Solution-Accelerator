@@ -6,7 +6,6 @@ Handles Azure OpenAI, MCP, and environment setup (agent_framework version).
 import asyncio
 import json
 import logging
-import time
 from typing import Any, Dict, List, Optional
 
 from agent_framework import ChatOptions
@@ -96,7 +95,7 @@ class OrchestrationConfig:
             str, List[Any]
         ] = {}  # user_id -> list of lifecycle-managed agent wrappers (for proper close)
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
-        self.max_rounds: int = 12  # Maximum replanning rounds
+        self.max_rounds: int = 20  # Maximum replanning rounds
 
         # No in-process waits for humans. Plan review and clarification are
         # native request_info events: the workflow goes idle, the pending
@@ -130,106 +129,47 @@ class OrchestrationConfig:
 
 
 class ConnectionConfig:
-    """Connection manager for WebSocket connections.
+    """WebSocket connections, addressed by plan (``process_id``).
 
-    Includes a short-lived pending buffer to handle the race condition where
-    orchestration emits status updates before the frontend WebSocket connects.
-    Messages are buffered per user_id and flushed on add_connection.
+    Every message names the plan it belongs to; nothing is routed by user and
+    nothing is buffered in memory. What a plan waits from the human lives in
+    its ``waiting_for`` (Cosmos) and the socket endpoint re-sends it when that
+    plan's socket connects; agent output and the final result are persisted
+    before any signal. A message for a plan without a socket is dropped here,
+    never queued for "the user's next socket": that queue and the user→process
+    map delivered another plan's approval request to a freshly opened plan
+    page (2026-09-22: 988b2933 flushed onto 7804a8f4's socket; a1e2fd6f onto
+    6b204c5e's, whose approve then answered 404).
     """
-
-    # Buffer config — kept conservative to avoid memory bloat
-    PENDING_TTL_SECONDS = 60  # drop messages older than this
-    PENDING_MAX_PER_USER = 100  # cap per-user buffer to prevent runaway
 
     def __init__(self):
         self.connections: Dict[str, WebSocket] = {}
-        self.user_to_process: Dict[str, str] = {}
-        # Race-condition buffer: messages emitted while WS isn't connected yet.
-        # Schema: user_id -> list[(timestamp_float, message, message_type)]
-        self.pending_messages: Dict[str, list] = {}
-
-    def _prune_pending(self, user_id: str) -> None:
-        """Drop expired buffered messages for a single user (TTL-based)."""
-        bucket = self.pending_messages.get(user_id)
-        if not bucket:
-            return
-        now = time.time()
-        fresh = [
-            (ts, m, mt) for ts, m, mt in bucket if now - ts < self.PENDING_TTL_SECONDS
-        ]
-        if fresh:
-            self.pending_messages[user_id] = fresh
-        else:
-            self.pending_messages.pop(user_id, None)
 
     def add_connection(
         self, process_id: str, connection: WebSocket, user_id: Optional[str] = None
     ):
-        """Add or replace a connection for a process/user."""
-        if process_id in self.connections:
+        """Register the socket of a plan, replacing a previous one for the same plan."""
+        process_id = str(process_id)
+        previous = self.connections.get(process_id)
+        if previous is not None and previous is not connection:
             try:
-                asyncio.create_task(self.connections[process_id].close())
+                asyncio.create_task(previous.close())
             except Exception as e:
                 logger.error(
                     "Error closing existing connection for process %s: %s",
                     process_id,
                     e,
                 )
-
         self.connections[process_id] = connection
-
-        if user_id:
-            user_id = str(user_id)
-            old_process_id = self.user_to_process.get(user_id)
-            if old_process_id and old_process_id != process_id:
-                old_conn = self.connections.get(old_process_id)
-                if old_conn:
-                    try:
-                        asyncio.create_task(old_conn.close())
-                        del self.connections[old_process_id]
-                        logger.info(
-                            "Closed old connection %s for user %s",
-                            old_process_id,
-                            user_id,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Error closing old connection for user %s: %s", user_id, e
-                        )
-
-            self.user_to_process[user_id] = process_id
-            logger.info(
-                "WebSocket connection added for process: %s (user: %s)",
-                process_id,
-                user_id,
-            )
-
-            # Flush any pending messages buffered before WS connected
-            # (race-condition fix: orchestration emits before frontend connects)
-            self._prune_pending(user_id)
-            pending = self.pending_messages.pop(user_id, [])
-            if pending:
-                logger.info(
-                    "Flushing %d pending message(s) for user %s on WS connect",
-                    len(pending),
-                    user_id,
-                )
-                for _ts, msg, mtype in pending:
-                    asyncio.create_task(
-                        self.send_status_update_async(msg, user_id, mtype)
-                    )
-        else:
-            logger.info("WebSocket connection added for process: %s", process_id)
+        logger.info(
+            "WebSocket connection added for process: %s (user: %s)",
+            process_id,
+            user_id,
+        )
 
     def remove_connection(self, process_id: str):
-        """Remove a connection and associated user mapping."""
-        process_id = str(process_id)
-        self.connections.pop(process_id, None)
-        for user_id, mapped in list(self.user_to_process.items()):
-            if mapped == process_id:
-                del self.user_to_process[user_id]
-                logger.debug("Removed user mapping: %s -> %s", user_id, process_id)
-                break
+        """Forget the socket of a plan."""
+        self.connections.pop(str(process_id), None)
 
     def get_connection(self, process_id: str):
         """Fetch a connection by process_id."""
@@ -255,25 +195,30 @@ class ConnectionConfig:
         message: Any,
         user_id: str,
         message_type: WebsocketMessageType = WebsocketMessageType.SYSTEM_MESSAGE,
+        *,
+        process_id: Optional[str] = None,
     ):
-        """Send a status update to a user via its mapped process connection."""
-        if not user_id:
-            logger.warning("No user_id provided for WebSocket message")
-            return
+        """Send a message to the socket of the plan it belongs to.
 
-        process_id = self.user_to_process.get(user_id)
+        ``process_id`` is the plan's identity. A message without it has no
+        destination and is not delivered anywhere, never to "the user's latest
+        socket". Without a socket for that plan the message is dropped: what
+        matters is durable and the plan page reloads it."""
         if not process_id:
-            # WS not connected yet — buffer instead of dropping.
-            # Will be flushed on next add_connection for this user_id.
-            self._prune_pending(user_id)
-            bucket = self.pending_messages.setdefault(user_id, [])
-            if len(bucket) >= self.PENDING_MAX_PER_USER:
-                bucket.pop(0)  # drop oldest, keep window size
-            bucket.append((time.time(), message, message_type))
-            logger.debug(
-                "Buffered WS message for user %s (no active WS yet, %d pending)",
+            logger.warning(
+                "WS message %s without process_id (user %s): not delivered",
+                message_type,
                 user_id,
-                len(bucket),
+            )
+            return
+        process_id = str(process_id)
+        connection = self.get_connection(process_id)
+        if connection is None:
+            logger.debug(
+                "No socket for process %s (user %s): %s not delivered live",
+                process_id,
+                user_id,
+                message_type,
             )
             return
 
@@ -291,21 +236,12 @@ class ConnectionConfig:
             message_data = str(message)
 
         payload = {"type": message_type, "data": message_data}
-        connection = self.get_connection(process_id)
-        if connection:
-            try:
-                await connection.send_text(json.dumps(payload, default=str))
-                logger.debug(
-                    "Message sent to user %s via process %s", user_id, process_id
-                )
-            except Exception as e:
-                logger.error("Failed to send message to user %s: %s", user_id, e)
-                self.remove_connection(process_id)
-        else:
-            logger.warning(
-                "No connection found for process ID: %s (user: %s)", process_id, user_id
-            )
-            self.user_to_process.pop(user_id, None)
+        try:
+            await connection.send_text(json.dumps(payload, default=str))
+            logger.debug("Message sent to process %s (user %s)", process_id, user_id)
+        except Exception as e:
+            logger.error("Failed to send message to process %s: %s", process_id, e)
+            self.remove_connection(process_id)
 
     def send_status_update(self, message: str, process_id: str):
         """Sync helper to send a message by process_id."""

@@ -70,6 +70,8 @@ def agent_response_callback(
     agent_id: str,
     message: Message,
     user_id: str | None = None,
+    *,
+    process_id: str | None = None,
 ) -> None:
     """
     Final (non-streaming) agent response callback using agent_framework Message.
@@ -103,6 +105,7 @@ def agent_response_callback(
                 final_message,
                 user_id,
                 message_type=WebsocketMessageType.AGENT_MESSAGE,
+                process_id=process_id,
             )
         )
         logger.info(
@@ -117,6 +120,8 @@ async def streaming_agent_response_callback(
     update,  # Streaming update object (e.g. AgentResponseUpdate, ChatMessage)
     is_final: bool,
     user_id: str | None = None,
+    *,
+    process_id: str | None = None,
 ) -> None:
     """
     Streaming callback for incremental agent output.
@@ -151,6 +156,7 @@ async def streaming_agent_response_callback(
                 tool_message,
                 user_id,
                 message_type=WebsocketMessageType.AGENT_TOOL_MESSAGE,
+                process_id=process_id,
             )
             logger.info("Tool calls streamed from %s: %d", agent_id, len(tool_calls))
 
@@ -164,6 +170,7 @@ async def streaming_agent_response_callback(
                 streaming_payload,
                 user_id,
                 message_type=WebsocketMessageType.AGENT_MESSAGE_STREAMING,
+                process_id=process_id,
             )
             logger.debug(
                 "Streaming chunk (agent=%s final=%s len=%d)",
