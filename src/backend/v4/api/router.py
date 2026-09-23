@@ -649,6 +649,7 @@ async def _team_from_router_roster(
                 "use_reasoning": use_reasoning,
                 "index_name": "",
                 "coding_tools": coding_tools,
+                "use_image_generation": bool(raw.get("use_image_generation")),
             }
         )
         if len(agents) >= _COMPOSED_TEAM_MAX_AGENTS:
@@ -699,6 +700,7 @@ async def _team_from_router_roster(
                 "use_reasoning": False,
                 "index_name": "",
                 "coding_tools": False,
+                "use_image_generation": False,
             }
         )
 
@@ -736,7 +738,8 @@ async def _team_from_router_roster(
         team.name,
         team.team_id,
         [
-            f"{a.name}(code={a.coding_tools},mcp={a.use_mcp},bing={a.use_bing},reason={a.use_reasoning})"
+            f"{a.name}(code={a.coding_tools},mcp={a.use_mcp},bing={a.use_bing},"
+            f"reason={a.use_reasoning},img={a.use_image_generation})"
             for a in team.agents
         ],
     )
@@ -2016,6 +2019,15 @@ _PARTICIPANT_SCHEMA: dict = {
                 "type": "boolean",
                 "description": (
                     "Deep multi-step analysis. Never together with coding_tools."
+                ),
+            },
+            "use_image_generation": {
+                "type": "boolean",
+                "description": (
+                    "true ONLY if it must GENERATE or EDIT an IMAGE — a picture, "
+                    "product shot, campaign visual, illustration, logo, or "
+                    "photo-realistic scene. NOT questions ABOUT images and NOT "
+                    "data charts/plots (that is coding_tools)."
                 ),
             },
         },
