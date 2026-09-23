@@ -2420,9 +2420,15 @@ class _RouterChatClient:
             ] + [Message(role="user", text=task)]
             async for event in workflow.run(messages, stream=True):
                 if getattr(event, "type", None) == "request_info":
+                    # Chat has no durable park/resume: the agents close with the
+                    # turn and the request id would be unanswerable. The
+                    # participant's question already streamed as agent output;
+                    # the run ends here and the user's next message is a new
+                    # composition with the conversation.
                     logger.info(
                         "Composed %s asked the user; the turn ends here", pattern
                     )
+                    break
                 yield event
         finally:
             for resource in closables:
@@ -3065,15 +3071,9 @@ async def chat_message_stream(
                 # the workflow's WorkflowEvents, of which only agent output
                 # carries contents. The speaking participant is the executor.
                 if isinstance(update, WorkflowEvent):
-                    if update.type == "request_info":
-                        yield _sse_event(
-                            {
-                                "type": "request_info",
-                                "request_id": update.request_id,
-                                "agent": update.source_executor_id,
-                            }
-                        )
-                        continue
+                    # request_info never reaches this stream: the chat lane has
+                    # no park/resume, so _run_pattern ends the composed run
+                    # there instead of forwarding an unanswerable request.
                     if update.type != "output":
                         continue
                     _data = update.data
