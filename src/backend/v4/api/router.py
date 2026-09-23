@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import Annotated, Any, Optional, cast
 
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, WorkflowEvent
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import (
     APIRouter,
@@ -541,9 +543,10 @@ async def process_request(
         workspace_id=input_task.workspace_id,
     )
     try:
-        task, roster = await composer.compose_plan(input_task.description)
+        pattern, task, roster = await composer.compose_plan(input_task.description)
     finally:
         await composer.close()
+    logger.info("Plan position: composer pattern=%s", pattern)
     plan_id = await _create_plan_and_start(
         background_tasks=background_tasks,
         user_id=user_id,
@@ -574,6 +577,8 @@ async def _team_from_router_roster(
     user_id: str,
     memory_store: Any,
     workspace_id: Optional[str] = None,
+    with_proxy: bool = True,
+    persist: bool = True,
 ) -> TeamConfiguration:
     """Turn the Model Router's ``run_plan`` roster into a persisted team.
 
@@ -676,23 +681,26 @@ async def _team_from_router_roster(
                 blind,
             )
 
-    agents.append(
-        {
-            "input_key": "",
-            "type": "",
-            "name": "ProxyAgent",
-            "deployment_name": "",
-            "icon": "",
-            "system_message": "",
-            "description": "",
-            "use_rag": False,
-            "use_mcp": False,
-            "use_bing": False,
-            "use_reasoning": False,
-            "index_name": "",
-            "coding_tools": False,
-        }
-    )
+    # ProxyAgent is the human clarification channel of the Magentic plan; a
+    # pattern that runs inside a chat turn (with_proxy=False) has no such slot.
+    if with_proxy:
+        agents.append(
+            {
+                "input_key": "",
+                "type": "",
+                "name": "ProxyAgent",
+                "deployment_name": "",
+                "icon": "",
+                "system_message": "",
+                "description": "",
+                "use_rag": False,
+                "use_mcp": False,
+                "use_bing": False,
+                "use_reasoning": False,
+                "index_name": "",
+                "coding_tools": False,
+            }
+        )
 
     team_service = TeamService(memory_store)
     team = await team_service.validate_and_parse_team_config(
@@ -719,7 +727,10 @@ async def _team_from_router_roster(
         },
         user_id,
     )
-    await team_service.save_team_configuration(team)
+    # Persisted for the plan lane (plan.team_id is resolved later); a team
+    # composed for one chat turn lives only as long as the turn.
+    if persist:
+        await team_service.save_team_configuration(team)
     logger.info(
         "Composed team '%s' (%s) from router roster: %s",
         team.name,
@@ -1594,46 +1605,6 @@ def _extract_function_result_payload(item: Any) -> dict[str, Any]:
     return payload
 
 
-def _item_payload_str(item: Any, *fields: str) -> str:
-    """Return first non-empty string-ish payload from candidate fields."""
-    for field in fields:
-        val = getattr(item, field, None)
-        if val not in (None, ""):
-            if isinstance(val, str):
-                return val
-            return _safe_json_dumps(_to_safe_dict(val))
-    return ""
-
-
-def _extract_annotations(item: Any) -> list[dict]:
-    """Normalize annotations from output item into list[dict]."""
-    anns = getattr(item, "annotations", None) or []
-    out: list[dict] = []
-    for ann in anns:
-        if isinstance(ann, dict):
-            out.append(ann)
-        else:
-            out.append(
-                _to_safe_dict(ann) if isinstance(_to_safe_dict(ann), dict) else {}
-            )
-    return out
-
-
-def _build_hosted_file_from_annotation(ann: dict) -> Optional[Any]:
-    file_id = ann.get("file_id")
-    if not file_id:
-        return None
-    add_props = ann.get("additional_properties")
-    if not isinstance(add_props, dict):
-        add_props = {}
-    name = ann.get("url") or add_props.get("filename") or ann.get("text") or file_id
-    return _HostedHostedFile(
-        file_id=file_id,
-        name=name,
-        additional_properties=add_props,
-    )
-
-
 def _is_invokable_agent(agent: Any) -> bool:
     return callable(getattr(agent, "invoke", None))
 
@@ -1960,403 +1931,193 @@ def _merge_teams_for_direct_response(
     )
 
 
-class _HostedTextContent:
-    """Content shim mimicking an agent_framework text content (.type / .text)."""
-
-    type = "text"
-
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _HostedPlanSignal:
-    """Content shim signalling the Model Router escalated this turn to the formal
-    multi-agent Plan (``run_plan`` capability). The SSE handler turns it into plan
-    creation + a ``plan_created`` event; it is never streamed as text."""
-
-    type = "plan_signal"
-
-    def __init__(self, task: str, agents: Optional[list] = None) -> None:
-        self.task = task
-        # Roster the Router proposed in the same run_plan call (None → the
-        # user's selected team). Sanitized downstream in
-        # _team_from_router_roster, never trusted as-is.
-        self.agents = agents
-
-
-class _HostedFunctionCall:
-    """Content shim mimicking an agent_framework function_call (.name/.arguments)."""
-
-    type = "function_call"
-
-    def __init__(self, name: Optional[str], arguments: str = "") -> None:
-        self.name = name
-        self.arguments = arguments
-
-
-class _HostedFunctionResult:
-    """Content shim mimicking an agent_framework function_result (.name/.exception)."""
-
-    type = "function_result"
-
-    def __init__(
-        self,
-        name: Optional[str],
-        result: Optional[object] = None,
-        exception: Optional[object] = None,
-    ) -> None:
-        # name: tool name
-        # result: optional result payload
-        # exception: optional exception / error payload (truthy indicates failure)
-        self.name = name
-        self.result = result
-        self.exception = exception
-
-
-class _HostedCodeInterpreterToolCall:
-    """Hosted shim for code interpreter call activity."""
-
-    type = "code_interpreter_tool_call"
-
-    def __init__(self, input: str = "", arguments: str = "") -> None:
-        self.input = input
-        self.arguments = arguments
-
-
-class _HostedCodeInterpreterToolResult:
-    """Hosted shim for code interpreter result activity."""
-
-    type = "code_interpreter_tool_result"
-
-    def __init__(
-        self,
-        output: str = "",
-        stdout: str = "",
-        stderr: str = "",
-        annotations: Optional[list] = None,
-    ) -> None:
-        self.output = output
-        self.stdout = stdout
-        self.stderr = stderr
-        self.annotations = annotations or []
-
-
-class _HostedHostedFile:
-    """Hosted shim for generated/container file metadata."""
-
-    type = "hosted_file"
-
-    def __init__(
-        self,
-        file_id: Optional[str] = None,
-        name: Optional[str] = None,
-        additional_properties: Optional[dict] = None,
-    ) -> None:
-        self.file_id = file_id
-        self.name = name
-        self.additional_properties = additional_properties or {}
-
-
-class _HostedMcpServerToolCall:
-    """Hosted shim for a Toolbox/MCP tool call (attribute shape matches the SSE
-    handler's ``mcp_server_tool_call`` branch: tool_name/server_name/arguments)."""
-
-    type = "mcp_server_tool_call"
-
-    def __init__(
-        self,
-        tool_name: Optional[str] = None,
-        server_name: Optional[str] = None,
-        arguments: Optional[str] = None,
-    ) -> None:
-        self.tool_name = tool_name
-        self.server_name = server_name
-        self.arguments = arguments
-
-
-class _HostedMcpServerToolResult:
-    """Hosted shim for a Toolbox/MCP tool result (matches the SSE handler's
-    ``mcp_server_tool_result`` branch: tool_name/server_name/status)."""
-
-    type = "mcp_server_tool_result"
-
-    def __init__(
-        self,
-        tool_name: Optional[str] = None,
-        server_name: Optional[str] = None,
-        status: Optional[str] = None,
-        output: Optional[str] = None,
-    ) -> None:
-        self.tool_name = tool_name
-        self.server_name = server_name
-        self.status = status
-        self.output = output
-
-
-class _HostedUpdate:
-    """Update shim mimicking an agent_framework streaming update (.contents)."""
-
-    def __init__(self, contents: list) -> None:
-        self.contents = contents
-
-
-_HOSTED_ORCHESTRATOR_INSTRUCTIONS = (
-    "You are a helpful assistant with a Toolbox of tools — including "
-    "knowledge-base retrieval (knowledge_base_retrieve) over the user's "
-    "authoritative sources — and a code interpreter. Use knowledge_base_retrieve "
-    "when the user asks about their documents, organization, or domain knowledge. "
-    "Use the other Toolbox tools when the task needs external data or actions, and "
-    "the code interpreter to run code, do computation/analysis, and produce "
-    "downloadable files when the user asks for an artifact. You do NOT have a "
-    "persistent write-memory tool: within a conversation you remember from context, "
-    "but never claim to have permanently saved something you did not. Keep your "
-    "answers brief."
-)
-
-# api-version that enables the model's direct Responses API + code-interpreter
-# containers. Used by both the chat invoke and the file-download endpoint so the
-# container is created and read through the SAME scope (a mismatched scope 404s
-# with "Container not found").
 _DIRECT_RESPONSES_API_VERSION = "2025-03-01-preview"
 
 
-# Router function catalog: the coarse capability the Model Router
-# (chat/completions) can signal via a `function` tool call. chat/completions
-# accepts `function` tools but NOT hosted `code_interpreter`/`mcp` (verified
-# live), so this is HOW the router hands a code/file task down to the Responses
-# execution layer. Everything else (Toolbox, agents via FoundryMCPServer's
-# agent_invoke) is attached dynamically IN that layer, not here.
-def _capability(
-    name: str,
-    description: str,
-    arg: str,
-    arg_desc: str,
-    extra_properties: Optional[dict] = None,
-) -> dict:
-    properties: dict = {arg: {"type": "string", "description": arg_desc}}
-    if extra_properties:
-        properties.update(extra_properties)
+# ── Composer ────────────────────────────────────────────────────────────────
+# The orchestrations the framework offers (agent_framework_orchestrations
+# builders), in the composer's terms. The composer picks one from the request
+# and the conversation; nothing in code inspects the request.
+_PATTERNS: dict[str, str] = {
+    "magentic": (
+        "One composite objective spanning clearly separate domains of "
+        "responsibility, coordinated by a manager that plans, keeps a progress "
+        "ledger, re-plans on stalls and submits the plan for human review before "
+        "executing (the formal Plan, tracked on its own page)."
+    ),
+    "group_chat": (
+        "Open collaboration: an orchestrator picks who speaks next from the "
+        "conversation state until the group converges."
+    ),
+    "sequential": (
+        "A fixed pipeline: each specialist builds on the previous one's output, "
+        "in the order given."
+    ),
+    "concurrent": (
+        "Independent specialists work on the same request in parallel and their "
+        "outputs are aggregated."
+    ),
+    "handoff": (
+        "One specialist owns the conversation with the user and hands it to "
+        "another specialist when the topic leaves its domain."
+    ),
+}
+
+# A participant: the same schema the plan lane materializes with
+# ``_team_from_router_roster`` (factory constraints re-checked there, in code).
+# Each boolean is a flag of the team model that the factory turns into a tool of
+# the participant's template — the composer names the capability, the template
+# attaches it.
+_PARTICIPANT_SCHEMA: dict = {
+    "type": "array",
+    "description": (
+        "The specialists for this request — 1 to 4, fewer is better; derive them "
+        "from the request itself. Specialists are REUSED by name across requests, "
+        "so write system_message as reusable role instructions (what the "
+        "specialist is and does), never one-task orders. Do not include a proxy, "
+        "manager or orchestrator entry."
+    ),
+    "items": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": (
+                    "PascalCase, ending in 'Agent', unique in the roster (e.g. DataAgent)."
+                ),
+            },
+            "description": {
+                "type": "string",
+                "description": "One line: what this specialist is for.",
+            },
+            "system_message": {
+                "type": "string",
+                "description": "Reusable role instructions for the specialist.",
+            },
+            "coding_tools": {
+                "type": "boolean",
+                "description": (
+                    "true ONLY if it must run code or produce real downloadable "
+                    "files (scripts, spreadsheets, packages, charts)."
+                ),
+            },
+            "use_mcp": {
+                "type": "boolean",
+                "description": "true ONLY if it needs external systems or live data.",
+            },
+            "use_bing": {
+                "type": "boolean",
+                "description": (
+                    "true ONLY if it needs LIVE public web information (current "
+                    "prices, news, market data). Never together with use_reasoning."
+                ),
+            },
+            "use_reasoning": {
+                "type": "boolean",
+                "description": (
+                    "Deep multi-step analysis. Never together with coding_tools."
+                ),
+            },
+        },
+        "required": ["name", "description", "system_message"],
+    },
+}
+
+_COMPOSER_INSTRUCTIONS = (
+    "You are the orchestration layer of a multi-agent system built on Microsoft "
+    "Agent Framework. You receive the user's request with the conversation it "
+    "belongs to (this session's turns, plus earlier turns retrieved from the "
+    "user's history). Either answer the request yourself or call `compose` once "
+    "to run it through one of the framework's orchestrations with the "
+    "specialists it needs. Decide from the request and the conversation."
+)
+
+
+def _compose_tool(patterns: list[str]) -> dict:
+    """The composer's single function, as a Responses function tool.
+
+    ``patterns`` restricts the enum: the Plan position passes ``["magentic"]``
+    (the human asked for a plan) and an in-plan chat turn leaves it out.
+    """
     return {
         "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": [arg],
+        "name": "compose",
+        "description": (
+            "Run the request through an orchestration of specialists. Call it "
+            "once; do not call it when you answer the request yourself."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "enum": list(patterns),
+                    "description": " ".join(
+                        f"{name}: {_PATTERNS[name]}" for name in patterns
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "description": (
+                        "The full, self-contained objective, as the user expressed it."
+                    ),
+                },
+                "participants": _PARTICIPANT_SCHEMA,
             },
+            "required": ["pattern", "task", "participants"],
         },
     }
 
 
-# The Model Router only ever sees CAPABILITIES (user intentions), never
-# implementations. The backend owns the capability -> implementation mapping (see
-# the dispatch in _RouterChatClient.invoke): e.g. run_python_execution ->
-# Responses+code interpreter, run_macae_mcp_server -> ca-mcp DIRECT (+identity),
-# run_knowledge_base -> Toolbox KBs, run_web_search -> native web_search. New
-# capabilities are one entry here + one dispatch branch — the router stays a
-# small semantic classifier and never learns Responses/MCP/Toolbox exist.
-_ROUTER_FUNCTIONS = [
-    _capability(
-        "run_python_execution",
-        "The request needs running Python code, computation, data analysis, or "
-        "producing a downloadable file (script, CSV, chart, plot, etc.).",
-        "task",
-        "The full, self-contained task to execute.",
-    ),
-    _capability(
-        "run_image_generation",
-        "The request asks to GENERATE or EDIT an IMAGE — a picture, product "
-        "shot, campaign visual, illustration, logo, or photo-realistic scene. "
-        "NOT questions ABOUT images and NOT data charts/plots (that is "
-        "run_python_execution).",
-        "task",
-        "A complete, self-contained image prompt: subject, style, "
-        "composition, lighting, aspect/mood.",
-    ),
-    _capability(
-        "run_macae_mcp_server",
-        "The request needs to USE the tools of an external connected server — "
-        "e.g. Infobip, GitHub (list branches, PRs, issues, files, commits), ARM (list "
-        "resources, subscriptions), Grafana (dashboards, metrics), Outlook/mail "
-        "(send/read email), or any other server available in the Toolbox. "
-        "The task MUST be worded as a direct tool action (e.g. 'list branches of "
-        "repo X using GitHub tools', 'send email via Outlook tools') so the "
-        "execution model calls the tool directly. "
-        "NOT the user's knowledge bases (that is run_knowledge_base) and NOT "
-        "public web search (that is run_web_search). "
-        "Reading or summarizing the CONTENT of a file from GitHub or any "
-        "external repo/system is ALWAYS this capability, never "
-        "run_knowledge_base. "
-        "Never answer from memory; this fetches real data via the tools.",
-        "task",
-        "The full, self-contained task expressed as a DIRECT tool action "
-        "(e.g. 'Use GitHub___list_branches to list branches of owner=X repo=Y').",
-    ),
-    _capability(
-        "run_knowledge_base",
-        "The request asks about the user's OWN documents, organization, domain "
-        "knowledge, or indexed sources — answerable from the user's knowledge bases "
-        "(Foundry IQ / Azure AI Search). NOT public web search, NOT a connected "
-        "external server, and NOT reading files/code from GitHub or external "
-        "repos (that is run_macae_mcp_server). Retrieves authoritative, "
-        "source-attributable content.",
-        "task",
-        "A well-formed query describing the information to retrieve from the KB.",
-    ),
-    _capability(
-        "run_foundry_mcp",
-        "The request is about managing/operating Azure AI Foundry ITSELF — Foundry "
-        "agents (list/get/create/update/invoke/delete), models (catalog, deploy, "
-        "benchmark, quotas, monitoring), evaluations and evaluators, datasets, "
-        "prompt optimization, project connections, or Foundry sessions. Uses the "
-        "native Foundry MCP Server. NOT the user's own connected external servers "
-        "(that is run_macae_mcp_server) and NOT knowledge bases.",
-        "task",
-        "The full, self-contained task for the Foundry MCP Server.",
-    ),
-    _capability(
-        "run_web_search",
-        "The request needs CURRENT PUBLIC information from the live internet — "
-        "news, recent events, latest releases/announcements, docs, prices, or "
-        "anything likely newer than your training data. Runs a real web search.",
-        "task",
-        "A well-formed web search query for the information needed.",
-    ),
-    _capability(
-        "run_plan",
-        "The request needs the formal multi-agent PLAN: a Magentic orchestration "
-        "where SEVERAL SPECIALIZED agents collaborate on one composite objective "
-        "under a manager, with human approval/clarification steps and progress "
-        "tracked on a dedicated Plan page (not an inline chat answer). Pick this "
-        "when the work spans clearly SEPARATE domains of responsibility that must "
-        "be coordinated across distinct agents to be done correctly, OR when the "
-        "user explicitly asks to create/prepare/run a plan or to orchestrate a "
-        "multi-step effort. A single agent with tools (the other capabilities) "
-        "finishes ordinary tasks end-to-end — do NOT pick this for anything one "
-        "agent can complete alone.",
-        "task",
-        "The full, self-contained objective for the multi-agent plan, as the user "
-        "expressed it.",
-        extra_properties={
-            # The Router composes the roster in the SAME call that escalates —
-            # no second model round-trip. The backend sanitizes and materializes
-            # it (factory constraints re-checked in code) before the Magentic
-            # graph is built; the roster is frozen at build().
-            "agents": {
-                "type": "array",
-                "description": (
-                    "The minimal team of specialist agents for this plan — 1 to "
-                    "4 entries, fewer is better; derive them from the request "
-                    "itself. Specialists are REUSED by name across plans, so "
-                    "write system_message as reusable role instructions (what "
-                    "the specialist is and does), never one-task orders. Do not "
-                    "include a proxy/manager/orchestrator entry. Omit this field "
-                    "only if the user explicitly asks to use their currently "
-                    "selected team."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": (
-                                "PascalCase, ending in 'Agent', unique in the "
-                                "roster (e.g. DataAgent)."
-                            ),
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "One line: what this specialist is for.",
-                        },
-                        "system_message": {
-                            "type": "string",
-                            "description": (
-                                "Reusable role instructions for the specialist."
-                            ),
-                        },
-                        "coding_tools": {
-                            "type": "boolean",
-                            "description": (
-                                "true ONLY if it must run code or produce real "
-                                "downloadable files (scripts, spreadsheets, "
-                                "packages, charts)."
-                            ),
-                        },
-                        "use_mcp": {
-                            "type": "boolean",
-                            "description": (
-                                "true ONLY if it needs external systems or live data."
-                            ),
-                        },
-                        "use_bing": {
-                            "type": "boolean",
-                            "description": (
-                                "true ONLY if it needs LIVE public web information "
-                                "(current prices, news, market data). Never "
-                                "together with use_reasoning."
-                            ),
-                        },
-                        "use_reasoning": {
-                            "type": "boolean",
-                            "description": (
-                                "Deep multi-step analysis. Never together with "
-                                "coding_tools."
-                            ),
-                        },
-                    },
-                    "required": ["name", "description", "system_message"],
-                },
-            }
-        },
-    ),
-    # NOTE: there is NO "respond directly" capability. Answering the user is not a
-    # capability — it is the DEFAULT. When the router picks none of the above, the
-    # dispatch `else` branch routes the prompt through the same _execute_responses
-    # path (no tools), so every turn — tool or not — chains through one memory path.
-]
+def _read_composition(
+    arguments: Optional[str], patterns: list[str]
+) -> tuple[str, str, list[dict]]:
+    """``compose`` arguments -> ``(pattern, task, participants)``.
+
+    Raises ``ValueError`` when the arguments are not a usable composition; the
+    participants are sanitized later by ``_team_from_router_roster``, never
+    trusted as-is.
+    """
+    try:
+        args = json.loads(arguments or "{}")
+    except ValueError as e:
+        raise ValueError(f"compose arguments are not JSON: {e}") from e
+    if not isinstance(args, dict):
+        raise ValueError("compose arguments are not an object")
+    pattern = str(args.get("pattern") or "").strip().lower()
+    if pattern not in patterns:
+        raise ValueError(f"unknown orchestration pattern '{pattern}'")
+    participants = args.get("participants")
+    return (
+        pattern,
+        str(args.get("task") or "").strip(),
+        [
+            p
+            for p in (participants if isinstance(participants, list) else [])
+            if isinstance(p, dict)
+        ],
+    )
 
 
 class _RouterChatClient:
-    """Chat client for the direct-response path. **The entry point is the Model
-    Router**, NOT the Foundry Hosted Agent (the class name ``agent_name`` arg is
-    only a display label — no hosted agent is ever called; verified live by the
-    hit URLs).
+    """Front door of the chat lane: o4-mini on the direct Responses API.
 
-    Flow (``invoke``):
-    1. Petition -> **Model Router** (``model-router`` deployment,
-       ``{account}/openai/deployments/model-router/chat/completions``) with a
-       single ``function`` tool ``run_code_interpreter``. The router picks the
-       best/cheapest model AND signals — via that ``function_call`` — whether the
-       task needs code execution.
-    2. No ``function_call`` -> stream the router's own text answer straight
-       through (already the routed, appropriate model).
-    3. ``run_code_interpreter`` ``function_call`` -> ``_invoke_execution`` runs
-       o4-mini on the **direct Responses API** with a native code interpreter +
-       the Toolbox as an MCP tool, and surfaces a downloadable file.
+    One reasoning model reads the request with its conversation and either
+    answers it, streamed as text, or calls the single function ``compose`` with
+    the orchestration the framework offers, the participants and the
+    capabilities each one needs. Nothing here executes a capability: the
+    existing factory builds the participants (``FoundryAgentTemplate`` attaches
+    each one's tools) and the framework builder of the chosen pattern runs
+    them. ``magentic`` is the formal Plan and leaves this turn through
+    ``composition`` (process_request's path: Magentic manager, plan review,
+    WebSocket, PlanPage); the other patterns run inside this turn and their
+    agents' updates stream through the same SSE handler.
 
-    Why the execution layer talks to the model DIRECTLY (not the Hosted Agent):
-    the hosted runtime re-serves its inner agent over
-    ``.../protocols/openai/responses`` but **silently drops the
-    ``code_interpreter_call`` items and the container reference** — verified
-    live: over that endpoint only ``reasoning`` + ``message`` items ever reach
-    the client (stream, non-stream, and ``store=True`` retrieve all agree),
-    ``container_id``/``file_id`` never appear, so a generated file surfaces only
-    as a dead ``sandbox:/mnt/data/...`` link and can never be downloaded.
-
-    Calling the model directly with the **Toolbox attached as an MCP tool** +
-    a native **code interpreter** reproduces exactly what the Hosted Agent did
-    (tool search over the same server-side Toolbox — verified: ``mcp_list_tools``
-    returns the Toolbox tools) AND exposes ``container_id`` on the
-    ``code_interpreter_call`` plus a ``container_file_citation`` annotation
-    (``file_id`` + ``container_id`` + ``filename``) on the assistant message —
-    which the ``/chat/download-file/{file_id}?container_id=...`` endpoint turns
-    into a real download.
-
-    This adapter keeps ``FoundryAgentTemplate.invoke()``'s contract — yields
-    updates exposing ``.contents`` — so the SSE streaming handler is reused
-    unchanged. It never publishes or mutates any agent.
+    The Model Router is not in this layer any more: it is chat/completions-only,
+    cannot carry tools and is not an agent model, so it never belonged at the
+    orchestration decision. This class keeps ``FoundryAgentTemplate.invoke()``'s
+    contract — yields updates exposing ``.contents`` — so the SSE handler is
+    reused.
     """
 
     def __init__(
@@ -2365,157 +2126,40 @@ class _RouterChatClient:
         user_access_token: Optional[str] = None,
         user_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        memory_store: Any = None,
     ) -> None:
         from common.config.app_config import config
 
         self.agent_name = agent_name
-        self._last_response_id: Optional[str] = None
         self._workspace_id = workspace_id
-        # End-user access token (EasyAuth/Bearer) for on-behalf-of calls. When
-        # present, the call is made as the *user*, not the app Managed Identity
-        # — required so Foundry propagates a real delegated user context to the
-        # Toolbox's user-scoped connectors.
+        # End-user access token (EasyAuth/Bearer): the composer call runs
+        # on-behalf-of the user when OBO is provisioned, and the participants'
+        # MCP tools forward it (lifecycle._prepare_mcp_tool).
         self._user_access_token = user_access_token
-        # Authenticated user id (principal). Sent to ca-mcp DIRECTLY as the
-        # x-ms-client-principal-id header (see run_macae_mcp_server) so ca-mcp
-        # resolves the real user for its Cosmos connection lookups — deterministic,
-        # from the backend, outside the prompt (validated: sentinel round-trips on a
-        # DIRECT attach; the Foundry Toolbox proxy strips it).
         self._user_id = user_id or ""
         self._user_cred = None
+        # Needed to materialize a composed team and build its agents when a
+        # pattern runs inside the turn; the Plan position does not run
+        # participants here and may omit it.
+        self._memory_store = memory_store
+        # What the composer decided this turn: None when it answered directly,
+        # else (pattern, task, participants). The SSE handler reads it after the
+        # stream to create the formal Plan when the pattern is ``magentic``.
+        self.composition: Optional[tuple[str, str, list[dict]]] = None
         # AZURE_AI_PROJECT_ENDPOINT is {account}/api/projects/{project}. The
         # model's OpenAI-compatible Responses API lives at the ACCOUNT root
         # ({account}/openai, api-version 2025-03-01-preview — the first version
-        # that enables the Responses API), while the Toolbox MCP lives under the
-        # project ({project}/toolboxes/{name}/mcp).
+        # that enables the Responses API).
         project = (config.AZURE_AI_PROJECT_ENDPOINT or "").rstrip("/")
         account = project.split("/api/projects/")[0]
         self._openai_base_url = f"{account}/openai"
         self._api_version = _DIRECT_RESPONSES_API_VERSION
         self._model = config.CHAT_ORCHESTRATOR_MODEL
-        # Image generation (gpt-image family). Deployment must exist in the
-        # Foundry account; override via env when the name differs.
-        self._image_deployment = config._get_optional(
-            "IMAGE_GENERATION_DEPLOYMENT", "gpt-image-2"
-        )
-        self._image_api_version = config._get_optional(
-            "IMAGE_GENERATION_API_VERSION", "2025-04-01-preview"
-        )
-        # ONE definition of how this project reaches a Foundry toolbox: name,
-        # pinned version, URL shape and the preview gate. Both the attach below
-        # and anything else that needs a toolbox read it from here — the same
-        # contract written twice is what made the bridge answer 401 while this
-        # path worked.
-        self._toolboxes: list[tuple[str, str]] = []
-        for _spec in (config.CHAT_TOOLBOXES or "").split(","):
-            _spec = _spec.strip()
-            if not _spec:
-                continue
-            _name, _, _version = _spec.partition(":")
-            _name, _version = _name.strip(), _version.strip()
-            if not _name:
-                continue
-            _segment = f"/versions/{_version}" if _version else ""
-            self._toolboxes.append(
-                (_name, f"{project}/toolboxes/{_name}{_segment}/mcp?api-version=v1")
-            )
-        # ca-mcp (MacaeMcpServer) DIRECT endpoint — attached without the Foundry
-        # Toolbox proxy so the x-ms-client-principal-id identity header reaches
-        # ca-mcp. Must be reachable by the Azure model service (public); see
-        # MACAE_MCP_PUBLIC_ENDPOINT (dev localhost is unreachable → point it at the
-        # deployed ca-mcp).
-        self._macae_mcp_url = config.MACAE_MCP_PUBLIC_ENDPOINT or ""
-        # Foundry MCP Server (preview) — native Foundry MCP, attached DIRECTLY as
-        # the run_foundry_mcp capability. Entra-OAuth protected: its token needs the
-        # FOUNDRY_MCP_SCOPE (Foundry.Mcp.Tools), minted separately from the
-        # ai.azure.com token in _bearer (see _foundry_mcp_bearer).
-        self._foundry_mcp_url = (
-            config.FOUNDRY_MCP_ENDPOINT or "https://mcp.ai.azure.com"
-        )
-        self._foundry_mcp_scope = (
-            config.FOUNDRY_MCP_SCOPE or "https://mcp.ai.azure.com/.default"
-        )
-        # Model Router front-door (chat/completions). It routes to the best model
-        # AND, via the run_code_interpreter function tool, signals when a task
-        # needs the Responses execution layer. It CANNOT carry code_interpreter/mcp
-        # and is not usable on Responses or as an agent model (all verified), so it
-        # stays a pure front-door decision maker.
-        self._router_model = config.CHAT_ROUTER_MODEL
-        self._router_base_url = (
-            f"{account}/openai/deployments/{config.CHAT_ROUTER_MODEL}"
-        )
-        self._router_api_version = config.CHAT_ROUTER_API_VERSION
-
-    async def compose_plan(self, prompt: str) -> tuple[str, list]:
-        """The plan selector's way to the roster: ONE Router call with ``run_plan``
-        forced — the same capability the chat lane escalates through, minus the
-        conversation (the roster follows the request, not the past). This is what
-        replaces the formal lane's selected-team / first-available default.
-        """
-        import json as _json
-
-        from openai import AsyncOpenAI
-
-        run_plan = next(
-            t for t in _ROUTER_FUNCTIONS if t["function"]["name"] == "run_plan"
-        )
-        router = AsyncOpenAI(
-            api_key=await self._bearer(),
-            base_url=self._router_base_url,
-            default_query={"api-version": self._router_api_version},
-            timeout=120,
-        )
-        try:
-            completion = await router.chat.completions.create(
-                model=self._router_model,
-                messages=cast(Any, [{"role": "user", "content": prompt}]),
-                tools=cast(Any, [run_plan]),
-                tool_choice=cast(
-                    Any, {"type": "function", "function": {"name": "run_plan"}}
-                ),
-            )
-        finally:
-            await router.close()
-        choice = completion.choices[0] if getattr(completion, "choices", None) else None
-        message = getattr(choice, "message", None) if choice else None
-        calls = getattr(message, "tool_calls", None) or []
-        if not calls:
-            raise HTTPException(
-                status_code=422,
-                detail="El Router no compuso un plan para esta petición",
-            )
-        call = calls[0]
-        func = getattr(call, "function", None)
-        if func is None:
-            raise HTTPException(
-                status_code=422,
-                detail="Tool call sin función en la respuesta del Router",
-            )
-        try:
-            args = _json.loads(func.arguments or "{}")
-        except ValueError as e:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Invalid Router tool arguments: {e}",
-            ) from e
-        logger.info(
-            "Router composed plan for selector: task=%s agents=%s",
-            str(args.get("task") or "")[:120],
-            [a.get("name") for a in args.get("agents") or [] if isinstance(a, dict)],
-        )
-        return str(args.get("task") or prompt), list(args.get("agents") or [])
 
     async def _bearer(self) -> str:
         from common.config.app_config import config
 
         # Prefer the end user's identity (OBO) ONLY when OBO is provisioned.
-        # The hosted agent's Toolbox lists user-scoped connectors (WorkIQ
-        # Teams/Mail, outlook, arm, Foundry, AzureDevOps) that REJECT an
-        # application (Managed Identity) caller — "requires a delegated Microsoft
-        # Entra user context" — and a single failed source aborts the whole
-        # tools/list, so the agent emits nothing. Calling on-behalf-of the user
-        # makes Foundry propagate a real user context to the Toolbox.
-        #
         # The ENABLE_OBO gate is deliberate: without it, build_user_credential
         # returns a passthrough of the raw user token (wrong audience for the
         # Foundry data plane) which would break the call. In local dev
@@ -2536,26 +2180,92 @@ class _RouterChatClient:
         token = await cred.get_token("https://ai.azure.com/.default")
         return token.token
 
-    async def _foundry_mcp_bearer(self) -> str:
-        """Token for the Foundry MCP Server (preview). Its OAuth metadata requires
-        the scope ``https://mcp.ai.azure.com/Foundry.Mcp.Tools`` — a DIFFERENT
-        audience than ai.azure.com — so it is minted separately from ``_bearer``.
-        On-behalf-of the user when OBO is provisioned (the server runs OBO with the
-        user's Entra identity and needs Contributor on the project), else the
-        process-shared credential (app MI in prod, az-login user in dev).
-        """
-        from common.config.app_config import config
+    def _responses_client(self, bearer: str):
+        from openai import AsyncOpenAI
 
-        if self._user_access_token and config.ENABLE_OBO:
-            if self._user_cred is None:
-                self._user_cred = config.build_user_credential(self._user_access_token)
-            _cred_mcp = self._user_cred
-            if _cred_mcp is not None:
-                token = await _cred_mcp.get_token(self._foundry_mcp_scope)
-                return token.token
-        cred = config.get_shared_async_credential()
-        token = await cred.get_token(self._foundry_mcp_scope)
-        return token.token
+        return AsyncOpenAI(
+            api_key=bearer,
+            base_url=self._openai_base_url,
+            default_query={"api-version": self._api_version},
+            timeout=120,
+        )
+
+    def _instructions(self) -> str:
+        """The composer's instructions plus the facts of this conversation it
+        cannot infer: a mounted workspace is readable only through specialists
+        with ``use_mcp`` (the composer itself has no tools)."""
+        if not self._workspace_id:
+            return _COMPOSER_INSTRUCTIONS
+        return (
+            f"{_COMPOSER_INSTRUCTIONS}\n\nWORKSPACE: the user's project workspace "
+            f"'{self._workspace_id}' is mounted for this conversation. Only "
+            "specialists composed with use_mcp=true can list, read and search its "
+            "files and run read-only git on it (MacaeMcpServer workspace tools); "
+            "you have no tools yourself, so you cannot see its contents."
+        )
+
+    @staticmethod
+    def _composer_input(prompt: str, history: Optional[list]) -> list:
+        # Memory = the conversation itself, rebuilt from Cosmos + AI Search and
+        # passed as input message items (NOT previous_response_id); store=False
+        # on every call, nothing is threaded server-side.
+        return list(history or []) + [{"role": "user", "content": prompt}]
+
+    def _text_update(self, text: str) -> AgentResponseUpdate:
+        """The composer's own words, in the framework's update type."""
+        return AgentResponseUpdate(
+            contents=[Content.from_text(text)],
+            role="assistant",
+            author_name=self.agent_name,
+        )
+
+    async def compose_plan(self, prompt: str) -> tuple[str, str, list]:
+        """Plan position: ``compose`` forced with ``pattern=magentic``.
+
+        The human asked for a plan; the composer decides the task and the
+        participants. Returns ``(pattern, task, participants)`` with the
+        participant schema ``_team_from_router_roster`` materializes.
+        """
+        client = self._responses_client(await self._bearer())
+        try:
+            response = await client.responses.create(
+                model=self._model,
+                instructions=self._instructions(),
+                input=cast(Any, self._composer_input(prompt, None)),
+                tools=cast(Any, [_compose_tool(["magentic"])]),
+                tool_choice=cast(Any, {"type": "function", "name": "compose"}),
+                store=False,
+            )
+        finally:
+            await client.close()
+        call = next(
+            (
+                item
+                for item in getattr(response, "output", None) or []
+                if getattr(item, "type", None) == "function_call"
+                and getattr(item, "name", "") == "compose"
+            ),
+            None,
+        )
+        if call is None:
+            raise HTTPException(
+                status_code=422,
+                detail="El composer no compuso un plan para esta petición",
+            )
+        try:
+            pattern, task, participants = _read_composition(
+                getattr(call, "arguments", None), ["magentic"]
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        logger.info(
+            "Composer (plan): pattern=%s task=%s participants=%s workspace=%s",
+            pattern,
+            task[:120],
+            [p.get("name") for p in participants],
+            self._workspace_id or "-",
+        )
+        return pattern, task or prompt, participants
 
     async def invoke(
         self,
@@ -2565,322 +2275,178 @@ class _RouterChatClient:
         file_ids: Optional[list[str]] = None,
         **_ignored,
     ):
-        """Entry point: the Model Router picks a CAPABILITY, the backend runs it.
+        """Chat position: the composer answers, or composes and runs.
 
-        The petition hits the deployed **Model Router** (chat/completions), which
-        routes to the best model AND — via the ``_ROUTER_FUNCTIONS`` capability
-        catalog — signals the user's INTENT as a ``function_call``. Memory comes
-        from ``history`` (rebuilt from Cosmos + Azure AI Search, NOT
-        previous_response_id) passed into the router's ``messages`` and the
-        execution ``input``. This method maps each capability to its implementation:
-
-        * ``run_python_execution`` -> ``_execute_responses`` with code interpreter
-          (o4-mini via Responses -> downloadable file).
-        * ``run_macae_mcp_server`` -> ``_execute_responses`` with ca-mcp attached
-          DIRECTLY + the identity header (connected external MCP servers, with the
-          real user resolved; forces a real tool call, no fabricating).
-        * ``run_knowledge_base`` -> ``_execute_responses`` with the Toolbox MCP
-          (the user's KBs / Foundry IQ knowledge_base_retrieve).
-        * ``run_web_search`` -> ``_execute_responses`` with the native web_search.
-        * no capability picked -> the router already answered directly, streamed
-          live from its OWN selected model (with ``history`` for memory). Answering
-          is not a capability, so nothing more runs.
-
-        Tool turns target o4-mini (a tool-capable deployment); no-tool turns are
-        answered by whichever model the router selected.
+        Text streams straight to the user as it arrives. A ``compose`` call
+        with ``magentic`` is left in ``composition`` (the SSE handler creates
+        the Plan and ends this stream); any other pattern runs inside this turn
+        through ``_run_pattern``. ``allow_plan=False`` (a turn inside a plan)
+        takes ``magentic`` out of the offer: a plan never spawns another plan.
         """
-        from openai import AsyncOpenAI
-
-        bearer = await self._bearer()
-        router = AsyncOpenAI(
-            api_key=bearer,
-            base_url=self._router_base_url,
-            default_query={"api-version": self._router_api_version},
-            timeout=120,
-        )
-        from v4.api.router_decision import RouterDecisionAccumulator
-
-        _acc = RouterDecisionAccumulator()
-        _router_answered = False
-        _direct_pending = ""
-        _blocked_turn_log_marker = False
-        # history (Cosmos + AI Search) gives the router memory; chat/completions is
-        # stateless, so the conversation is supplied as prior messages.
-        # Anchoring rule: recovered history mixes cross-session retrieval with
-        # this session's turns (short memory comes LAST, adjacent to the user
-        # message). Without the rule, a bare "si, adelante" binds to whatever
-        # old retrieved turns dominate and the router fabricates tool tasks
-        # from them (reproduced live: post-plan affirmation -> invented
-        # code-interpreter job).
-        _messages = (
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Ground every decision in the CURRENT user message and the "
-                        "immediately preceding assistant message of this "
-                        "conversation. When the current message is a bare "
-                        "acknowledgement or continuation (e.g. 'si', 'ok', "
-                        "'adelante', 'correcto', 'continua'), it refers ONLY to "
-                        "that immediately preceding assistant message — answer in "
-                        "that context. NEVER pick a capability based on older or "
-                        "retrieved context alone: a capability requires an "
-                        "explicit request in the CURRENT message. If the "
-                        "preceding assistant message presented a completed "
-                        "multi-agent plan, continue that discussion directly "
-                        "instead of launching tools."
-                    ),
-                }
-            ]
-            + list(history or [])
-            + [{"role": "user", "content": prompt}]
-        )
-        # UI chat|plan selector in Chat position: the message may never become a
-        # plan, so run_plan is not even offered to the router.
-        _tools = (
-            _ROUTER_FUNCTIONS
-            if allow_plan
-            else [t for t in _ROUTER_FUNCTIONS if t["function"]["name"] != "run_plan"]
-        )
+        patterns = [p for p in _PATTERNS if allow_plan or p != "magentic"]
+        client = self._responses_client(await self._bearer())
+        composition: Optional[tuple[str, str, list[dict]]] = None
+        pending = ""
+        marker_blocked = False
         try:
-            stream = await router.chat.completions.create(
-                model=self._router_model,
-                messages=cast(Any, _messages),
-                tools=cast(Any, _tools),
+            stream = await client.responses.create(
+                model=self._model,
+                instructions=self._instructions(),
+                input=cast(Any, self._composer_input(prompt, history)),
+                tools=cast(Any, [_compose_tool(patterns)]),
+                tool_choice="auto",
                 stream=True,
+                store=False,
             )
-            async for chunk in stream:
-                choice = chunk.choices[0] if getattr(chunk, "choices", None) else None
-                if choice is None:
-                    continue
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-                for tc in getattr(delta, "tool_calls", None) or []:
-                    _acc.add_delta(tc)
-                if _acc.has_function and _direct_pending:
-                    # Late capability signal: drop buffered direct text tail so a
-                    # tool turn never mixes with partial direct prose.
-                    _direct_pending = ""
-                # Stream the router's OWN answer live for no-tool turns: it comes
-                # from the model the router selected AND remembers (history is in
-                # messages). Tool turns emit tool_calls with no content, so this
-                # only fires for direct replies. Guarded on has_function so a late
-                # tool_call never mixes with streamed text.
-                content = getattr(delta, "content", None)
-                if content and not _acc.has_function:
-                    if _blocked_turn_log_marker:
+            async for evt in stream:
+                etype = getattr(evt, "type", None)
+                if etype == "response.output_text.delta":
+                    delta = getattr(evt, "delta", "") or ""
+                    if not delta or marker_blocked:
                         continue
-                    _direct_pending += str(content)
-                    marker_idx = _direct_pending.find(_TURN_LOG_MARKER)
+                    # A fabricated turn-log never reaches the user: the marker
+                    # may arrive split across deltas, so the last len-1 chars
+                    # are held back until the next delta settles them.
+                    pending += delta
+                    marker_idx = pending.find(_TURN_LOG_MARKER)
                     if marker_idx >= 0:
-                        safe = _direct_pending[:marker_idx]
+                        safe = pending[:marker_idx]
                         if safe:
-                            _router_answered = True
-                            yield _HostedUpdate([_HostedTextContent(safe)])
-                        _blocked_turn_log_marker = True
-                        _direct_pending = ""
+                            yield self._text_update(safe)
+                        marker_blocked = True
+                        pending = ""
                         logger.warning(
-                            "Router direct answer contained %s marker; truncated.",
+                            "Composer answer contained %s marker; truncated.",
                             _TURN_LOG_MARKER,
                         )
                         continue
                     hold = len(_TURN_LOG_MARKER) - 1
-                    if len(_direct_pending) > hold:
-                        safe = _direct_pending[:-hold]
+                    if len(pending) > hold:
+                        safe = pending[:-hold]
                         if safe:
-                            _router_answered = True
-                            yield _HostedUpdate([_HostedTextContent(safe)])
-                        _direct_pending = _direct_pending[-hold:]
+                            yield self._text_update(safe)
+                        pending = pending[-hold:]
+                elif etype == "response.output_item.done":
+                    item = getattr(evt, "item", None)
+                    if (
+                        getattr(item, "type", None) == "function_call"
+                        and getattr(item, "name", "") == "compose"
+                    ):
+                        try:
+                            composition = _read_composition(
+                                getattr(item, "arguments", None), patterns
+                            )
+                        except ValueError as e:
+                            logger.warning(
+                                "Composer returned an unusable composition: %s", e
+                            )
         finally:
-            await router.close()
+            await client.close()
 
-        if _direct_pending and not _acc.has_function and not _blocked_turn_log_marker:
-            _router_answered = True
-            yield _HostedUpdate([_HostedTextContent(_direct_pending)])
-
-        _decision = _acc.finalize()
-        _fn_name = _decision.fn_name
-        _args = _decision.args
-        if _decision.parse_error is not None:
-            # This used to be a bare `except: _args = {}` and the dispatch then
-            # ran on the RAW user prompt with no trace — invisible misrouting.
-            logger.warning(
-                "Router args UNPARSEABLE for %s — dispatch will fall back to the "
-                "raw user prompt. raw=%r",
-                _fn_name,
-                _decision.parse_error[:300],
+        if pending and not marker_blocked:
+            yield self._text_update(pending)
+        if composition is None:
+            logger.info(
+                "Composer answered directly (workspace=%s)", self._workspace_id or "-"
             )
+            return
 
-        # Capability -> implementation dispatch. The router chose a CAPABILITY
-        # (intention); the backend maps it to the execution that serves it. Add a
-        # capability = one entry in _ROUTER_FUNCTIONS + one branch here; the router
-        # never learns the implementation.
+        pattern, task, participants = composition
+        task = task or prompt
         logger.info(
-            "Router decision: function=%s args=%s",
-            _fn_name or "<none>",
-            _args,
+            "Composer: pattern=%s task=%s participants=%s workspace=%s",
+            pattern,
+            task[:120],
+            [p.get("name") for p in participants],
+            self._workspace_id or "-",
         )
-        if _fn_name and "task" not in _args:
-            # Valid-JSON-but-empty args: every dispatch branch below does
-            # `_args.get("task") or prompt`, so this turn will run on the RAW
-            # user prompt. Say it loudly instead of letting it look routed.
-            logger.warning(
-                "Router picked %s but returned NO task arg — dispatching the "
-                "RAW user prompt.",
-                _fn_name,
-            )
-        if _fn_name == "run_python_execution":
-            logger.info("Dispatching run_python_execution")
-            task = _args.get("task") or prompt
-            async for update in self._redact_via_router(
-                self._execute_responses(task, history, use_code_interpreter=True),
-                _fn_name,
-                _args,
-                _messages,
-            ):
-                yield update
-        elif _fn_name == "run_image_generation":
-            logger.info("Dispatching run_image_generation")
-            task = _args.get("task") or prompt
-            async for update in self._execute_image_generation(task):
-                yield update
-        elif _fn_name == "run_macae_mcp_server":
-            logger.info("Dispatching run_macae_mcp_server")
-            task = _args.get("task") or prompt
-            async for update in self._redact_via_router(
-                self._execute_responses(task, history, use_macae=True),
-                _fn_name,
-                _args,
-                _messages,
-            ):
-                yield update
-        elif _fn_name == "run_knowledge_base":
-            logger.info("Dispatching run_knowledge_base")
-            task = _args.get("task") or prompt
-            async for update in self._redact_via_router(
-                self._execute_responses(task, history, use_toolbox=True),
-                _fn_name,
-                _args,
-                _messages,
-            ):
-                yield update
-        elif _fn_name == "run_foundry_mcp":
-            logger.info("Dispatching run_foundry_mcp")
-            task = _args.get("task") or prompt
-            async for update in self._redact_via_router(
-                self._execute_responses(task, history, use_foundry=True),
-                _fn_name,
-                _args,
-                _messages,
-            ):
-                yield update
-        elif _fn_name == "run_web_search":
-            logger.info("Dispatching run_web_search")
-            task = _args.get("task") or prompt
-            async for update in self._redact_via_router(
-                self._execute_responses(task, history, use_web_search=True),
-                _fn_name,
-                _args,
-                _messages,
-            ):
-                yield update
-        elif _fn_name == "run_plan" and not allow_plan:
-            # Belt over the tools filter above: in Chat position a plan signal
-            # must never surface — answer the task inline instead.
-            logger.info("run_plan suppressed (allow_plan=False) — answering inline")
-            task = _args.get("task") or prompt
-            async for update in self._execute_responses(task, history):
-                yield update
-        elif _fn_name == "run_plan":
-            logger.info("Dispatching run_plan (escalate to Magentic orchestration)")
-            task = _args.get("task") or prompt
-            # Signal only: the Plan runs via process_request's orchestration path
-            # (BackgroundTask + WebSocket + PlanPage), NOT inline on this SSE turn.
-            # The SSE handler turns this signal into plan creation + plan_created.
-            # The roster the Router proposed rides along; the backend sanitizes
-            # and materializes it before the graph is built.
-            _roster = _args.get("agents")
-            yield _HostedUpdate(
-                [
-                    _HostedPlanSignal(
-                        task, agents=_roster if isinstance(_roster, list) else None
-                    )
-                ]
-            )
-        elif _router_answered:
-            # No capability AND the router already streamed its own answer above
-            # (its selected model, with history for memory). Nothing more to run.
-            logger.info("Direct answer streamed by the router's selected model")
-        else:
-            # Router emitted neither a tool nor any text: fall back to o4-mini +
-            # Toolbox so the turn still gets memory/knowledge and an answer.
-            logger.info("Router produced nothing; falling back to o4-mini execution")
-            async for update in self._execute_responses(prompt, history):
-                yield update
+        self.composition = (pattern, task, participants)
+        if pattern == "magentic":
+            # The formal Plan leaves this turn: the SSE handler reads
+            # ``composition`` after the stream and creates the Plan.
+            return
+        async for update in self._run_pattern(pattern, task, participants, history):
+            yield update
 
-    async def _redact_via_router(self, gen, fn_name: str, args: dict, messages: list):
-        """Responses ejecuta; el Router redacta.
+    async def _run_pattern(
+        self,
+        pattern: str,
+        task: str,
+        participants: list[dict],
+        history: Optional[list],
+    ):
+        """Build the composed participants with the existing factory and run
+        them with the framework builder of ``pattern`` inside this turn.
 
-        La actividad de herramienta y los artefactos (container_id/file_id/
-        anotaciones) salen tal cual — el Router no puede transportarlos. El
-        TEXTO vuelve como resultado ``tool`` y el Router escribe la respuesta
-        final con el modelo que eligió, igual que en los turnos sin herramienta.
+        The participants receive the conversation and the task. The workflow's
+        events are yielded as they are — the framework's protocol, no shims —
+        and the SSE handler renders agent output, tool activity and who is
+        speaking (``executor_id``). When
+        a participant asks the user — Handoff hands control back after a
+        response without handoff — the workflow idles and the turn ends there:
+        the next message is a new composition with the conversation. The
+        agents live for this turn only and are closed at its end.
         """
-        from openai import AsyncOpenAI
+        from agent_framework import Message
 
-        text: list[str] = []
-        async for update in gen:
-            keep = [c for c in update.contents if getattr(c, "type", None) != "text"]
-            text += [
-                getattr(c, "text", "") or ""
-                for c in update.contents
-                if getattr(c, "type", None) == "text"
-            ]
-            if keep:
-                yield _HostedUpdate(keep)
+        from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
 
-        call_id = f"call_{fn_name}"
-        _msgs = list(messages) + [
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": fn_name,
-                            "arguments": json.dumps(args or {}),
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": "".join(text).strip() or f"({fn_name}: no text output)",
-            },
-        ]
-        router = AsyncOpenAI(
-            api_key=await self._bearer(),
-            base_url=self._router_base_url,
-            default_query={"api-version": self._router_api_version},
-            timeout=120,
+        if self._memory_store is None:
+            raise RuntimeError("a composed orchestration needs the memory store")
+        team = await _team_from_router_roster(
+            participants,
+            task,
+            self._user_id,
+            self._memory_store,
+            self._workspace_id,
+            with_proxy=False,
+            persist=False,
+        )
+        agents = await MagenticAgentFactory().get_agents(
+            self._user_id,
+            team,
+            self._memory_store,
+            user_access_token=self._user_access_token,
+            workspace_id=self._workspace_id,
+        )
+        workflow, closables = OrchestrationManager.build_pattern_workflow(
+            pattern, agents
         )
         try:
-            # Sin `tools`: esta pasada sólo redacta, no encadena otra herramienta.
-            stream = await router.chat.completions.create(
-                model=self._router_model, messages=cast(Any, _msgs), stream=True
-            )
-            async for chunk in stream:
-                choice = chunk.choices[0] if getattr(chunk, "choices", None) else None
-                delta = getattr(choice, "delta", None) if choice else None
-                content = getattr(delta, "content", None) if delta else None
-                if content:
-                    yield _HostedUpdate([_HostedTextContent(content)])
+            messages = [
+                Message(role=str(h.get("role") or "user"), text=str(h.get("content")))
+                for h in (history or [])
+                if isinstance(h, dict) and h.get("content")
+            ] + [Message(role="user", text=task)]
+            async for event in workflow.run(messages, stream=True):
+                if getattr(event, "type", None) == "request_info":
+                    logger.info(
+                        "Composed %s asked the user; the turn ends here", pattern
+                    )
+                yield event
         finally:
-            await router.close()
+            for resource in closables:
+                try:
+                    close_method = getattr(resource, "close", None)
+                    if callable(close_method):
+                        result = close_method()
+                        if inspect.isawaitable(result):
+                            await result
+                except Exception as e:
+                    logger.warning(
+                        "Closing workflow resource %s failed: %s",
+                        getattr(resource, "name", resource),
+                        e,
+                    )
+            for ag in agents:
+                try:
+                    await ag.close()
+                except Exception as e:  # teardown of the turn's agents
+                    logger.warning(
+                        "Closing composed agent %s failed: %s",
+                        getattr(ag, "agent_name", ag),
+                        e,
+                    )
 
     def _spawn_container_file_persist(
         self,
@@ -2963,750 +2529,6 @@ class _RouterChatClient:
                     )
 
         _spawn_bg_persist(_run(), f"codeinterp:{file_id}")
-
-    async def _execute_image_generation(self, prompt: str):
-        """Generate an image with the configured gpt-image deployment and
-        surface it through the EXISTING generated_file channel: the bytes are
-        uploaded to Foundry files, so /chat/download-file and the frontend
-        renderers (chat AND plan surfaces) work unchanged.
-        """
-        import base64
-
-        import httpx
-
-        bearer = await self._bearer()
-        # Route verified live with an empty-body probe (2026-07-28): the
-        # ACCOUNT-level deployment path answers (400 "Missing 'prompt'") on
-        # api-version 2025-04-01-preview; "2026-04-21" is the MODEL version
-        # from the catalog card, not an API version (404s). The project-scoped
-        # path is a different auth plane (401, audience ai.azure.com).
-        url = (
-            f"{self._openai_base_url}/deployments/{self._image_deployment}"
-            f"/images/generations?api-version={self._image_api_version}"
-        )
-        logger.info(
-            "Image generation: model=%s prompt=%s",
-            self._image_deployment,
-            prompt[:200],
-        )
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as http:
-                resp = await http.post(
-                    url,
-                    headers={"Authorization": f"Bearer {bearer}"},
-                    json={
-                        "prompt": prompt,
-                        "n": 1,
-                        # 3:2 nativo — el mismo ratio de la tarjeta del chat:
-                        # la imagen llena la caja sin recorte ni bandas.
-                        # Validado en el playground sobre este deployment.
-                        "size": "1536x1024",
-                    },
-                )
-        except Exception as ex:
-            logger.error("Image generation request failed: %s", ex)
-            yield _HostedUpdate([_HostedTextContent(f"Image generation failed: {ex}")])
-            return
-        if resp.status_code != 200:
-            # Surface the FULL error — an empty/summarized failure here is how
-            # models end up narrating images they never generated.
-            err = (
-                f"Image generation failed: HTTP {resp.status_code} — {resp.text[:300]}"
-            )
-            logger.error(err)
-            yield _HostedUpdate([_HostedTextContent(err)])
-            return
-        payload = resp.json()
-        b64 = ((payload.get("data") or [{}])[0] or {}).get("b64_json")
-        if not b64:
-            yield _HostedUpdate(
-                [
-                    _HostedTextContent(
-                        "Image generation returned no image data: " + str(payload)[:200]
-                    )
-                ]
-            )
-            return
-        image_bytes = base64.b64decode(b64)
-        filename = f"generated_{uuid.uuid4().hex[:8]}.png"
-
-        from azure.ai.agents.aio import AgentsClient
-
-        from common.config.app_config import config
-
-        # Borrowed shared credential — per-request minting leaked the
-        # credential's aiohttp ClientSession (nothing closed it).
-        creds = config.get_shared_async_credential()
-        async with AgentsClient(
-            endpoint=config.AZURE_AI_PROJECT_ENDPOINT,
-            credential=creds,
-        ) as agents_client:
-            uploaded = await agents_client.files.upload(
-                file=(filename, image_bytes, "image/png"),
-                purpose="assistants",
-            )
-        logger.info(
-            "Generated image uploaded to Foundry: file_id=%s name=%s size=%d",
-            uploaded.id,
-            filename,
-            len(image_bytes),
-        )
-        # Persist at generation time — the bytes are already in hand.
-        from v4.common.services.generated_file_store import GeneratedFileStore
-
-        _spawn_bg_persist(
-            GeneratedFileStore.get_instance().save(uploaded.id, filename, image_bytes),
-            f"imagegen:{uploaded.id}",
-        )
-        # hosted_file → the SSE handler emits the generated_file event with the
-        # download_url and persists it in the assistant message metadata — the
-        # same end-to-end channel code_interpreter files already use.
-        yield _HostedUpdate([_HostedTextContent("Imagen generada:")])
-        yield _HostedUpdate(
-            [
-                _HostedHostedFile(
-                    file_id=uploaded.id,
-                    name=filename,
-                    additional_properties={"filename": filename},
-                )
-            ]
-        )
-
-    def _toolbox_tools(self, bearer: str) -> list[dict[str, Any]]:
-        """MCP attach entries for every declared Foundry toolbox.
-
-        `Foundry-Features` is not optional: the toolbox endpoint is preview-
-        gated and answers 401 without it, however valid the token is.
-        """
-        return [
-            {
-                "type": "mcp",
-                "server_label": label,
-                "server_url": url,
-                "require_approval": "never",
-                "headers": {
-                    "Authorization": f"Bearer {bearer}",
-                    "Foundry-Features": "Toolboxes=V1Preview",
-                },
-            }
-            for label, url in self._toolboxes
-        ]
-
-    async def _execute_responses(
-        self,
-        prompt: str,
-        history: Optional[list] = None,
-        file_ids: Optional[list[str]] = None,
-        *,
-        use_code_interpreter: bool = False,
-        use_toolbox: bool = False,
-        use_web_search: bool = False,
-        use_macae: bool = False,
-        use_foundry: bool = False,
-    ):
-        """Execution layer: o4-mini via the direct Responses API. Tools per
-        capability:
-        * ``use_macae`` (run_macae_mcp_server) -> ca-mcp (MacaeMcpServer) attached
-          DIRECTLY (its own endpoint, NOT the Foundry Toolbox) with the
-          x-ms-client-principal-id identity header. The Toolbox proxy strips that
-          header, so the direct attach is what makes ca-mcp resolve the real user.
-          The Toolbox is NOT attached here; its KBs are a separate capability.
-        * otherwise the Toolbox MCP is attached (memory + KBs + external tools); the
-          code interpreter is added for ``run_python_execution`` and the NATIVE
-          Responses ``web_search`` tool for ``run_web_search``.
-        Yields the same content shims, so the SSE handler and download-file flow are
-        untouched.
-        """
-        from openai import AsyncOpenAI
-
-        from common.config.app_config import config
-
-        # Attach map: foundry-MCP turns attach Foundry's MCP; macae turns attach
-        # ca-mcp DIRECTLY via its public endpoint (Toolbox only as fallback when
-        # no public endpoint is configured); every other turn attaches the Toolbox.
-        _macae_direct = bool(use_macae and self._macae_mcp_url)
-        logger.info(
-            "Responses tools: code_interpreter=%s web_search=%s foundry_direct=%s "
-            "macae_direct=%s (url=%s) toolbox=%s",
-            use_code_interpreter,
-            use_web_search,
-            use_foundry,
-            _macae_direct,
-            (self._macae_mcp_url or "<none>") if use_macae else "-",
-            not use_foundry and not _macae_direct,
-        )
-
-        # Official OpenAI SDK pointed at the model's direct Responses API
-        # (account /openai endpoint). base_url + default_query yield
-        # {account}/openai/responses?api-version=2025-03-01-preview.
-        bearer = await self._bearer()
-        client = AsyncOpenAI(
-            api_key=bearer,
-            base_url=self._openai_base_url,
-            default_query={"api-version": self._api_version},
-            timeout=180,
-        )
-        # Base tool set. For run_macae_mcp_server we attach ca-mcp (MacaeMcpServer)
-        # DIRECTLY — NOT via the Foundry Toolbox — because the Toolbox proxy strips
-        # the x-ms-client-principal-id header (proven live) and ca-mcp would fall
-        # back to a placeholder user, never matching how the user's connection was
-        # stored. A DIRECT attach carries the identity header to ca-mcp, which reads
-        # it (verified: sentinel round-trips), so its Cosmos connection lookups run
-        # as the real user — deterministic, from the backend, outside the prompt.
-        # Every OTHER execution turn attaches the Foundry Toolbox (memory + KBs +
-        # external tools). require_approval="never" runs tool calls without pausing.
-        if use_foundry:
-            # Foundry MCP Server (preview), native, attached DIRECTLY. Entra-OAuth
-            # protected → needs a token for the Foundry.Mcp.Tools scope (a DIFFERENT
-            # audience than ai.azure.com), minted by _foundry_mcp_bearer. Verified
-            # live: this attach exposes the full ~75-tool server with no 424.
-            foundry_bearer = await self._foundry_mcp_bearer()
-            tools: list = [
-                {
-                    "type": "mcp",
-                    "server_label": "FoundryMCPServer",
-                    "server_url": self._foundry_mcp_url,
-                    "require_approval": "never",
-                    "headers": {"Authorization": f"Bearer {foundry_bearer}"},
-                }
-            ]
-        elif use_macae:
-            # DIRECT attach of ca-mcp via its PUBLIC ingress
-            # (MACAE_MCP_PUBLIC_ENDPOINT) — the design this config exists for:
-            # the x-ms-client-principal-id header reaches ca-mcp intact (no
-            # Toolbox proxy stripping it) and this capability no longer depends
-            # on Toolbox aggregation, where ONE broken member (e.g. Infobip)
-            # fails tools/list and 424s every turn. Toolbox is the fallback
-            # only when no public endpoint is configured.
-            if self._macae_mcp_url:
-                # IDENTITY HOP ca-mcp → backend. ca-mcp's connect_from_registry /
-                # RegistryBridge call back into THIS backend
-                # (/api/v4/mcp/connections/user/{server}/connect). The backend's
-                # EasyAuth is AllowAnonymous + AAD provider: a request WITHOUT a
-                # bearer it can validate passes through anonymous → no
-                # x-ms-client-principal-* injected → auth_utils raises
-                # "No EasyAuth principal found" (prod log). ca-mcp has no
-                # EasyAuth, so it cannot mint a principal itself; it only relays
-                # whatever `authorization` arrives here (inspector_service reads
-                # it from get_http_headers). Forward the user's EasyAuth access
-                # token: its aud is this app's clientId (that is what makes OBO
-                # succeed), which is exactly the backend's allowedAudiences —
-                # EasyAuth validates it and re-injects the principal. No new
-                # scopes involved. Works locally too (no EasyAuth, principal
-                # header alone suffices).
-                _macae_headers: dict[str, str] = {
-                    "x-ms-client-principal-id": self._user_id or "",
-                }
-                if self._user_access_token:
-                    if self._macae_mcp_url.startswith(
-                        ("https://", "http://localhost", "http://127.0.0.1")
-                    ):
-                        _macae_headers["Authorization"] = (
-                            f"Bearer {self._user_access_token}"
-                        )
-                    else:
-                        logger.warning(
-                            "Refusing to forward end-user access token to non-HTTPS MCP endpoint: %s",
-                            self._macae_mcp_url,
-                        )
-                tools = [
-                    {
-                        "type": "mcp",
-                        "server_label": "MacaeMcpServer",
-                        "server_url": self._macae_mcp_url,
-                        "require_approval": "never",
-                        "headers": _macae_headers,
-                    },
-                ]
-            else:
-                tools = self._toolbox_tools(bearer)
-        else:
-            tools = self._toolbox_tools(bearer)
-        instructions = _HOSTED_ORCHESTRATOR_INSTRUCTIONS
-        if use_code_interpreter:
-            tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
-        if use_web_search:
-            # The NATIVE Responses web_search tool DOES return results (verified
-            # live); the Toolbox's call_tool->web_search returns nothing. Attach it
-            # ALONGSIDE the Toolbox (Toolbox stays for memory/KB) and steer the
-            # model to the native tool so it never detours into the broken path.
-            tools.append({"type": "web_search"})
-        # Capability-specific steer so o4-mini actually uses the attached tool.
-        if use_foundry:
-            instructions = (
-                "You have the Foundry MCP Server tools to operate Azure AI Foundry: "
-                "agents (agent_get/agent_list/agent_update/agent_invoke/…), models, "
-                "evaluations, datasets, prompt optimization, project connections and "
-                "sessions. Foundry tools that need a project take projectEndpoint="
-                f"'{config.AZURE_AI_PROJECT_ENDPOINT}'. Call the appropriate tool; "
-                "you do NOT already know this data — never fabricate. Keep it brief."
-            )
-        elif use_macae:
-            # IDENTITY PROPAGATION: self._user_id must travel as an explicit
-            # tool parameter, not as an HTTP header. The original design sent it
-            # as x-ms-client-principal-id on a DIRECT ca-mcp attach; after the
-            # switch to Toolbox routing the Foundry Toolbox proxy strips that
-            # header, so user_id always arrived as "" → sessions stored under
-            # "sample_user" → credential resolution in the wrong namespace →
-            # 401 / 0 tools on every external server call.
-            # Injecting user_id here into the instructions is the single fix
-            # that covers both sample_user and EasyAuth flows: all MacaeMcpServer
-            # tool calls will carry the real principal, session keys will be
-            # (real_user_id, server_name), and credential_resolver will look up
-            # the correct Key Vault secret for that user's connection.
-            _uid = self._user_id or "sample_user"
-            instructions = (
-                f"IDENTITY: your user_id is '{_uid}'. Pass user_id='{_uid}' to "
-                f"EVERY MacaeMcpServer tool call, no exceptions. "
-                "This is mandatory — without it "
-                f"credential resolution runs in the wrong namespace and all "
-                f"authenticated servers return 401 or 0 tools.\n\n"
-                "You work with the user's connected external MCP servers (GitHub, "
-                "Grafana/monitoring, ARM, etc.) through the Toolbox. To run a tool "
-                "on a REGISTERED server use the MacaeMcpServer meta-tools in this "
-                "order: (1) MacaeMcpServer___connect_from_registry {server_name, "
-                f"user_id='{_uid}'}} to connect/refresh credentials, then "
-                f"(2) MacaeMcpServer___call_external_tool {{server_name, "
-                "target_tool, arguments, "
-                f"user_id='{_uid}'}} to execute. "
-                "GATEWAY 'tool-box': the registered server named 'tool-box' is "
-                "the shared Foundry Toolbox facade exposing GitHub (file "
-                "contents, code search, branches, PRs), Microsoft Learn and "
-                "the knowledge bases. To READ FILE CONTENT or search code on "
-                "GitHub, ALWAYS use it with this NESTED form: (1) "
-                f"connect_from_registry {{server_name='tool-box', "
-                f"user_id='{_uid}'}}; (2) call_external_tool "
-                "{server_name='tool-box', target_tool='call_tool', "
-                "arguments={'name': '<member tool, e.g. "
-                "GitHub___get_file_contents>', 'arguments': {<its args>}}, "
-                f"user_id='{_uid}'}}. To discover member tool names call it "
-                "with target_tool='tool_search' and arguments={'query': "
-                "'<what you need>'}. Results include the FULL file/text "
-                "content — quote it faithfully; never claim content is "
-                "missing without checking the result. On 'tool-box' do NOT "
-                "use read_external_resource or discover_mcp_capabilities "
-                "(member tools are hidden from listing; use tool_search). "
-                f"Use MacaeMcpServer___list_connected_servers(user_id='{_uid}') "
-                f"and, for servers OTHER than 'tool-box', "
-                f"MacaeMcpServer___discover_mcp_capabilities(server_name, "
-                f"user_id='{_uid}') to find server/tool names. "
-                "You do NOT already know this data — call the tools; never "
-                "fabricate. Keep the answer brief."
-            )
-        elif use_web_search:
-            instructions = (
-                "Use the web_search tool to fetch CURRENT public information from "
-                "the live internet and answer with cited sources. Do NOT answer "
-                "from memory; you MUST use web_search. Keep the final answer brief."
-            )
-        elif use_toolbox and not use_code_interpreter:
-            instructions = (
-                "Use the available tools (knowledge_base_retrieve for the user's "
-                "documents/knowledge, or other connected tools) to fetch REAL data. "
-                "You do NOT already know this — you MUST call a tool; never "
-                "fabricate. Keep the final answer brief."
-            )
-        elif use_code_interpreter:
-            instructions = (
-                "Use the code interpreter to run Python, do the computation or "
-                "analysis, and produce downloadable files when asked. Keep the "
-                "final answer brief."
-            )
-        # WORKSPACE AWARENESS: without this the model is blind to the substrate
-        # — persistence is automatic but the agent cannot reason about it
-        # ("I can't save files") nor answer "¿dónde quedó el archivo?".
-        if self._workspace_id:
-            _wid = self._workspace_id
-            _wuid = self._user_id or "sample_user"
-            instructions += (
-                f"\n\nWORKSPACE: the user has the persistent project workspace "
-                f"'{_wid}' active in this conversation. Every file you produce "
-                "with the code interpreter is saved into it automatically and "
-                "committed to its git history; the user sees it immediately in "
-                "their file explorer panel. When asked to create or save a "
-                "file, use the code interpreter and state the FILENAME you "
-                "produced — never claim you cannot save files.\n"
-                "To SEE the workspace (list folders, read a file, find a file) "
-                "use the MacaeMcpServer tools — you do NOT already know its "
-                "contents; never fabricate them: "
-                f"MacaeMcpServer___workspace_list_entries {{user_id='{_wuid}', "
-                f"workspace_id='{_wid}', path=''}} (then descend by directory), "
-                f"MacaeMcpServer___workspace_read_file {{user_id='{_wuid}', "
-                f"workspace_id='{_wid}', path='<relative path>'}}, "
-                f"MacaeMcpServer___workspace_search_files {{user_id='{_wuid}', "
-                f"workspace_id='{_wid}', query='<name fragment>'}}."
-            )
-        call_names: dict = {}  # call_id -> tool name, to label tool results
-        # Memory = the conversation itself, rebuilt from Cosmos + AI Search and
-        # passed as `input` message items (NOT previous_response_id). store=False:
-        # nothing is threaded server-side; the next turn recovers context from the
-        # real plumbing, not a fragile response id.
-        create_kwargs: dict = {
-            "model": self._model,
-            "input": list(history or []) + [{"role": "user", "content": prompt}],
-            "stream": True,
-            "tools": tools,
-            "instructions": instructions,
-            "store": False,
-        }
-        # Audit line: what the execution model ACTUALLY receives as the final
-        # user message (the router's task, or the raw prompt on fallback).
-        # Pairs with the "Router decision:" line to make misrouting visible.
-        logger.info(
-            "Responses input FINAL: %s",
-            str(create_kwargs["input"][-1].get("content", ""))[:400],
-        )
-        try:
-            stream = await client.responses.create(**create_kwargs)
-            async for evt in stream:
-                etype = getattr(evt, "type", None)
-                if etype == "response.output_text.delta":
-                    delta = getattr(evt, "delta", "") or ""
-                    if delta:
-                        yield _HostedUpdate([_HostedTextContent(delta)])
-                elif etype == "response.output_item.added":
-                    item = getattr(evt, "item", None)
-                    _itype_added = (
-                        getattr(item, "type", None) if item is not None else None
-                    )
-                    if _itype_added == "function_call":
-                        call_id = getattr(item, "call_id", None)
-                        if call_id:
-                            call_names[call_id] = getattr(item, "name", None)
-                        # Some hosted streams include arguments on added item; surface early.
-                        added_args = getattr(item, "arguments", None) or ""
-                        if added_args:
-                            yield _HostedUpdate(
-                                [
-                                    _HostedFunctionCall(
-                                        getattr(item, "name", None),
-                                        str(added_args),
-                                    )
-                                ]
-                            )
-                    elif _itype_added in (
-                        "code_interpreter_call",
-                        "code_interpreter_tool_call",
-                    ):
-                        # Native code interpreter CALL starts (status=in_progress).
-                        # On the direct model the code is empty here and streams
-                        # separately via response.code_interpreter_call_code.*,
-                        # so only surface the call if the code is already present
-                        # (avoids an empty "calling" activity pre-empting the
-                        # real code in the SSE handler's first-call dedup).
-                        _code = getattr(item, "code", "") or ""
-                        if _code:
-                            yield _HostedUpdate(
-                                [
-                                    _HostedCodeInterpreterToolCall(
-                                        input=_code, arguments=_code
-                                    )
-                                ]
-                            )
-                    elif _itype_added == "web_search_call":
-                        # Native web_search arranca (in_progress/searching). Lo
-                        # surface como mcp_server_tool_call el handler SSE pinta el
-                        # chip "web_search" reusando el render de MCP (sin tocar el
-                        # # frontend).
-                        _wq = ""
-                        _act = getattr(item, "action", None)
-                        if _act is not None:
-                            _wq = (
-                                getattr(_act, "query", None)
-                                or (_act.get("query") if isinstance(_act, dict) else "")
-                                or ""
-                            )
-                        yield _HostedUpdate(
-                            [
-                                _HostedMcpServerToolCall(
-                                    tool_name="web_search",
-                                    server_name="Web_search",
-                                    arguments=_wq,
-                                )
-                            ]
-                        )
-
-                elif etype == "response.function_call_arguments.done":
-                    # Tool "calling" — surfaced with the full arguments payload
-                    # so the UI shows what the hosted agent is executing.
-                    yield _HostedUpdate(
-                        [
-                            _HostedFunctionCall(
-                                getattr(evt, "name", None),
-                                getattr(evt, "arguments", "") or "",
-                            )
-                        ]
-                    )
-                elif etype == "response.code_interpreter_call_code.done":
-                    # The direct model streams the code interpreter's source here
-                    # (not on the call item). Surface it as the call activity so
-                    # the UI can display the executed code.
-                    _ci_code = getattr(evt, "code", "") or ""
-                    if _ci_code:
-                        yield _HostedUpdate(
-                            [
-                                _HostedCodeInterpreterToolCall(
-                                    input=_ci_code, arguments=_ci_code
-                                )
-                            ]
-                        )
-                elif etype == "response.output_item.done":
-                    item = getattr(evt, "item", None)
-                    itype = getattr(item, "type", None)
-                    call_id = (
-                        getattr(item, "call_id", None) if item is not None else None
-                    )
-                    if itype == "function_call" and call_id:
-                        call_names[call_id] = getattr(item, "name", None)
-                    elif itype in (
-                        "code_interpreter_call",
-                        "code_interpreter_tool_call",
-                        "code_interpreter_tool_result",
-                    ):
-                        # Native code interpreter RESULT — this DONE event carries the
-                        # completed run. item.type is "code_interpreter_call" on BOTH
-                        # added and done (there is NO "code_interpreter_result" type);
-                        # the DONE event = completion. Verified fields: code,
-                        # container_id, outputs (list), status.
-                        _code = getattr(item, "code", "") or ""
-                        _container_id = getattr(item, "container_id", None)
-                        _outputs = getattr(item, "outputs", None) or []
-                        stdout_text = ""
-                        annotations: list[dict] = []
-                        for _o in _outputs:
-                            _od = _o if isinstance(_o, dict) else _to_safe_dict(_o)
-                            if not isinstance(_od, dict):
-                                continue
-                            _otype = _od.get("type")
-                            if _otype in ("logs", "text", "console"):
-                                stdout_text += str(
-                                    _od.get("logs")
-                                    or _od.get("text")
-                                    or _od.get("content")
-                                    or ""
-                                )
-                            _fid = _od.get("file_id") or _od.get("id")
-                            if _fid and _otype in ("image", "file", "files"):
-                                annotations.append(
-                                    {
-                                        "file_id": _fid,
-                                        "additional_properties": {
-                                            "container_id": _container_id,
-                                            "filename": _od.get("filename")
-                                            or _od.get("name"),
-                                        },
-                                    }
-                                )
-                        yield _HostedUpdate(
-                            [
-                                _HostedCodeInterpreterToolResult(
-                                    output=stdout_text or _code,
-                                    stdout=stdout_text,
-                                    stderr="",
-                                    annotations=annotations,
-                                )
-                            ]
-                        )
-                        for ann in annotations:
-                            hf = _build_hosted_file_from_annotation(ann)
-                            if hf is not None:
-                                yield _HostedUpdate([hf])
-                            _ap = ann.get("additional_properties") or {}
-                            self._spawn_container_file_persist(
-                                ann.get("file_id"),
-                                _ap.get("container_id"),
-                                _ap.get("filename"),
-                            )
-
-                        # Backward-compatible generic function_result emission.
-                        payload = _extract_function_result_payload(item)
-                        _status = (getattr(item, "status", None) or "").lower()
-                        exception_payload = (
-                            payload
-                            if _status in {"error", "failed", "failure"}
-                            else None
-                        )
-                        name = (
-                            call_names.get(call_id)
-                            or getattr(item, "name", None)
-                            or "code_interpreter"
-                        )
-                        yield _HostedUpdate(
-                            [
-                                _HostedFunctionResult(
-                                    name, result=payload, exception=exception_payload
-                                )
-                            ]
-                        )
-                    elif itype == "function_call_output":
-                        # Tool finished — surface both rich typed content (for existing
-                        # SSE branches) and generic function_result (backward compatibility).
-                        name = (
-                            call_names.get(call_id)
-                            or getattr(item, "name", None)
-                            or "tool"
-                        )
-                        payload = _extract_function_result_payload(item)
-                        exception_payload = None
-                        status = (
-                            (payload.get("status") or "").lower()
-                            if payload.get("status")
-                            else ""
-                        )
-                        output_text = _item_payload_str(
-                            item, "output", "result", "content", "text", "message"
-                        )
-                        stdout_text = _item_payload_str(item, "stdout")
-                        stderr_text = _item_payload_str(item, "stderr")
-                        annotations = _extract_annotations(item)
-
-                        # Heuristic fallback only for generic function_call_output.
-                        is_code_interpreter = False
-                        name_l = (name or "").lower()
-                        if "code_interpreter" in name_l:
-                            is_code_interpreter = True
-                        else:
-                            raw_s = _safe_json_dumps(payload.get("raw", {})).lower()
-                            out_s = output_text.lower()
-                            if (
-                                "code_interpreter" in raw_s
-                                or "container_file_citation" in raw_s
-                                or "cfile_" in raw_s
-                                or "code_interpreter" in out_s
-                            ):
-                                is_code_interpreter = True
-
-                        if is_code_interpreter:
-                            yield _HostedUpdate(
-                                [
-                                    _HostedCodeInterpreterToolResult(
-                                        output=output_text,
-                                        stdout=stdout_text,
-                                        stderr=stderr_text,
-                                        annotations=annotations,
-                                    )
-                                ]
-                            )
-                            for ann in annotations:
-                                hf = _build_hosted_file_from_annotation(ann)
-                                if hf is not None:
-                                    yield _HostedUpdate([hf])
-                                _ap = ann.get("additional_properties") or {}
-                                self._spawn_container_file_persist(
-                                    ann.get("file_id"),
-                                    _ap.get("container_id"),
-                                    _ap.get("filename"),
-                                )
-
-                        if status in {"error", "failed", "failure"}:
-                            exception_payload = payload
-                        yield _HostedUpdate(
-                            [
-                                _HostedFunctionResult(
-                                    name, result=payload, exception=exception_payload
-                                )
-                            ]
-                        )
-                    elif itype in ("mcp_call", "mcp_tool_call"):
-                        # A Toolbox / MCP tool call on the direct Responses stream
-                        # (item fields: name, server_label, arguments, output,
-                        # error, status). Surface it as mcp_server_tool_call +
-                        # _result so the SSE handler's tool_activity branches fire,
-                        # plus a generic function_result for backward compat. WITHOUT
-                        # this branch a Toolbox tool call is invisible (dropped).
-                        _tool_name = getattr(item, "name", None)
-                        _server = getattr(item, "server_label", None) or getattr(
-                            item, "server_name", None
-                        )
-                        _args = _item_payload_str(item, "arguments", "input")
-                        _err = getattr(item, "error", None)
-                        _out = _item_payload_str(item, "output", "result", "content")
-                        _status = (
-                            "error"
-                            if _err
-                            else (getattr(item, "status", None) or "completed")
-                        )
-                        yield _HostedUpdate(
-                            [
-                                _HostedMcpServerToolCall(
-                                    tool_name=_tool_name,
-                                    server_name=_server,
-                                    arguments=_args,
-                                )
-                            ]
-                        )
-                        yield _HostedUpdate(
-                            [
-                                _HostedMcpServerToolResult(
-                                    tool_name=_tool_name,
-                                    server_name=_server,
-                                    status=_status,
-                                    output=_out or (str(_err) if _err else ""),
-                                )
-                            ]
-                        )
-                        yield _HostedUpdate(
-                            [
-                                _HostedFunctionResult(
-                                    _tool_name or "mcp_tool",
-                                    result=_out,
-                                    exception=(str(_err) if _err else None),
-                                )
-                            ]
-                        )
-                    elif itype == "web_search_call":
-                        # Native web_search_termino - cierra el chip de
-                        _wstatus = getattr(item, "status", None) or "completed"
-                        yield _HostedUpdate(
-                            [
-                                _HostedMcpServerToolResult(
-                                    tool_name="web-search",
-                                    server_name="Web-Search",
-                                    status=_wstatus,
-                                    output="",
-                                )
-                            ]
-                        )
-                    elif itype == "message":
-                        # The direct model surfaces code-interpreter file
-                        # references as container_file_citation annotations on the
-                        # assistant message (file_id + container_id + filename at
-                        # top level — NOT in the code_interpreter_call outputs,
-                        # which are []). Convert each into the internal hosted_file
-                        # shape (container_id under additional_properties) so the
-                        # SSE handler emits a generated_file with a download_url.
-                        for _c in getattr(item, "content", None) or []:
-                            for _a in getattr(_c, "annotations", None) or []:
-                                _ad = _a if isinstance(_a, dict) else _to_safe_dict(_a)
-                                if not isinstance(_ad, dict):
-                                    continue
-                                _fid = _ad.get("file_id")
-                                if not _fid:
-                                    continue
-                                hf = _build_hosted_file_from_annotation(
-                                    {
-                                        "file_id": _fid,
-                                        "additional_properties": {
-                                            "container_id": _ad.get("container_id"),
-                                            "filename": _ad.get("filename")
-                                            or _ad.get("name"),
-                                        },
-                                    }
-                                )
-                                if hf is not None:
-                                    yield _HostedUpdate([hf])
-                                self._spawn_container_file_persist(
-                                    _fid,
-                                    _ad.get("container_id"),
-                                    _ad.get("filename") or _ad.get("name"),
-                                )
-                elif etype in ("response.created", "response.completed"):
-                    resp = getattr(evt, "response", None)
-                    rid = getattr(resp, "id", None)
-                    if rid:
-                        self._last_response_id = rid
-        finally:
-            await client.close()
 
     async def close(self) -> None:
         # Close only the per-user OBO credential we created here. The shared app
@@ -4096,6 +2918,10 @@ async def chat_message_stream(
         collected_generated_files: list[dict] = []
         _cleanup = AsyncExitStack()
         last_mcp_tool_call: Optional[tuple[str, str]] = None
+        current_speaker: Optional[str] = None
+        # A function_result carries only its call_id; the name comes from
+        # the function_call that opened it.
+        _call_names: dict[str, str] = {}
 
         try:
             await _cleanup.__aenter__()
@@ -4115,6 +2941,7 @@ async def chat_message_stream(
                 user_access_token=user_access_token,
                 user_id=user_id,
                 workspace_id=chat_request.workspace_id,
+                memory_store=memory_store,
             )
             _cleanup.push_async_callback(agent.close)
             selected_agent_name = orchestrator_name
@@ -4233,8 +3060,41 @@ async def chat_message_stream(
                         chat_request.turn_id,
                     )
                     break
-                # Process ALL content types from the agent framework
-                for content in update.contents or []:
+                # Framework protocol, no shims: the composer's own words arrive
+                # as an AgentResponseUpdate; a composed pattern's run arrives as
+                # the workflow's WorkflowEvents, of which only agent output
+                # carries contents. The speaking participant is the executor.
+                if isinstance(update, WorkflowEvent):
+                    if update.type == "request_info":
+                        yield _sse_event(
+                            {
+                                "type": "request_info",
+                                "request_id": update.request_id,
+                                "agent": update.source_executor_id,
+                            }
+                        )
+                        continue
+                    if update.type != "output":
+                        continue
+                    _data = update.data
+                    speaker = update.executor_id
+                    if isinstance(_data, AgentResponseUpdate):
+                        contents = list(_data.contents or [])
+                    elif isinstance(_data, AgentResponse):
+                        contents = [
+                            c
+                            for m in (_data.messages or [])
+                            for c in (m.contents or [])
+                        ]
+                    else:
+                        continue
+                else:
+                    contents = list(getattr(update, "contents", None) or [])
+                    speaker = getattr(update, "author_name", None)
+                if speaker and speaker != current_speaker:
+                    current_speaker = speaker
+                    yield _sse_event({"type": "agent", "agent": speaker})
+                for content in contents:
                     ct = content.type
                     content_preview = (
                         getattr(content, "text", None)
@@ -4259,74 +3119,13 @@ async def chat_message_stream(
                         token = content.text or ""
                         if token:
                             full_text += token
-                            yield _sse_event({"type": "token", "content": token})
-
-                    elif ct == "plan_signal":
-                        # Model Router escalated this turn to the formal multi-agent
-                        # Plan. Create it + kick off the orchestration (BackgroundTask
-                        # + WebSocket + PlanPage), tell the frontend to navigate, and
-                        # end the SSE stream. The `finally` above still runs cleanup;
-                        # the conversational persist/done below is intentionally
-                        # skipped (the task anchor is written by the plan creation).
-                        logger.info(
-                            "Model Router escalated to Plan for session=%s",
-                            chat_request.session_id,
-                        )
-                        try:
-                            _plan_id = await _create_plan_and_start(
-                                background_tasks=background_tasks,
-                                user_id=user_id,
-                                tenant_id=tenant_id,
-                                user_access_token=user_access_token,
-                                description=getattr(content, "task", None)
-                                or chat_request.message,
-                                session_id=chat_request.session_id,
-                                # Same context the router already recovered this
-                                # turn — cross the boundary instead of dropping it.
-                                history=_history,
-                                # Roster composed by the Router in the same
-                                # run_plan call; None falls back to the
-                                # user's selected team.
-                                composed_agents=getattr(content, "agents", None),
-                                workspace_id=chat_request.workspace_id,
-                            )
-                            yield _sse_event(
-                                {
-                                    "type": "plan_created",
-                                    "plan_id": _plan_id,
-                                    "session_id": chat_request.session_id,
-                                }
-                            )
-                            yield _sse_event(
-                                {
-                                    "type": "done",
-                                    "intent": "task",
-                                    "agent": "planner",
-                                    "confidence": 1.0,
-                                    "session_id": chat_request.session_id,
-                                    "plan_id": _plan_id,
-                                }
-                            )
-                        except Exception as _plan_err:
-                            logger.exception(
-                                "run_plan escalation failed: %s", _plan_err
-                            )
                             yield _sse_event(
                                 {
                                     "type": "token",
-                                    "content": "Sorry, I couldn't create a plan. Please try again.",
+                                    "content": token,
+                                    "agent": current_speaker,
                                 }
                             )
-                            yield _sse_event(
-                                {
-                                    "type": "done",
-                                    "intent": "task",
-                                    "agent": "planner",
-                                    "confidence": 1.0,
-                                    "session_id": chat_request.session_id,
-                                }
-                            )
-                        return
 
                     elif ct == "function_call":
                         logger.info(
@@ -4334,6 +3133,9 @@ async def chat_message_stream(
                             content.name,
                             content.arguments,
                         )
+                        _call_id = getattr(content, "call_id", None)
+                        if _call_id and content.name:
+                            _call_names[str(_call_id)] = content.name
                         _key = ("calling", content.name or "unknown")
                         if _key != _last_tool_activity_key:
                             _last_tool_activity_key = _key
@@ -4347,6 +3149,9 @@ async def chat_message_stream(
                             )
 
                     elif ct == "function_result":
+                        _tool_name = getattr(content, "name", None) or _call_names.get(
+                            str(getattr(content, "call_id", None) or ""), None
+                        )
                         _result_obj = getattr(content, "result", content)
                         _result_preview = _safe_json_dumps(_to_safe_dict(_result_obj))[
                             :1000
@@ -4356,14 +3161,14 @@ async def chat_message_stream(
                             getattr(content, "name", "?"),
                             _result_preview[:4000],
                         )
-                        _key = ("result", content.name or "unknown")
+                        _key = ("result", _tool_name or "unknown")
                         if _key != _last_tool_activity_key:
                             _last_tool_activity_key = _key
                             yield _sse_event(
                                 {
                                     "type": "tool_activity",
                                     "activity": "result",
-                                    "tool": content.name or "unknown",
+                                    "tool": _tool_name or "unknown",
                                     "success": content.exception is None,
                                     "result_preview": _result_preview,
                                 }
@@ -4652,6 +3457,70 @@ async def chat_message_stream(
 
                     # usage, hosted_file, etc. — skip silently
 
+            composition = getattr(agent, "composition", None)
+            if composition and composition[0] == "magentic":
+                # The composer chose the formal Plan. Create it + kick off the
+                # orchestration (BackgroundTask + WebSocket + PlanPage), tell the
+                # frontend to navigate, and end the SSE stream. The `finally`
+                # above still runs cleanup; the conversational persist/done below
+                # is intentionally skipped (the task anchor is written by the
+                # plan creation).
+                _pattern, _task, _participants = composition
+                logger.info(
+                    "Composer chose the formal Plan for session=%s",
+                    chat_request.session_id,
+                )
+                try:
+                    _plan_id = await _create_plan_and_start(
+                        background_tasks=background_tasks,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                        user_access_token=user_access_token,
+                        description=_task or chat_request.message,
+                        session_id=chat_request.session_id,
+                        # Same context the composer already had this turn —
+                        # cross the boundary instead of dropping it.
+                        history=_history,
+                        # Participants composed in the same call; an empty
+                        # roster falls back to the user's selected team.
+                        composed_agents=_participants or None,
+                        workspace_id=chat_request.workspace_id,
+                    )
+                    yield _sse_event(
+                        {
+                            "type": "plan_created",
+                            "plan_id": _plan_id,
+                            "session_id": chat_request.session_id,
+                        }
+                    )
+                    yield _sse_event(
+                        {
+                            "type": "done",
+                            "intent": "task",
+                            "agent": "planner",
+                            "confidence": 1.0,
+                            "session_id": chat_request.session_id,
+                            "plan_id": _plan_id,
+                        }
+                    )
+                except Exception as _plan_err:
+                    logger.exception("Plan creation failed: %s", _plan_err)
+                    yield _sse_event(
+                        {
+                            "type": "token",
+                            "content": "Sorry, I couldn't create a plan. Please try again.",
+                        }
+                    )
+                    yield _sse_event(
+                        {
+                            "type": "done",
+                            "intent": "task",
+                            "agent": "planner",
+                            "confidence": 1.0,
+                            "session_id": chat_request.session_id,
+                        }
+                    )
+                return
         except Exception as e:
             tool_err = classify_tool_error(e)
             emit_tool_error("chat_message_stream", tool_err)

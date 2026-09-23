@@ -39,8 +39,6 @@ from v4.api.router import (
     _ACTIVE_TURNS,
     _DEED_REPLAY_RESULT_CHARS,
     _DEED_RESULT_CAP,
-    _HostedTextContent,
-    _HostedUpdate,
     _make_deed,
     _recover_session_context,
     _RouterChatClient,
@@ -218,10 +216,12 @@ def test_tool_deeds_note_contract():
     assert note.endswith("- (+3 ejecuciones más de este turno sin registro)")
 
 
-# ── compuerta en el stream del router (turno sin tool) ──────────────────────
+# ── compuerta en el stream del composer (turno sin tool) ───────────────────
 
 
 class _FakeStream:
+    """responses.create(stream=True): entrega `texts` como deltas de texto."""
+
     def __init__(self, texts):
         self._texts = list(texts)
 
@@ -231,21 +231,19 @@ class _FakeStream:
     async def __anext__(self):
         if not self._texts:
             raise StopAsyncIteration
-        text = self._texts.pop(0)
-        delta = SimpleNamespace(content=text, tool_calls=None)
-        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+        return SimpleNamespace(
+            type="response.output_text.delta", delta=self._texts.pop(0)
+        )
 
 
 def _fake_openai(texts):
-    """Sustituto de openai.AsyncOpenAI: chat.completions.create(stream=True)
-    entrega `texts` como deltas de contenido, sin tool_calls (function=<none>)."""
+    """Sustituto de openai.AsyncOpenAI: responses.create(stream=True) entrega
+    `texts` como deltas de texto, sin llamada a `compose`."""
 
     class _FakeOpenAI:
         def __init__(self, **_kwargs):
-            self.chat = SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=AsyncMock(return_value=_FakeStream(texts))
-                )
+            self.responses = SimpleNamespace(
+                create=AsyncMock(return_value=_FakeStream(texts))
             )
 
         async def close(self):
@@ -256,9 +254,13 @@ def _fake_openai(texts):
 
 def _client():
     c = _RouterChatClient.__new__(_RouterChatClient)
-    c._router_base_url = "https://router.invalid"
-    c._router_api_version = "2025-01-01"
-    c._router_model = "model-router"
+    c.agent_name = "Composer"
+    c._openai_base_url = "https://account.invalid/openai"
+    c._api_version = "2025-03-01-preview"
+    c._model = "o4-mini"
+    c._memory_store = None
+    c._workspace_id = None
+    c.composition = None
     c._bearer = AsyncMock(return_value="tok")
     return c
 
@@ -274,13 +276,13 @@ async def _direct_text(texts, client=None):
 
 
 @pytest.mark.asyncio
-async def test_router_direct_answer_without_marker_flows_complete():
+async def test_composer_direct_answer_without_marker_flows_complete():
     text = await _direct_text(["Último commit: ", "8358385c ", "en stable."])
     assert text == "Último commit: 8358385c en stable."
 
 
 @pytest.mark.asyncio
-async def test_router_direct_answer_truncated_at_turn_log_marker(caplog):
+async def test_composer_direct_answer_truncated_at_turn_log_marker(caplog):
     """El modelo 'responde' con un turn-log fabricado, con el marcador partido
     entre deltas. Sale la prosa previa; nada desde el marcador en adelante."""
     caplog.set_level(logging.WARNING, logger="v4.api.router")
@@ -304,27 +306,18 @@ async def test_router_direct_answer_truncated_at_turn_log_marker(caplog):
 
 
 @pytest.mark.asyncio
-async def test_router_answer_that_is_only_a_turn_log_falls_back_to_execution(caplog):
+async def test_composer_answer_that_is_only_a_turn_log_reaches_nobody(caplog):
     """La respuesta entera es un turn-log fabricado: no llega NADA de ese texto
-    al usuario y, como el router no respondió ni eligió capability, el turno
-    cae a la ejecución real (o4-mini + Toolbox) en vez de a la fabricación."""
-    caplog.set_level(logging.INFO, logger="v4.api.router")
+    al usuario. El composer no compuso nada, así que el turno termina vacío y
+    con rastro en el log (ya no existe un runtime paralelo al que caer)."""
+    caplog.set_level(logging.WARNING, logger="v4.api.router")
     client = _client()
-    executed: list[tuple] = []
-
-    async def _fake_execute(prompt, history, **kwargs):
-        executed.append((prompt, history))
-        yield _HostedUpdate([_HostedTextContent("respuesta de ejecución real")])
-
-    client._execute_responses = _fake_execute
-
     text = await _direct_text(
         ["[turn-log]\n", "MacaeMcpServer.x() -> fabricado"], client=client
     )
-    assert text == "respuesta de ejecución real"
-    assert "fabricado" not in text
-    assert executed == [("¿último commit?", [])]
-    assert any("Router produced nothing" in r.getMessage() for r in caplog.records)
+    assert text == ""
+    assert client.composition is None
+    assert any("[turn-log]" in r.getMessage() for r in caplog.records)
 
 
 # ── abort de turno por identidad ─────────────────────────────────────────────

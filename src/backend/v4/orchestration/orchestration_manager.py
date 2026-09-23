@@ -16,8 +16,15 @@ from agent_framework import (
 )
 
 # agent_framework imports
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_azure_ai import AzureAIClient
-from agent_framework_orchestrations import MagenticBuilder
+from agent_framework_orchestrations import (
+    ConcurrentBuilder,
+    GroupChatBuilder,
+    HandoffBuilder,
+    MagenticBuilder,
+    SequentialBuilder,
+)
 from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatRequestSentEvent,
     GroupChatResponseReceivedEvent,
@@ -370,6 +377,74 @@ class OrchestrationManager:
         )
 
         return workflow
+
+    @classmethod
+    def build_pattern_workflow(cls, pattern: str, agents: List) -> tuple[Any, List[Any]]:
+        """Build the framework workflow of a composed chat-turn orchestration.
+
+        ``magentic`` is not built here: it is the formal Plan
+        (``init_orchestration``: HumanApprovalMagenticManager, plan review,
+        checkpoints, WebSocket). The other patterns take the same participants
+        the factory builds (the inner ``Agent`` of each ``FoundryAgentTemplate``)
+        and the framework's builder wires them:
+
+        * ``sequential`` / ``concurrent``: intermediate outputs on, so every
+          participant's updates stream to the turn.
+        * ``group_chat``: an orchestrator agent on the reasoning model
+          (``CHAT_ORCHESTRATOR_MODEL``) selects the speaker from the
+          conversation; ``max_rounds`` is the same ceiling as the plan lane
+          (without it the framework runs indefinitely).
+        * ``handoff``: the first participant starts and every participant can
+          hand off to every other; without autonomous mode the framework hands
+          control back to the user after a response without handoff.
+
+        Returns:
+            A tuple of (workflow, closables) where closables is a list of
+            resources that must be closed when the workflow ends (e.g. the
+            orchestrator agent for group_chat which owns an aiohttp session).
+        """
+        participants = [
+            ag._agent if getattr(ag, "_agent", None) is not None else ag
+            for ag in agents
+        ]
+        if not participants:
+            raise ValueError("a composed orchestration needs at least one participant")
+        if pattern == "sequential":
+            return SequentialBuilder(
+                participants=participants, intermediate_outputs=True
+            ).build(), []
+        if pattern == "concurrent":
+            return ConcurrentBuilder(
+                participants=participants, intermediate_outputs=True
+            ).build(), []
+        if pattern == "group_chat":
+            orchestrator = Agent(
+                client=AzureOpenAIResponsesClient(
+                    project_endpoint=config.AZURE_AI_PROJECT_ENDPOINT,
+                    deployment_name=config.CHAT_ORCHESTRATOR_MODEL,
+                    credential=config.get_shared_async_credential(),
+                ),
+                name="GroupChatOrchestrator",
+            )
+            workflow = GroupChatBuilder(
+                participants=participants,
+                orchestrator_agent=orchestrator,
+                max_rounds=orchestration_config.max_rounds,
+                intermediate_outputs=True,
+            ).build()
+            # The orchestrator's client owns an aiohttp session; return it for
+            # the caller to close when the workflow ends.
+            return workflow, [orchestrator]
+        if pattern == "handoff":
+            builder = HandoffBuilder(participants=participants).with_start_agent(
+                participants[0]
+            )
+            for source in participants:
+                targets = [p for p in participants if p is not source]
+                if targets:
+                    builder.add_handoff(source, targets)
+            return builder.build(), []
+        raise ValueError(f"unknown orchestration pattern '{pattern}'")
 
     # ---------------------------
     # Orchestration retrieval

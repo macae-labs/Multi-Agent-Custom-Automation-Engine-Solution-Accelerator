@@ -175,6 +175,17 @@ def identity(browser: Browser):
     context.close()
 
 
+def _workspace_branch(page: Page) -> str:
+    """Rama actual del workspace del test según el backend (GET /workspaces)."""
+    listing = page.request.get(
+        f"{APP}/api/v4/workspaces", headers={"x-ms-client-principal-id": OID}
+    ).json()
+    for ws in listing.get("workspaces", []):
+        if ws.get("workspace_id") == WS_NAME:
+            return str(ws.get("branch") or "")
+    return ""
+
+
 def _lane(page: Page) -> str:
     return (page.get_by_text(re.compile(r"^(Chat|Plan)$")).first.text_content() or "").strip()
 
@@ -228,7 +239,12 @@ def test_plan_lane_one_plan_one_approval_no_resume(identity):
     assert wire.posts_to("resume_plan") == []
     assert len(wire.frames_of("plan_approval_request")) == 1
     agent_text = " ".join(str(f["data"].get("content") or "") for f in wire.frames_of("agent_message"))
-    assert re.search(r"\bmain\b", agent_text), "ningún agente reportó la rama del repo real"
+    # La rama real la dice el propio resolver del backend bajo prueba (en prod
+    # el clon del share; en dev, el árbol enlazado): nada de "main" a mano.
+    branch = _workspace_branch(page)
+    assert branch and branch in agent_text, (
+        f"ningún agente reportó la rama real del workspace ({branch!r})"
+    )
     log.info(
         "inventario write-shared: user_id=%s session=%s plan=%s clarificaciones=%d",
         OID, wire.session_id, plan_id, clarifications,
