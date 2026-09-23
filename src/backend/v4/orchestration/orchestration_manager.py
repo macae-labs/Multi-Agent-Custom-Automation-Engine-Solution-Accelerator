@@ -379,7 +379,9 @@ class OrchestrationManager:
         return workflow
 
     @classmethod
-    def build_pattern_workflow(cls, pattern: str, agents: List) -> tuple[Any, List[Any]]:
+    def build_pattern_workflow(
+        cls, pattern: str, agents: List
+    ) -> tuple[Any, List[Any]]:
         """Build the framework workflow of a composed chat-turn orchestration.
 
         ``magentic`` is not built here: it is the formal Plan
