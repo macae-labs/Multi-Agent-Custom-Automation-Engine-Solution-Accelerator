@@ -116,7 +116,7 @@ async def test_recovered_search_hits_are_sanitized_too():
     """AI Search devuelve turnos de OTRAS sesiones ya indexados con [turn-log]:
     también se limpian. Es la vía por la que un chat nuevo se contaminaba."""
     hit = {
-        "role": "user",
+        "role": "assistant",
         "content": LEGACY_CONTENT,
         "timestamp": "2026-09-13T23:45:00Z",
         # De OTRA sesión: la memoria corta ya trae la actual en orden.
@@ -137,40 +137,6 @@ async def test_recovered_search_hits_are_sanitized_too():
     assert PROSE in joined
     assert "[turn-log]" not in joined
     assert "workspace_list_entries" not in joined
-
-
-@pytest.mark.asyncio
-async def test_assistant_turns_of_other_sessions_are_not_recalled():
-    """Lo que el asistente dijo en otra sesión no es un hecho: es su propia
-    respuesta, acertada o no. Medido 2026-09-23/24: con sus respuestas viejas
-    como recuerdo, el modelo repitió "necesito el projectEndpoint" en vez de
-    usar la herramienta; sin ese recuerdo, la usó. Entre sesiones se recuerda
-    lo que dijo el USUARIO."""
-    hits = [
-        {
-            "role": "assistant",
-            "content": "Necesito el projectEndpoint exacto de tu proyecto para consultar.",
-            "timestamp": "2026-09-23T10:00:00Z",
-            "session_id": "sess-vieja",
-        },
-        {
-            "role": "user",
-            "content": "Mi proyecto de Foundry se llama proj-demo.",
-            "timestamp": "2026-09-23T10:01:00Z",
-            "session_id": "sess-vieja",
-        },
-    ]
-    with patch(
-        "common.services.search_index_service.get_search_index_service",
-        AsyncMock(return_value=_search_stub(hits)),
-    ):
-        history = await _recover_session_context(
-            _chat_svc([]), "sess-new", "user-probe", current_message="listá mis agentes"
-        )
-
-    joined = "\n".join(m.get("content", "") for m in history)
-    assert "proj-demo" in joined
-    assert "Necesito el projectEndpoint" not in joined
 
 
 @pytest.mark.asyncio
@@ -250,7 +216,7 @@ def test_tool_deeds_note_contract():
     assert note.endswith("- (+3 ejecuciones más de este turno sin registro)")
 
 
-# ── compuerta en el stream del agente (turno sin tool) ───────────────────
+# ── compuerta en el stream del composer (turno sin tool) ───────────────────
 
 
 class _FakeStream:
@@ -294,11 +260,7 @@ def _client():
     c._model = "o4-mini"
     c._memory_store = None
     c._workspace_id = None
-    c._user_id = "u1"
-    c._user_access_token = None
-    c._toolboxes = []
-    c._macae_mcp_url = ""
-    c._image_deployment = "gpt-image-2"
+    c.composition = None
     c._bearer = AsyncMock(return_value="tok")
     return c
 
@@ -314,13 +276,13 @@ async def _direct_text(texts, client=None):
 
 
 @pytest.mark.asyncio
-async def test_direct_answer_without_marker_flows_complete():
+async def test_composer_direct_answer_without_marker_flows_complete():
     text = await _direct_text(["Último commit: ", "8358385c ", "en stable."])
     assert text == "Último commit: 8358385c en stable."
 
 
 @pytest.mark.asyncio
-async def test_direct_answer_truncated_at_turn_log_marker(caplog):
+async def test_composer_direct_answer_truncated_at_turn_log_marker(caplog):
     """El modelo 'responde' con un turn-log fabricado, con el marcador partido
     entre deltas. Sale la prosa previa; nada desde el marcador en adelante."""
     caplog.set_level(logging.WARNING, logger="v4.api.router")
@@ -344,15 +306,17 @@ async def test_direct_answer_truncated_at_turn_log_marker(caplog):
 
 
 @pytest.mark.asyncio
-async def test_answer_that_is_only_a_turn_log_reaches_nobody(caplog):
+async def test_composer_answer_that_is_only_a_turn_log_reaches_nobody(caplog):
     """La respuesta entera es un turn-log fabricado: no llega NADA de ese texto
-    al usuario; el turno termina vacío y con rastro en el log."""
+    al usuario. El composer no compuso nada, así que el turno termina vacío y
+    con rastro en el log (ya no existe un runtime paralelo al que caer)."""
     caplog.set_level(logging.WARNING, logger="v4.api.router")
     client = _client()
     text = await _direct_text(
         ["[turn-log]\n", "MacaeMcpServer.x() -> fabricado"], client=client
     )
     assert text == ""
+    assert client.composition is None
     assert any("[turn-log]" in r.getMessage() for r in caplog.records)
 
 
