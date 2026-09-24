@@ -2576,7 +2576,16 @@ class _RouterChatClient:
                 f"{{user_id='{uid}', workspace_id='{self._workspace_id}', path=''}}, "
                 "workspace_read_file, workspace_search_content, and workspace_exec "
                 "for commands (git, tests, linters, builds). Files you produce with "
-                "the code interpreter are saved into it automatically."
+                "the code interpreter are saved into it automatically. MCP tools are "
+                "called as tools, never from Python inside the code interpreter."
+            )
+            parts.append(
+                "OPERATIONAL MEMORY: the project's incident registry lives in the "
+                "workspace at docs/incidents (incident.v1 JSON files: signature, "
+                "probes, invariants, corrections, lessons) together with "
+                "docs/incidents/probes. Anything about incidents, what was learned, "
+                "what failed or what was corrected is answered from those files, "
+                "read with the workspace tools, never from general knowledge."
             )
         return "\n\n".join(parts)
 
