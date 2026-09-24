@@ -17,7 +17,10 @@ router = importlib.import_module("v4.api.router")
 def hit(**kw):
     base = {
         "session_id": "otra-sesion",
-        "role": "assistant",
+        # Entre sesiones se recuerda lo que dijo el USUARIO; lo que dijo el
+        # asistente en otra sesión no es un hecho (medido 2026-09-23/24: sus
+        # respuestas viejas como recuerdo hacían repetir el mismo error).
+        "role": "user",
         "content": "contenido recuperado",
         "timestamp": "2026-05-01T10:00:00Z",
         "session_name": "VoiceLive en iOS",
@@ -83,7 +86,7 @@ async def test_a_relevant_hit_from_another_session_enters_as_system_recall(
         "[recuerdo de sesión «VoiceLive en iOS», 2026-05-01]" in history[0]["content"]
     )
     assert (
-        "el asistente dijo: El TTS falla al primer frame binario"
+        "el usuario dijo: El TTS falla al primer frame binario"
         in history[0]["content"]
     )
 

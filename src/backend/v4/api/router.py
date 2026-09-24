@@ -1,5 +1,5 @@
 import asyncio
-import inspect
+import base64
 import json
 import logging
 import os
@@ -8,7 +8,7 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import Annotated, Any, Optional, cast
 
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, WorkflowEvent
+from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import (
     APIRouter,
@@ -55,6 +55,7 @@ from v4.common.models.mcp_connection_models import (
     MCPServerUpdateRequest,
     OAuthCallbackQuery,
 )
+from v4.common.services.generated_file_store import GeneratedFileStore
 from v4.common.services.plan_service import PlanService
 from v4.common.services.team_service import TeamService
 from v4.common.tool_errors import (
@@ -1051,6 +1052,15 @@ async def _recover_session_context(
             # Esta sesión ya entra completa y en orden por la memoria corta.
             if h.get("session_id") and h.get("session_id") == session_id:
                 continue
+            # Lo que el asistente dijo en OTRA sesión no es un hecho: es su
+            # propia respuesta, acertada o no. Medido 2026-09-23/24 con el mismo
+            # pedido (listar agentes de Foundry): con sus respuestas viejas como
+            # recuerdo, el modelo repitió literalmente "necesito el
+            # projectEndpoint" en vez de usar la herramienta (o4-mini 3 de 3,
+            # gpt-5.4-mini 1 de 3); aislado sin ese recuerdo, la usó. Entre
+            # sesiones se recuerda lo que el USUARIO dijo.
+            if h.get("role") != "user":
+                continue
             c = _strip_turn_log_block(h.get("content"))
             if c and c != cur and c not in seen:
                 seen.add(c)
@@ -1608,6 +1618,46 @@ def _extract_function_result_payload(item: Any) -> dict[str, Any]:
     return payload
 
 
+def _item_payload_str(item: Any, *fields: str) -> str:
+    """Return first non-empty string-ish payload from candidate fields."""
+    for field in fields:
+        val = getattr(item, field, None)
+        if val not in (None, ""):
+            if isinstance(val, str):
+                return val
+            return _safe_json_dumps(_to_safe_dict(val))
+    return ""
+
+
+def _extract_annotations(item: Any) -> list[dict]:
+    """Normalize annotations from output item into list[dict]."""
+    anns = getattr(item, "annotations", None) or []
+    out: list[dict] = []
+    for ann in anns:
+        if isinstance(ann, dict):
+            out.append(ann)
+        else:
+            out.append(
+                _to_safe_dict(ann) if isinstance(_to_safe_dict(ann), dict) else {}
+            )
+    return out
+
+
+def _build_hosted_file_from_annotation(ann: dict) -> Optional[Any]:
+    file_id = ann.get("file_id")
+    if not file_id:
+        return None
+    add_props = ann.get("additional_properties")
+    if not isinstance(add_props, dict):
+        add_props = {}
+    name = ann.get("url") or add_props.get("filename") or ann.get("text") or file_id
+    return _HostedHostedFile(
+        file_id=file_id,
+        name=name,
+        additional_properties=add_props,
+    )
+
+
 def _is_invokable_agent(agent: Any) -> bool:
     return callable(getattr(agent, "invoke", None))
 
@@ -1934,7 +1984,137 @@ def _merge_teams_for_direct_response(
     )
 
 
+class _HostedTextContent:
+    """Content shim mimicking an agent_framework text content (.type / .text)."""
+
+    type = "text"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _HostedFunctionCall:
+    """Content shim mimicking an agent_framework function_call (.name/.arguments)."""
+
+    type = "function_call"
+
+    def __init__(self, name: Optional[str], arguments: str = "") -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _HostedFunctionResult:
+    """Content shim mimicking an agent_framework function_result (.name/.exception)."""
+
+    type = "function_result"
+
+    def __init__(
+        self,
+        name: Optional[str],
+        result: Optional[object] = None,
+        exception: Optional[object] = None,
+    ) -> None:
+        # name: tool name
+        # result: optional result payload
+        # exception: optional exception / error payload (truthy indicates failure)
+        self.name = name
+        self.result = result
+        self.exception = exception
+
+
+class _HostedCodeInterpreterToolCall:
+    """Hosted shim for code interpreter call activity."""
+
+    type = "code_interpreter_tool_call"
+
+    def __init__(self, input: str = "", arguments: str = "") -> None:
+        self.input = input
+        self.arguments = arguments
+
+
+class _HostedCodeInterpreterToolResult:
+    """Hosted shim for code interpreter result activity."""
+
+    type = "code_interpreter_tool_result"
+
+    def __init__(
+        self,
+        output: str = "",
+        stdout: str = "",
+        stderr: str = "",
+        annotations: Optional[list] = None,
+    ) -> None:
+        self.output = output
+        self.stdout = stdout
+        self.stderr = stderr
+        self.annotations = annotations or []
+
+
+class _HostedHostedFile:
+    """Hosted shim for generated/container file metadata."""
+
+    type = "hosted_file"
+
+    def __init__(
+        self,
+        file_id: Optional[str] = None,
+        name: Optional[str] = None,
+        additional_properties: Optional[dict] = None,
+    ) -> None:
+        self.file_id = file_id
+        self.name = name
+        self.additional_properties = additional_properties or {}
+
+
+class _HostedMcpServerToolCall:
+    """Hosted shim for a Toolbox/MCP tool call (attribute shape matches the SSE
+    handler's ``mcp_server_tool_call`` branch: tool_name/server_name/arguments)."""
+
+    type = "mcp_server_tool_call"
+
+    def __init__(
+        self,
+        tool_name: Optional[str] = None,
+        server_name: Optional[str] = None,
+        arguments: Optional[str] = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.server_name = server_name
+        self.arguments = arguments
+
+
+class _HostedMcpServerToolResult:
+    """Hosted shim for a Toolbox/MCP tool result (matches the SSE handler's
+    ``mcp_server_tool_result`` branch: tool_name/server_name/status)."""
+
+    type = "mcp_server_tool_result"
+
+    def __init__(
+        self,
+        tool_name: Optional[str] = None,
+        server_name: Optional[str] = None,
+        status: Optional[str] = None,
+        output: Optional[str] = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.server_name = server_name
+        self.status = status
+        self.output = output
+
+
+class _HostedUpdate:
+    """Update shim mimicking an agent_framework streaming update (.contents)."""
+
+    def __init__(self, contents: list) -> None:
+        self.contents = contents
+
+
 _DIRECT_RESPONSES_API_VERSION = "2025-03-01-preview"
+
+# Hosted tools a deployment rejected ("Tool 'X' is not supported with <model>"),
+# learned from the 400 the first time and skipped afterwards, per process.
+_UNSUPPORTED_TOOLS: dict[str, set[str]] = {}
+_UNSUPPORTED_TOOL_RE = re.compile(r"Tool '([a-z_]+)' is not supported with")
 
 
 # ── Composer ────────────────────────────────────────────────────────────────
@@ -2139,6 +2319,7 @@ class _RouterChatClient:
         user_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
         memory_store: Any = None,
+        model: Optional[str] = None,
     ) -> None:
         from common.config.app_config import config
 
@@ -2154,10 +2335,6 @@ class _RouterChatClient:
         # pattern runs inside the turn; the Plan position does not run
         # participants here and may omit it.
         self._memory_store = memory_store
-        # What the composer decided this turn: None when it answered directly,
-        # else (pattern, task, participants). The SSE handler reads it after the
-        # stream to create the formal Plan when the pattern is ``magentic``.
-        self.composition: Optional[tuple[str, str, list[dict]]] = None
         # AZURE_AI_PROJECT_ENDPOINT is {account}/api/projects/{project}. The
         # model's OpenAI-compatible Responses API lives at the ACCOUNT root
         # ({account}/openai, api-version 2025-03-01-preview — the first version
@@ -2166,7 +2343,34 @@ class _RouterChatClient:
         account = project.split("/api/projects/")[0]
         self._openai_base_url = f"{account}/openai"
         self._api_version = _DIRECT_RESPONSES_API_VERSION
-        self._model = config.CHAT_ORCHESTRATOR_MODEL
+        # The request may name the deployment (ChatMessageRequest.model); the
+        # process default is CHAT_ORCHESTRATOR_MODEL. Consistency is measured
+        # per model with the same prompts (tests/e2e-test).
+        self._model = (model or "").strip() or config.CHAT_ORCHESTRATOR_MODEL
+        # ONE definition of how this project reaches its Foundry toolboxes
+        # ("name[:version],..."): {project}/toolboxes/{name}[/versions/v]/mcp.
+        self._toolboxes: list[tuple[str, str]] = []
+        for _spec in (config.CHAT_TOOLBOXES or "").split(","):
+            _spec = _spec.strip()
+            if not _spec:
+                continue
+            _name, _, _version = _spec.partition(":")
+            _name, _version = _name.strip(), _version.strip()
+            if not _name:
+                continue
+            _segment = f"/versions/{_version}" if _version else ""
+            self._toolboxes.append(
+                (_name, f"{project}/toolboxes/{_name}{_segment}/mcp?api-version=v1")
+            )
+        # ca-mcp (MacaeMcpServer) attached DIRECTLY: the identity header reaches
+        # it (the Toolbox proxy would strip it). Must be reachable by the Azure
+        # model service, hence the PUBLIC endpoint.
+        self._macae_mcp_url = config.MACAE_MCP_PUBLIC_ENDPOINT or ""
+        # Azure takes the image deployment from a request header, not from the
+        # tool spec (400 "imagegen deployment must be provided through header").
+        self._image_deployment = config._get_optional(
+            "IMAGE_GENERATION_DEPLOYMENT", "gpt-image-2"
+        )
 
     async def _bearer(self) -> str:
         from common.config.app_config import config
@@ -2222,14 +2426,6 @@ class _RouterChatClient:
         # passed as input message items (NOT previous_response_id); store=False
         # on every call, nothing is threaded server-side.
         return list(history or []) + [{"role": "user", "content": prompt}]
-
-    def _text_update(self, text: str) -> AgentResponseUpdate:
-        """The composer's own words, in the framework's update type."""
-        return AgentResponseUpdate(
-            contents=[Content.from_text(text)],
-            role="assistant",
-            author_name=self.agent_name,
-        )
 
     async def compose_plan(self, prompt: str) -> tuple[str, str, list]:
         """Plan position: ``compose`` forced with ``pattern=magentic``.
@@ -2287,184 +2483,630 @@ class _RouterChatClient:
         file_ids: Optional[list[str]] = None,
         **_ignored,
     ):
-        """Chat position: the composer answers, or composes and runs.
+        """Chat position: one agent, every capability, every turn.
 
-        Text streams straight to the user as it arrives. A ``compose`` call
-        with ``magentic`` is left in ``composition`` (the SSE handler creates
-        the Plan and ends this stream); any other pattern runs inside this turn
-        through ``_run_pattern``. ``allow_plan=False`` (a turn inside a plan)
-        takes ``magentic`` out of the offer: a plan never spawns another plan.
+        No router, no composer, no pre-selection of tools: ``_execute_responses``
+        attaches everything and the model decides inside its own loop, with the
+        conversation. Between the model's text and the user sits only the
+        fabricated turn-log guard (the marker may arrive split across deltas).
+        The Plan is explicit through the selector (``process_request``); a chat
+        turn never creates one.
         """
-        patterns = [p for p in _PATTERNS if allow_plan or p != "magentic"]
-        client = self._responses_client(await self._bearer())
-        composition: Optional[tuple[str, str, list[dict]]] = None
         pending = ""
         marker_blocked = False
-        try:
-            stream = await client.responses.create(
-                model=self._model,
-                instructions=self._instructions(),
-                input=cast(Any, self._composer_input(prompt, history)),
-                tools=cast(Any, [_compose_tool(patterns)]),
-                tool_choice="auto",
-                stream=True,
-                store=False,
+        async for update in self._execute_responses(prompt, history, file_ids):
+            contents = list(getattr(update, "contents", None) or [])
+            others = [c for c in contents if getattr(c, "type", None) != "text"]
+            if others:
+                yield _HostedUpdate(others)
+            for c in contents:
+                if getattr(c, "type", None) != "text":
+                    continue
+                delta = getattr(c, "text", "") or ""
+                if not delta or marker_blocked:
+                    continue
+                pending += delta
+                marker_idx = pending.find(_TURN_LOG_MARKER)
+                if marker_idx >= 0:
+                    safe = pending[:marker_idx]
+                    if safe:
+                        yield _HostedUpdate([_HostedTextContent(safe)])
+                    marker_blocked = True
+                    pending = ""
+                    logger.warning(
+                        "Assistant text contained %s marker; truncated.",
+                        _TURN_LOG_MARKER,
+                    )
+                    continue
+                hold = len(_TURN_LOG_MARKER) - 1
+                if len(pending) > hold:
+                    safe = pending[:-hold]
+                    if safe:
+                        yield _HostedUpdate([_HostedTextContent(safe)])
+                    pending = pending[-hold:]
+        if pending and not marker_blocked:
+            yield _HostedUpdate([_HostedTextContent(pending)])
+
+    def _agent_instructions(self) -> str:
+        """The facts the agent cannot infer: its identity for MacaeMcpServer,
+        the mounted workspace, the toolbox contract and the Foundry project.
+        Facts and tool contracts only; what the request needs is the model's."""
+        from common.config.app_config import config
+
+        uid = self._user_id or "sample_user"
+        labels = ", ".join(label for label, _ in self._toolboxes) or "Toolbox"
+        parts = [
+            "You are one assistant with every capability attached, in every turn. "
+            "You do not know the user's data in advance: read it with the tools, "
+            "run what has to run, verify before you answer, and never fabricate a "
+            "result, a file, a link or a tool output. Answer in the user's language.",
+            "METHOD: objective -> decide the next action -> execute the tool -> "
+            "observe the REAL result -> evaluate: did I get what I expected, did "
+            "an error appear, was an invariant violated, was my previous "
+            "assumption false? If it failed: diagnose, change strategy, code or "
+            "config, try again and re-evaluate. Continue until the objective is "
+            "met or you can state precisely what blocks it. Report what you "
+            "observed, not what you assumed.",
+            f"IDENTITY: your user_id is '{uid}'. Pass user_id='{uid}' to EVERY "
+            "MacaeMcpServer tool call.",
+            "MACAEMCPSERVER: the servers the user connected in the registry "
+            "(MacaeMcpServer___list_connected_servers {user_id}; "
+            "MacaeMcpServer___connect_from_registry {server_name, user_id}; then "
+            "MacaeMcpServer___call_external_tool {server_name, target_tool, "
+            "arguments, user_id}) and the mounted workspace tools.",
+            f"TOOLBOX: the Foundry toolbox(es) {labels} hold the remote servers "
+            "managed in Foundry (Foundry MCP Server, GitHub, Microsoft Learn, "
+            "knowledge bases). Discover their tools with tool_search {query} and "
+            "run them with call_tool {name, arguments}, where name is EXACTLY the "
+            "identifier tool_search returned (Server___tool, e.g. "
+            "GitHub___get_file_contents), never its title. Foundry MCP Server "
+            "tools that take a project use "
+            f"projectEndpoint='{config.AZURE_AI_PROJECT_ENDPOINT}'.",
+            "CODE: the code interpreter runs Python and produces downloadable "
+            "files (state the filename). WEB: web_search fetches CURRENT public "
+            "information; cite sources. IMAGES: image_generation creates or edits "
+            "an image; the file reaches the user automatically, describe it "
+            "briefly and do not invent a link.",
+        ]
+        if self._workspace_id:
+            parts.append(
+                f"WORKSPACE: the user's project workspace '{self._workspace_id}' is "
+                "mounted. It is the ONLY one you can see; never invent its name. "
+                "See it with MacaeMcpServer___workspace_list_entries "
+                f"{{user_id='{uid}', workspace_id='{self._workspace_id}', path=''}}, "
+                "workspace_read_file, workspace_search_content, and workspace_exec "
+                "for commands (git, tests, linters, builds). Files you produce with "
+                "the code interpreter are saved into it automatically."
             )
+        return "\n\n".join(parts)
+
+    def _toolbox_tools(self, bearer: str) -> list[dict[str, Any]]:
+        """MCP attach entries for every declared Foundry toolbox.
+
+        `Foundry-Features` is not optional: the toolbox endpoint is preview-
+        gated and answers 401 without it, however valid the token is.
+        """
+        return [
+            {
+                "type": "mcp",
+                "server_label": label,
+                "server_url": url,
+                "require_approval": "never",
+                "headers": {
+                    "Authorization": f"Bearer {bearer}",
+                    "Foundry-Features": "Toolboxes=V1Preview",
+                },
+            }
+            for label, url in self._toolboxes
+        ]
+
+    async def _create_stream(self, client: Any, create_kwargs: dict) -> Any:
+        """Open the response stream; when the deployment rejects a hosted tool
+        ("Tool 'X' is not supported with <model>", a 400 before anything runs),
+        observe it, drop that tool, retry, and remember it for this model so the
+        next turn does not pay the round trip. Measured 2026-09-24:
+        gpt-5.1-codex-mini rejects code_interpreter, claude-opus-4-8 rejects
+        image_generation; both turns died on the 400 with no tool used."""
+        from openai import BadRequestError
+
+        unsupported = _UNSUPPORTED_TOOLS.setdefault(self._model, set())
+        if unsupported:
+            create_kwargs["tools"] = [
+                t for t in create_kwargs["tools"] if t.get("type") not in unsupported
+            ]
+        for _attempt in range(len(create_kwargs["tools"]) + 1):
+            try:
+                return await client.responses.create(**create_kwargs)
+            except BadRequestError as e:
+                m = _UNSUPPORTED_TOOL_RE.search(str(e))
+                if not m:
+                    raise
+                tool_type = m.group(1)
+                if not any(t.get("type") == tool_type for t in create_kwargs["tools"]):
+                    raise
+                unsupported.add(tool_type)
+                create_kwargs["tools"] = [
+                    t for t in create_kwargs["tools"] if t.get("type") != tool_type
+                ]
+                logger.warning(
+                    "Model %s rejects hosted tool %s; retrying without it "
+                    "(remembered for this process)",
+                    self._model,
+                    tool_type,
+                )
+        raise RuntimeError("could not open a response stream")
+
+    async def _execute_responses(
+        self,
+        prompt: str,
+        history: Optional[list] = None,
+        file_ids: Optional[list[str]] = None,
+    ):
+        """One agent, every capability: o4-mini on the direct Responses API with
+        the Foundry toolbox(es), MacaeMcpServer (workspace + registry, with the
+        user's identity header), the native code interpreter, web_search and
+        image_generation attached AT ONCE. The model runs its own tool loop
+        server-side; this method only streams what happens back as content
+        shims the SSE handler already renders (text, tool activity, code
+        interpreter, generated files).
+        """
+        from openai import AsyncOpenAI
+
+        bearer = await self._bearer()
+        client = AsyncOpenAI(
+            api_key=bearer,
+            base_url=self._openai_base_url,
+            default_query={"api-version": self._api_version},
+            default_headers={
+                "x-ms-oai-image-generation-deployment": self._image_deployment
+            },
+            timeout=180,
+        )
+        tools: list = self._toolbox_tools(bearer)
+        if self._macae_mcp_url:
+            _macae_headers: dict[str, str] = {
+                "x-ms-client-principal-id": self._user_id or "",
+            }
+            if self._user_access_token and self._macae_mcp_url.startswith(
+                ("https://", "http://localhost", "http://127.0.0.1")
+            ):
+                # EasyAuth on the backend re-injects the principal from this
+                # bearer when ca-mcp calls back (registry connect).
+                _macae_headers["Authorization"] = f"Bearer {self._user_access_token}"
+            tools.append(
+                {
+                    "type": "mcp",
+                    "server_label": "MacaeMcpServer",
+                    "server_url": self._macae_mcp_url,
+                    "require_approval": "never",
+                    "headers": _macae_headers,
+                }
+            )
+        tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
+        tools.append({"type": "web_search"})
+        tools.append({"type": "image_generation"})
+        instructions = self._agent_instructions()
+        logger.info(
+            "Single agent tools: %s",
+            [t.get("server_label") or t.get("type") for t in tools],
+        )
+        call_names: dict = {}  # call_id -> tool name, to label tool results
+        # Memory = the conversation itself, rebuilt from Cosmos + AI Search and
+        # passed as `input` message items (NOT previous_response_id). store=False:
+        # nothing is threaded server-side; the next turn recovers context from the
+        # real plumbing, not a fragile response id.
+        create_kwargs: dict = {
+            "model": self._model,
+            "input": list(history or []) + [{"role": "user", "content": prompt}],
+            "stream": True,
+            "tools": tools,
+            "instructions": instructions,
+            "store": False,
+        }
+        # Audit line: what the execution model ACTUALLY receives as the final
+        # user message (the router's task, or the raw prompt on fallback).
+        # Pairs with the "Router decision:" line to make misrouting visible.
+        logger.info(
+            "Responses input FINAL: %s",
+            str(create_kwargs["input"][-1].get("content", ""))[:400],
+        )
+        try:
+            stream = await self._create_stream(client, create_kwargs)
             async for evt in stream:
                 etype = getattr(evt, "type", None)
                 if etype == "response.output_text.delta":
                     delta = getattr(evt, "delta", "") or ""
-                    if not delta or marker_blocked:
-                        continue
-                    # A fabricated turn-log never reaches the user: the marker
-                    # may arrive split across deltas, so the last len-1 chars
-                    # are held back until the next delta settles them.
-                    pending += delta
-                    marker_idx = pending.find(_TURN_LOG_MARKER)
-                    if marker_idx >= 0:
-                        safe = pending[:marker_idx]
-                        if safe:
-                            yield self._text_update(safe)
-                        marker_blocked = True
-                        pending = ""
-                        logger.warning(
-                            "Composer answer contained %s marker; truncated.",
-                            _TURN_LOG_MARKER,
+                    if delta:
+                        yield _HostedUpdate([_HostedTextContent(delta)])
+                elif etype == "response.output_item.added":
+                    item = getattr(evt, "item", None)
+                    _itype_added = (
+                        getattr(item, "type", None) if item is not None else None
+                    )
+                    if _itype_added == "function_call":
+                        call_id = getattr(item, "call_id", None)
+                        if call_id:
+                            call_names[call_id] = getattr(item, "name", None)
+                        # Some hosted streams include arguments on added item; surface early.
+                        added_args = getattr(item, "arguments", None) or ""
+                        if added_args:
+                            yield _HostedUpdate(
+                                [
+                                    _HostedFunctionCall(
+                                        getattr(item, "name", None),
+                                        str(added_args),
+                                    )
+                                ]
+                            )
+                    elif _itype_added in (
+                        "code_interpreter_call",
+                        "code_interpreter_tool_call",
+                    ):
+                        # Native code interpreter CALL starts (status=in_progress).
+                        # On the direct model the code is empty here and streams
+                        # separately via response.code_interpreter_call_code.*,
+                        # so only surface the call if the code is already present
+                        # (avoids an empty "calling" activity pre-empting the
+                        # real code in the SSE handler's first-call dedup).
+                        _code = getattr(item, "code", "") or ""
+                        if _code:
+                            yield _HostedUpdate(
+                                [
+                                    _HostedCodeInterpreterToolCall(
+                                        input=_code, arguments=_code
+                                    )
+                                ]
+                            )
+                    elif _itype_added == "web_search_call":
+                        # Native web_search arranca (in_progress/searching). Lo
+                        # surface como mcp_server_tool_call el handler SSE pinta el
+                        # chip "web_search" reusando el render de MCP (sin tocar el
+                        # # frontend).
+                        _wq = ""
+                        _act = getattr(item, "action", None)
+                        if _act is not None:
+                            _wq = (
+                                getattr(_act, "query", None)
+                                or (_act.get("query") if isinstance(_act, dict) else "")
+                                or ""
+                            )
+                        yield _HostedUpdate(
+                            [
+                                _HostedMcpServerToolCall(
+                                    tool_name="web_search",
+                                    server_name="Web_search",
+                                    arguments=_wq,
+                                )
+                            ]
                         )
-                        continue
-                    hold = len(_TURN_LOG_MARKER) - 1
-                    if len(pending) > hold:
-                        safe = pending[:-hold]
-                        if safe:
-                            yield self._text_update(safe)
-                        pending = pending[-hold:]
+
+                elif etype == "response.function_call_arguments.done":
+                    # Tool "calling" — surfaced with the full arguments payload
+                    # so the UI shows what the hosted agent is executing.
+                    yield _HostedUpdate(
+                        [
+                            _HostedFunctionCall(
+                                getattr(evt, "name", None),
+                                getattr(evt, "arguments", "") or "",
+                            )
+                        ]
+                    )
+                elif etype == "response.code_interpreter_call_code.done":
+                    # The direct model streams the code interpreter's source here
+                    # (not on the call item). Surface it as the call activity so
+                    # the UI can display the executed code.
+                    _ci_code = getattr(evt, "code", "") or ""
+                    if _ci_code:
+                        yield _HostedUpdate(
+                            [
+                                _HostedCodeInterpreterToolCall(
+                                    input=_ci_code, arguments=_ci_code
+                                )
+                            ]
+                        )
                 elif etype == "response.output_item.done":
                     item = getattr(evt, "item", None)
-                    if (
-                        getattr(item, "type", None) == "function_call"
-                        and getattr(item, "name", "") == "compose"
+                    itype = getattr(item, "type", None)
+                    call_id = (
+                        getattr(item, "call_id", None) if item is not None else None
+                    )
+                    if itype == "image_generation_call":
+                        # The image comes inline (base64) and lives nowhere else:
+                        # persist it and hand it to the user through the same
+                        # generated-file channel as any other artifact.
+                        _b64 = getattr(item, "result", None)
+                        if _b64:
+                            _img_bytes = base64.b64decode(_b64)
+                            _img_fid = "img_" + uuid.uuid4().hex[:12]
+                            _img_name = f"{_img_fid}.png"
+                            await GeneratedFileStore.get_instance().save(
+                                _img_fid, _img_name, _img_bytes
+                            )
+                            yield _HostedUpdate(
+                                [
+                                    _HostedHostedFile(
+                                        file_id=_img_fid,
+                                        name=_img_name,
+                                        additional_properties={"filename": _img_name},
+                                    )
+                                ]
+                            )
+                        continue
+                    if itype == "function_call" and call_id:
+                        call_names[call_id] = getattr(item, "name", None)
+                    elif itype in (
+                        "code_interpreter_call",
+                        "code_interpreter_tool_call",
+                        "code_interpreter_tool_result",
                     ):
-                        try:
-                            composition = _read_composition(
-                                getattr(item, "arguments", None), patterns
+                        # Native code interpreter RESULT — this DONE event carries the
+                        # completed run. item.type is "code_interpreter_call" on BOTH
+                        # added and done (there is NO "code_interpreter_result" type);
+                        # the DONE event = completion. Verified fields: code,
+                        # container_id, outputs (list), status.
+                        _code = getattr(item, "code", "") or ""
+                        _container_id = getattr(item, "container_id", None)
+                        _outputs = getattr(item, "outputs", None) or []
+                        stdout_text = ""
+                        annotations: list[dict] = []
+                        for _o in _outputs:
+                            _od = _o if isinstance(_o, dict) else _to_safe_dict(_o)
+                            if not isinstance(_od, dict):
+                                continue
+                            _otype = _od.get("type")
+                            if _otype in ("logs", "text", "console"):
+                                stdout_text += str(
+                                    _od.get("logs")
+                                    or _od.get("text")
+                                    or _od.get("content")
+                                    or ""
+                                )
+                            _fid = _od.get("file_id") or _od.get("id")
+                            if _fid and _otype in ("image", "file", "files"):
+                                annotations.append(
+                                    {
+                                        "file_id": _fid,
+                                        "additional_properties": {
+                                            "container_id": _container_id,
+                                            "filename": _od.get("filename")
+                                            or _od.get("name"),
+                                        },
+                                    }
+                                )
+                        yield _HostedUpdate(
+                            [
+                                _HostedCodeInterpreterToolResult(
+                                    output=stdout_text or _code,
+                                    stdout=stdout_text,
+                                    stderr="",
+                                    annotations=annotations,
+                                )
+                            ]
+                        )
+                        for ann in annotations:
+                            hf = _build_hosted_file_from_annotation(ann)
+                            if hf is not None:
+                                yield _HostedUpdate([hf])
+                            _ap = ann.get("additional_properties") or {}
+                            self._spawn_container_file_persist(
+                                ann.get("file_id"),
+                                _ap.get("container_id"),
+                                _ap.get("filename"),
                             )
-                        except ValueError as e:
-                            logger.warning(
-                                "Composer returned an unusable composition: %s", e
+
+                        # Backward-compatible generic function_result emission.
+                        payload = _extract_function_result_payload(item)
+                        _status = (getattr(item, "status", None) or "").lower()
+                        exception_payload = (
+                            payload
+                            if _status in {"error", "failed", "failure"}
+                            else None
+                        )
+                        name = (
+                            call_names.get(call_id)
+                            or getattr(item, "name", None)
+                            or "code_interpreter"
+                        )
+                        yield _HostedUpdate(
+                            [
+                                _HostedFunctionResult(
+                                    name, result=payload, exception=exception_payload
+                                )
+                            ]
+                        )
+                    elif itype == "function_call_output":
+                        # Tool finished — surface both rich typed content (for existing
+                        # SSE branches) and generic function_result (backward compatibility).
+                        name = (
+                            call_names.get(call_id)
+                            or getattr(item, "name", None)
+                            or "tool"
+                        )
+                        payload = _extract_function_result_payload(item)
+                        exception_payload = None
+                        status = (
+                            (payload.get("status") or "").lower()
+                            if payload.get("status")
+                            else ""
+                        )
+                        output_text = _item_payload_str(
+                            item, "output", "result", "content", "text", "message"
+                        )
+                        stdout_text = _item_payload_str(item, "stdout")
+                        stderr_text = _item_payload_str(item, "stderr")
+                        annotations = _extract_annotations(item)
+
+                        # Heuristic fallback only for generic function_call_output.
+                        is_code_interpreter = False
+                        name_l = (name or "").lower()
+                        if "code_interpreter" in name_l:
+                            is_code_interpreter = True
+                        else:
+                            raw_s = _safe_json_dumps(payload.get("raw", {})).lower()
+                            out_s = output_text.lower()
+                            if (
+                                "code_interpreter" in raw_s
+                                or "container_file_citation" in raw_s
+                                or "cfile_" in raw_s
+                                or "code_interpreter" in out_s
+                            ):
+                                is_code_interpreter = True
+
+                        if is_code_interpreter:
+                            yield _HostedUpdate(
+                                [
+                                    _HostedCodeInterpreterToolResult(
+                                        output=output_text,
+                                        stdout=stdout_text,
+                                        stderr=stderr_text,
+                                        annotations=annotations,
+                                    )
+                                ]
                             )
+                            for ann in annotations:
+                                hf = _build_hosted_file_from_annotation(ann)
+                                if hf is not None:
+                                    yield _HostedUpdate([hf])
+                                _ap = ann.get("additional_properties") or {}
+                                self._spawn_container_file_persist(
+                                    ann.get("file_id"),
+                                    _ap.get("container_id"),
+                                    _ap.get("filename"),
+                                )
+
+                        if status in {"error", "failed", "failure"}:
+                            exception_payload = payload
+                        yield _HostedUpdate(
+                            [
+                                _HostedFunctionResult(
+                                    name, result=payload, exception=exception_payload
+                                )
+                            ]
+                        )
+                    elif itype == "mcp_list_tools":
+                        # The service listed a server's tools before the model
+                        # could use them; a failure here is why a turn "never
+                        # touched" that server. Surface it as tool activity.
+                        _server = getattr(item, "server_label", None) or "mcp"
+                        _err = getattr(item, "error", None)
+                        _listed = getattr(item, "tools", None) or []
+                        logger.info(
+                            "mcp_list_tools %s: %d tools%s",
+                            _server,
+                            len(_listed),
+                            f" error={str(_err)[:200]}" if _err else "",
+                        )
+                        if _err:
+                            yield _HostedUpdate(
+                                [
+                                    _HostedMcpServerToolResult(
+                                        tool_name="list_tools",
+                                        server_name=_server,
+                                        status="error",
+                                        output=str(_err)[:500],
+                                    )
+                                ]
+                            )
+                    elif itype in ("mcp_call", "mcp_tool_call"):
+                        # A Toolbox / MCP tool call on the direct Responses stream
+                        # (item fields: name, server_label, arguments, output,
+                        # error, status). Surface it as mcp_server_tool_call +
+                        # _result so the SSE handler's tool_activity branches fire,
+                        # plus a generic function_result for backward compat. WITHOUT
+                        # this branch a Toolbox tool call is invisible (dropped).
+                        _tool_name = getattr(item, "name", None)
+                        _server = getattr(item, "server_label", None) or getattr(
+                            item, "server_name", None
+                        )
+                        _args = _item_payload_str(item, "arguments", "input")
+                        _err = getattr(item, "error", None)
+                        _out = _item_payload_str(item, "output", "result", "content")
+                        _status = (
+                            "error"
+                            if _err
+                            else (getattr(item, "status", None) or "completed")
+                        )
+                        yield _HostedUpdate(
+                            [
+                                _HostedMcpServerToolCall(
+                                    tool_name=_tool_name,
+                                    server_name=_server,
+                                    arguments=_args,
+                                )
+                            ]
+                        )
+                        yield _HostedUpdate(
+                            [
+                                _HostedMcpServerToolResult(
+                                    tool_name=_tool_name,
+                                    server_name=_server,
+                                    status=_status,
+                                    output=_out or (str(_err) if _err else ""),
+                                )
+                            ]
+                        )
+                        yield _HostedUpdate(
+                            [
+                                _HostedFunctionResult(
+                                    _tool_name or "mcp_tool",
+                                    result=_out,
+                                    exception=(str(_err) if _err else None),
+                                )
+                            ]
+                        )
+                    elif itype == "web_search_call":
+                        # Native web_search_termino - cierra el chip de
+                        _wstatus = getattr(item, "status", None) or "completed"
+                        yield _HostedUpdate(
+                            [
+                                _HostedMcpServerToolResult(
+                                    tool_name="web-search",
+                                    server_name="Web-Search",
+                                    status=_wstatus,
+                                    output="",
+                                )
+                            ]
+                        )
+                    elif itype == "message":
+                        # The direct model surfaces code-interpreter file
+                        # references as container_file_citation annotations on the
+                        # assistant message (file_id + container_id + filename at
+                        # top level — NOT in the code_interpreter_call outputs,
+                        # which are []). Convert each into the internal hosted_file
+                        # shape (container_id under additional_properties) so the
+                        # SSE handler emits a generated_file with a download_url.
+                        for _c in getattr(item, "content", None) or []:
+                            for _a in getattr(_c, "annotations", None) or []:
+                                _ad = _a if isinstance(_a, dict) else _to_safe_dict(_a)
+                                if not isinstance(_ad, dict):
+                                    continue
+                                _fid = _ad.get("file_id")
+                                if not _fid:
+                                    continue
+                                hf = _build_hosted_file_from_annotation(
+                                    {
+                                        "file_id": _fid,
+                                        "additional_properties": {
+                                            "container_id": _ad.get("container_id"),
+                                            "filename": _ad.get("filename")
+                                            or _ad.get("name"),
+                                        },
+                                    }
+                                )
+                                if hf is not None:
+                                    yield _HostedUpdate([hf])
+                                self._spawn_container_file_persist(
+                                    _fid,
+                                    _ad.get("container_id"),
+                                    _ad.get("filename") or _ad.get("name"),
+                                )
+                elif etype in ("response.created", "response.completed"):
+                    resp = getattr(evt, "response", None)
+                    rid = getattr(resp, "id", None)
+                    if rid:
+                        self._last_response_id = rid
         finally:
             await client.close()
-
-        if pending and not marker_blocked:
-            yield self._text_update(pending)
-        if composition is None:
-            logger.info(
-                "Composer answered directly (workspace=%s)", self._workspace_id or "-"
-            )
-            return
-
-        pattern, task, participants = composition
-        task = task or prompt
-        logger.info(
-            "Composer: pattern=%s task=%s participants=%s workspace=%s",
-            pattern,
-            task[:120],
-            [p.get("name") for p in participants],
-            self._workspace_id or "-",
-        )
-        self.composition = (pattern, task, participants)
-        if pattern == "magentic":
-            # The formal Plan leaves this turn: the SSE handler reads
-            # ``composition`` after the stream and creates the Plan.
-            return
-        async for update in self._run_pattern(pattern, task, participants, history):
-            yield update
-
-    async def _run_pattern(
-        self,
-        pattern: str,
-        task: str,
-        participants: list[dict],
-        history: Optional[list],
-    ):
-        """Build the composed participants with the existing factory and run
-        them with the framework builder of ``pattern`` inside this turn.
-
-        The participants receive the conversation and the task. The workflow's
-        events are yielded as they are — the framework's protocol, no shims —
-        and the SSE handler renders agent output, tool activity and who is
-        speaking (``executor_id``). When
-        a participant asks the user — Handoff hands control back after a
-        response without handoff — the workflow idles and the turn ends there:
-        the next message is a new composition with the conversation. The
-        agents live for this turn only and are closed at its end.
-        """
-        from agent_framework import Message
-
-        from v4.magentic_agents.magentic_agent_factory import MagenticAgentFactory
-
-        if self._memory_store is None:
-            raise RuntimeError("a composed orchestration needs the memory store")
-        team = await _team_from_router_roster(
-            participants,
-            task,
-            self._user_id,
-            self._memory_store,
-            self._workspace_id,
-            with_proxy=False,
-            persist=False,
-        )
-        agents = await MagenticAgentFactory().get_agents(
-            self._user_id,
-            team,
-            self._memory_store,
-            user_access_token=self._user_access_token,
-            workspace_id=self._workspace_id,
-        )
-        workflow, closables = OrchestrationManager.build_pattern_workflow(
-            pattern, agents
-        )
-        try:
-            messages = [
-                Message(role=str(h.get("role") or "user"), text=str(h.get("content")))
-                for h in (history or [])
-                if isinstance(h, dict) and h.get("content")
-            ] + [Message(role="user", text=task)]
-            async for event in workflow.run(messages, stream=True):
-                if getattr(event, "type", None) == "request_info":
-                    # Chat has no durable park/resume: the agents close with the
-                    # turn and the request id would be unanswerable. The
-                    # participant's question already streamed as agent output;
-                    # the run ends here and the user's next message is a new
-                    # composition with the conversation.
-                    logger.info(
-                        "Composed %s asked the user; the turn ends here", pattern
-                    )
-                    break
-                yield event
-        finally:
-            for resource in closables:
-                try:
-                    close_method = getattr(resource, "close", None)
-                    if callable(close_method):
-                        result = close_method()
-                        if inspect.isawaitable(result):
-                            await result
-                except Exception as e:
-                    logger.warning(
-                        "Closing workflow resource %s failed: %s",
-                        getattr(resource, "name", resource),
-                        e,
-                    )
-            for ag in agents:
-                try:
-                    await ag.close()
-                except Exception as e:  # teardown of the turn's agents
-                    logger.warning(
-                        "Closing composed agent %s failed: %s",
-                        getattr(ag, "agent_name", ag),
-                        e,
-                    )
 
     def _spawn_container_file_persist(
         self,
@@ -2960,6 +3602,7 @@ async def chat_message_stream(
                 user_id=user_id,
                 workspace_id=chat_request.workspace_id,
                 memory_store=memory_store,
+                model=chat_request.model,
             )
             _cleanup.push_async_callback(agent.close)
             selected_agent_name = orchestrator_name
@@ -3469,70 +4112,6 @@ async def chat_message_stream(
 
                     # usage, hosted_file, etc. — skip silently
 
-            composition = getattr(agent, "composition", None)
-            if composition and composition[0] == "magentic":
-                # The composer chose the formal Plan. Create it + kick off the
-                # orchestration (BackgroundTask + WebSocket + PlanPage), tell the
-                # frontend to navigate, and end the SSE stream. The `finally`
-                # above still runs cleanup; the conversational persist/done below
-                # is intentionally skipped (the task anchor is written by the
-                # plan creation).
-                _pattern, _task, _participants = composition
-                logger.info(
-                    "Composer chose the formal Plan for session=%s",
-                    chat_request.session_id,
-                )
-                try:
-                    _plan_id = await _create_plan_and_start(
-                        background_tasks=background_tasks,
-                        user_id=user_id,
-                        tenant_id=tenant_id,
-                        user_access_token=user_access_token,
-                        description=_task or chat_request.message,
-                        session_id=chat_request.session_id,
-                        # Same context the composer already had this turn —
-                        # cross the boundary instead of dropping it.
-                        history=_history,
-                        # Participants composed in the same call; an empty
-                        # roster falls back to the user's selected team.
-                        composed_agents=_participants or None,
-                        workspace_id=chat_request.workspace_id,
-                    )
-                    yield _sse_event(
-                        {
-                            "type": "plan_created",
-                            "plan_id": _plan_id,
-                            "session_id": chat_request.session_id,
-                        }
-                    )
-                    yield _sse_event(
-                        {
-                            "type": "done",
-                            "intent": "task",
-                            "agent": "planner",
-                            "confidence": 1.0,
-                            "session_id": chat_request.session_id,
-                            "plan_id": _plan_id,
-                        }
-                    )
-                except Exception as _plan_err:
-                    logger.exception("Plan creation failed: %s", _plan_err)
-                    yield _sse_event(
-                        {
-                            "type": "token",
-                            "content": "Sorry, I couldn't create a plan. Please try again.",
-                        }
-                    )
-                    yield _sse_event(
-                        {
-                            "type": "done",
-                            "intent": "task",
-                            "agent": "planner",
-                            "confidence": 1.0,
-                            "session_id": chat_request.session_id,
-                        }
-                    )
-                return
         except Exception as e:
             tool_err = classify_tool_error(e)
             emit_tool_error("chat_message_stream", tool_err)
