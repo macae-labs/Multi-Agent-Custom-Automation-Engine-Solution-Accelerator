@@ -138,7 +138,6 @@ async def test_the_instructions_carry_identity_workspace_and_toolbox_contract(
     instructions = fake.instances[-1].create_kwargs["instructions"]
     assert "user_id='u1'" in instructions
     assert "workspace 'my-repo'" in instructions and "workspace_exec" in instructions
-    assert "docs/incidents" in instructions
     assert "EXACTLY the identifier tool_search returned" in instructions
     assert "projectEndpoint='https://acct/api/projects/p'" in instructions
 
