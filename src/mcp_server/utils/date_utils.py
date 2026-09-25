@@ -2,8 +2,7 @@
 Date and time utilities for MCP server.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 
 def format_date_for_user(date_str: str) -> str:
@@ -49,10 +48,10 @@ def format_date_for_user(date_str: str) -> str:
 
 def get_current_timestamp() -> str:
     """Get current timestamp in ISO format."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def format_timestamp_for_display(timestamp: Optional[str] = None) -> str:
+def format_timestamp_for_display(timestamp: str | None = None) -> str:
     """
     Format timestamp for user display.
 
@@ -63,7 +62,7 @@ def format_timestamp_for_display(timestamp: Optional[str] = None) -> str:
         Formatted timestamp string
     """
     if timestamp is None:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     else:
         try:
             dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))

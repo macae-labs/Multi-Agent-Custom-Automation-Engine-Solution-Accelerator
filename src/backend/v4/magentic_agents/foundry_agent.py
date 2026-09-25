@@ -2,7 +2,6 @@
 
 import logging
 import os
-from typing import List, Optional
 
 from agent_framework import Agent, Message
 from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
@@ -140,7 +139,7 @@ class FoundryAgentTemplate(AzureAgentBase):
         self.runtime_tools_enabled = runtime_tools_enabled
 
         # Placeholder for server-created Azure AI agent id (if Azure Search path)
-        self._azure_server_agent_id: Optional[str] = None
+        self._azure_server_agent_id: str | None = None
 
     # -------------------------
     # Mode detection
@@ -160,9 +159,9 @@ class FoundryAgentTemplate(AzureAgentBase):
             return True
         return False
 
-    async def _collect_tools(self) -> List:
+    async def _collect_tools(self) -> list:
         """Collect tool definitions for Agent (MCP path only)."""
-        tools: List = []
+        tools: list = []
 
         if self.enable_code_interpreter:
             self.logger.info(
@@ -186,7 +185,7 @@ class FoundryAgentTemplate(AzureAgentBase):
     # -------------------------
     # Azure Search helper
     # -------------------------
-    async def _create_azure_search_enabled_client(self) -> Optional[AzureAIClient]:
+    async def _create_azure_search_enabled_client(self) -> AzureAIClient | None:
         """
         Create a server-side Azure AI agent with Azure AI Search tool using create_version.
 

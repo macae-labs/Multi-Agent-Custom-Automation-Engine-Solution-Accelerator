@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Iterable, List, Optional
+from collections.abc import Iterable
 
 from v4.models.models import MPlan, MStep
 
@@ -48,7 +48,7 @@ class PlanToMPlanConverter:
         trim_actions: bool = True,
         collapse_internal_whitespace: bool = True,
     ):
-        self.team: List[str] = list(team)
+        self.team: list[str] = list(team)
         self.task = task
         self.facts = facts
         self.detection_window = detection_window
@@ -79,7 +79,7 @@ class PlanToMPlanConverter:
 
         lines = self._preprocess_lines(plan_text)
 
-        step_levels: List[int] = []
+        step_levels: list[int] = []
         for raw_line in lines:
             bullet_match = self.BULLET_RE.match(raw_line)
             if not bullet_match:
@@ -110,9 +110,9 @@ class PlanToMPlanConverter:
 
     # ---------------- Internal Helpers ---------------- #
 
-    def _preprocess_lines(self, plan_text: str) -> List[str]:
+    def _preprocess_lines(self, plan_text: str) -> list[str]:
         lines = plan_text.splitlines()
-        cleaned: List[str] = []
+        cleaned: list[str] = []
         for line in lines:
             stripped = line.rstrip()
             if stripped:
@@ -142,7 +142,7 @@ class PlanToMPlanConverter:
         action = self._finalize_action(original)
         return self.fallback_agent, action
 
-    def _try_bold_agent(self, text: str) -> tuple[Optional[str], str]:
+    def _try_bold_agent(self, text: str) -> tuple[str | None, str]:
         m = self.BOLD_AGENT_RE.search(text)
         if not m:
             return None, text
@@ -154,7 +154,7 @@ class PlanToMPlanConverter:
                 return canonical, cleaned.strip()
         return None, text
 
-    def _try_window_agent(self, text: str) -> tuple[Optional[str], str]:
+    def _try_window_agent(self, text: str) -> tuple[str | None, str]:
         head_segment = text[: self.detection_window].lower()
         for canonical in self.team:
             if canonical.lower() in head_segment:

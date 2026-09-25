@@ -2,14 +2,14 @@
 Response formatting utilities for MCP tools.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
 
 
 def format_mcp_response(
     title: str,
-    content: Dict[str, Any],
+    content: dict[str, Any],
     agent_summary: str,
-    additional_instructions: Optional[str] = None,
+    additional_instructions: str | None = None,
 ) -> str:
     """
     Format a standardized MCP response.
@@ -36,7 +36,7 @@ def format_mcp_response(
     return "\n".join(response_parts)
 
 
-def format_error_response(error_message: str, context: Optional[str] = None) -> str:
+def format_error_response(error_message: str, context: str | None = None) -> str:
     """
     Format an error response for MCP tools.
 
@@ -54,16 +54,12 @@ def format_error_response(error_message: str, context: Optional[str] = None) -> 
 
     response_parts.append(f"**Error:** {error_message}")
     response_parts.append("")
-    response_parts.append(
-        "AGENT SUMMARY: An error occurred while processing the request."
-    )
+    response_parts.append("AGENT SUMMARY: An error occurred while processing the request.")
 
     return "\n".join(response_parts)
 
 
-def format_success_response(
-    action: str, details: Dict[str, Any], summary: Optional[str] = None
-) -> str:
+def format_success_response(action: str, details: dict[str, Any], summary: str | None = None) -> str:
     """
     Format a success response for MCP tools.
 
@@ -82,7 +78,7 @@ def format_success_response(
     if isinstance(details, dict) and set(details.keys()) == {"result"}:
         return str(details["result"])
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "status": "success",
         "action": action,
     }

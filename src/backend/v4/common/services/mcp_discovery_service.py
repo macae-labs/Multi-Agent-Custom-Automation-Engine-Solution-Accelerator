@@ -14,7 +14,7 @@ Architecture:
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from v4.common.services.mcp_resource_service import get_mcp_resource_service
 
@@ -33,11 +33,11 @@ class MCPDiscoveryService:
         """
         self.cache_ttl = cache_ttl_seconds
         self.error_cache_ttl = 30  # Short TTL for errors (30s)
-        self._cache: Dict[
-            str, Dict[str, Any]
+        self._cache: dict[
+            str, dict[str, Any]
         ] = {}  # {user_id: {data, timestamp, is_error}}
 
-    def _get_cache_key(self, user_id: str, team_id: Optional[str] = None) -> str:
+    def _get_cache_key(self, user_id: str, team_id: str | None = None) -> str:
         """Generate cache key for user/team."""
         return f"{user_id}:{team_id or 'default'}"
 
@@ -54,8 +54,8 @@ class MCPDiscoveryService:
         return age < ttl
 
     async def discover_widgets(
-        self, user_id: str, team_id: Optional[str] = None, use_cache: bool = True
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str, team_id: str | None = None, use_cache: bool = True
+    ) -> list[dict[str, Any]]:
         """
         Discover all available UI widgets/apps for a user.
 
@@ -172,8 +172,8 @@ class MCPDiscoveryService:
             return []
 
     def _normalize_resource(
-        self, resource: Dict[str, Any], is_template: bool = False
-    ) -> Optional[Dict[str, Any]]:
+        self, resource: dict[str, Any], is_template: bool = False
+    ) -> dict[str, Any] | None:
         """
         Normalize a resource descriptor to catalog format.
 
@@ -212,7 +212,7 @@ class MCPDiscoveryService:
             logger.warning(f"Failed to normalize resource: {e}")
             return None
 
-    def _normalize_template(self, template: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_template(self, template: dict[str, Any]) -> dict[str, Any] | None:
         """
         Normalize a resource template to catalog format.
 
@@ -250,7 +250,7 @@ class MCPDiscoveryService:
             logger.warning(f"Failed to normalize template: {e}")
             return None
 
-    def _extract_parameters(self, uri_template: str) -> List[Dict[str, Any]]:
+    def _extract_parameters(self, uri_template: str) -> list[dict[str, Any]]:
         """
         Extract parameter definitions from URI template.
 
@@ -286,7 +286,7 @@ class MCPDiscoveryService:
             return "🎴"
         return "🔧"
 
-    def _extract_tags(self, name: str, description: str) -> List[str]:
+    def _extract_tags(self, name: str, description: str) -> list[str]:
         """Extract tags from name and description."""
         tags = set()
         text = f"{name} {description}".lower()
@@ -356,7 +356,7 @@ class MCPDiscoveryService:
 
         return bool(re.search(r"\{\w+\}", uri))
 
-    def invalidate_cache(self, user_id: str, team_id: Optional[str] = None):
+    def invalidate_cache(self, user_id: str, team_id: str | None = None):
         """Invalidate cached discovery for a user/team."""
         cache_key = self._get_cache_key(user_id, team_id)
         if cache_key in self._cache:
@@ -365,7 +365,7 @@ class MCPDiscoveryService:
 
 
 # Global singleton instance
-_mcp_discovery_service: Optional[MCPDiscoveryService] = None
+_mcp_discovery_service: MCPDiscoveryService | None = None
 
 
 def get_mcp_discovery_service(cache_ttl: int = 180) -> MCPDiscoveryService:

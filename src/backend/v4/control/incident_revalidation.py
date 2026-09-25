@@ -20,9 +20,10 @@ capacidad ``execute(command, cwd)`` la inyecta quien arma el reconciliador
 """
 
 import logging
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Iterable, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from common.services.event_store import EventStore, TransitionError
 
@@ -60,7 +61,7 @@ Registry = Callable[[], Awaitable[list[dict[str, Any]]]]
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse(stamp: str) -> datetime:
@@ -108,7 +109,7 @@ async def rearm_due(
 
 
 async def apply_incident_expiry(
-    event: dict[str, Any], *, store: EventStore, execute: Optional[Executor]
+    event: dict[str, Any], *, store: EventStore, execute: Executor | None
 ) -> None:
     """La transición: techo → sonda → evidencia → ``reconciled``."""
     identity, payload = event["identity"], event["payload"]
@@ -150,7 +151,7 @@ async def apply_incident_expiry(
 
 async def operational_state(
     store: EventStore, incident: dict[str, Any]
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Pliegue del ``reconciled`` de este vencimiento: el estado vivo, no git."""
     doc = await store.find(KIND_RECONCILED, expiry_identity(incident))
     if doc is None:

@@ -1,12 +1,10 @@
 """Type stub for credential_resolver from backend."""
 
-from typing import Dict, Optional
-
 
 class CredentialResolver:
     """Stub for credential resolver to avoid import errors."""
 
-    async def resolve_by_secret_ref(self, secret_ref: str) -> Optional[Dict[str, str]]:
+    async def resolve_by_secret_ref(self, secret_ref: str) -> dict[str, str] | None:
         """Resolve credentials from Key Vault.
 
         Args:
@@ -19,4 +17,4 @@ class CredentialResolver:
 
 
 # Singleton instance stub
-credential_resolver: Optional[CredentialResolver] = None
+credential_resolver: CredentialResolver | None = None

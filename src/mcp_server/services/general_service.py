@@ -27,13 +27,9 @@ class GeneralService(MCPToolBase):
                 }
                 summary = f"Greeted user {name}."
 
-                return format_success_response(
-                    action="Greeting", details=details, summary=summary
-                )
+                return format_success_response(action="Greeting", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="greeting user"
-                )
+                return format_error_response(error_message=str(e), context="greeting user")
 
         @mcp.tool(tags={self.domain.value})
         async def get_server_status() -> str:
@@ -47,13 +43,9 @@ class GeneralService(MCPToolBase):
                 }
                 summary = "Retrieved server status information."
 
-                return format_success_response(
-                    action="Server Status", details=details, summary=summary
-                )
+                return format_success_response(action="Server Status", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="getting server status"
-                )
+                return format_error_response(error_message=str(e), context="getting server status")
 
     @property
     def tool_count(self) -> int:

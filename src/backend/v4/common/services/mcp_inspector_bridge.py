@@ -12,7 +12,7 @@ backend-level management and status endpoints accessible to the frontend.
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -36,7 +36,7 @@ class MCPInspectorBridge:
         self.ui_url = inspector_ui_url.rstrip("/")
         self.client = httpx.AsyncClient(timeout=5.0)
 
-    async def get_status(self) -> Dict[str, Any]:
+    async def get_status(self) -> dict[str, Any]:
         """Check if the MCP Inspector proxy is running and return status + UI link."""
         try:
             response = await self.client.get(f"{self.proxy_url}/health")
@@ -67,7 +67,7 @@ class MCPInspectorBridge:
                 "ui_link": self._build_ui_link(),
             }
 
-    def _read_session_token(self) -> Optional[str]:
+    def _read_session_token(self) -> str | None:
         """Read session token from Inspector log file (background mode)."""
         log_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -81,7 +81,7 @@ class MCPInspectorBridge:
         try:
             log_path = os.path.normpath(log_path)
             if os.path.exists(log_path):
-                with open(log_path, "r") as f:
+                with open(log_path) as f:
                     for line in f:
                         if "MCP_PROXY_AUTH_TOKEN=" in line:
                             return line.split("MCP_PROXY_AUTH_TOKEN=")[-1].strip()
@@ -91,9 +91,9 @@ class MCPInspectorBridge:
 
     def _build_ui_link(
         self,
-        transport: Optional[str] = None,
-        server_url: Optional[str] = None,
-        auth_token: Optional[str] = None,
+        transport: str | None = None,
+        server_url: str | None = None,
+        auth_token: str | None = None,
     ) -> str:
         base = self.ui_url
         params = []
@@ -120,7 +120,7 @@ class MCPInspectorBridge:
 
 
 # Global singleton
-_inspector_bridge: Optional[MCPInspectorBridge] = None
+_inspector_bridge: MCPInspectorBridge | None = None
 
 
 async def aclose_inspector_bridge() -> None:

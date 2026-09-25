@@ -3,7 +3,8 @@
 import asyncio
 import functools
 import logging
-from typing import Any, Callable, List, Type, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ def async_retry(
     initial_delay: float = 0.5,
     max_delay: float = 10.0,
     backoff_factor: float = 2.0,
-    retryable_exceptions: List[Type[Exception]] | None = None,
+    retryable_exceptions: list[type[Exception]] | None = None,
 ):
     """
     Decorator for async functions to retry on transient errors with exponential backoff.

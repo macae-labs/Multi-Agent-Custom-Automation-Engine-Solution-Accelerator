@@ -258,6 +258,10 @@ def _client():
     c._openai_base_url = "https://account.invalid/openai"
     c._api_version = "2025-03-01-preview"
     c._model = "o4-mini"
+    # Capacidades propias del orquestador (cabecera de imagen + toolboxes
+    # declarados); esta sonda mide la compuerta del marcador, no las tools.
+    c._image_deployment = "gpt-image-2"
+    c._toolboxes = []
     c._memory_store = None
     c._workspace_id = None
     c.composition = None

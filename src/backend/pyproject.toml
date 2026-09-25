@@ -57,13 +57,25 @@ dependencies = [
 
 [tool.mypy]
 python_version = "3.11"
-mypy_path = "."
+# Anclado al pyproject (no al cwd) para que el editor y el gate resuelvan
+# igual desde cualquier directorio. La raíz de tests entra al path para que
+# los tests tengan nombre de paquete (backend.*, agents.*) y el override de
+# abajo pueda alcanzarlos; sin ella serían módulos sueltos sin patrón válido.
+mypy_path = "$MYPY_CONFIG_FILE_DIR:$MYPY_CONFIG_FILE_DIR/../tests"
 explicit_package_bases = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = ["azure.functions", "azure.monitor.events.extension"]
 ignore_missing_imports = true
+
+# Tests monkeypatchean métodos por asignación directa en cientos de sitios;
+# method-assign es señal de producto, no de harness. El producto (v4, common,
+# app) sigue estricto — estos patrones sólo alcanzan src/tests (no hay
+# paquetes backend/agents/contract en el código de producción del backend).
+[[tool.mypy.overrides]]
+module = ["backend.*", "agents.*", "contract.*", "conftest"]
+disable_error_code = ["method-assign"]
 
 [tool.fastapi]
 entrypoint = "app:app"
@@ -73,8 +85,11 @@ line-length = 88
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "I", "W","UP", "B"]
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.File", "fastapi.Query", "fastapi.Depends", "fastapi.Body", "fastapi.Form", "fastapi.Header", "fastapi.Path"]
 
 [tool.ruff.format]
 quote-style = "double"

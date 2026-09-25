@@ -29,7 +29,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -72,7 +72,7 @@ def _auth_user(request: Request) -> str:
     try:
         details = get_authenticated_user_details(request_headers=request.headers)
     except PermissionError as exc:
-        raise HTTPException(status_code=401, detail=str(exc))
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     user_id = details.get("user_principal_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="no user found")
@@ -655,9 +655,7 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
                 reconciler_owned=entry.name == REGISTRY_WORKSPACE_ID,
                 created_at=meta.get(
                     "created_at",
-                    datetime.fromtimestamp(
-                        entry.stat().st_ctime, tz=timezone.utc
-                    ).isoformat(),
+                    datetime.fromtimestamp(entry.stat().st_ctime, tz=UTC).isoformat(),
                 ),
                 file_count=_count_files(entry),
             )
@@ -686,7 +684,7 @@ def create_workspace(
         raise HTTPException(status_code=400, detail="Invalid workspace id.")
 
     ws = _contained(WORKSPACE_ROOT, user_id, workspace_id)
-    now_iso = datetime.now(tz=timezone.utc).isoformat()
+    now_iso = datetime.now(tz=UTC).isoformat()
 
     if not (ws / ".git").is_dir():
         with _init_lock:

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 # from git import List
 import aiohttp
@@ -32,12 +32,12 @@ class FoundryService:
         return self._client
 
     # Example convenience wrappers – adjust as your project needs evolve
-    async def list_connections(self) -> list[Dict[str, Any]]:
+    async def list_connections(self) -> list[dict[str, Any]]:
         client = await self.get_client()
         conns = client.connections.list()
         return [c.as_dict() if hasattr(c, "as_dict") else dict(c) async for c in conns]
 
-    async def get_connection(self, name: str) -> Dict[str, Any]:
+    async def get_connection(self, name: str) -> dict[str, Any]:
         client = await self.get_client()
         conn = await client.connections.get(name=name)
         return conn.as_dict() if hasattr(conn, "as_dict") else dict(conn)
@@ -45,7 +45,7 @@ class FoundryService:
     # -----------------------
     # Model validation methods
     # -----------------------
-    async def list_model_deployments(self) -> List[Dict[str, Any]]:
+    async def list_model_deployments(self) -> list[dict[str, Any]]:
         """
         List all model deployments in the Azure AI project using the REST API.
         """
@@ -89,7 +89,7 @@ class FoundryService:
                     if response.status == 200:
                         data = await response.json()
                         deployments = data.get("value", [])
-                        deployment_info: List[Dict[str, Any]] = []
+                        deployment_info: list[dict[str, Any]] = []
                         for deployment in deployments:
                             deployment_info.append(
                                 {

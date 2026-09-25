@@ -13,12 +13,20 @@ El registro se descubre por CONTENIDO, no por configuración: es el workspace
 que contiene ``docs/incidents``. Nada que declarar, nada que marcar, nada que
 poner en variables de entorno: se clona el repo en un workspace desde la UI y
 el reconciliador lo encuentra.
+
+Un mismo registro puede ser alcanzable bajo VARIAS identidades (el mismo clon
+enlazado desde varios ``user_id``). Eso sigue siendo UN registro: los
+candidatos se agrupan por la ruta física que resuelven, y entre los alias de
+uno se elige la identidad de trabajo — ``INCIDENT_REGISTRY_USER_ID`` desempata
+si está declarada. La ambigüedad que detiene al reconciliador es la de verdad:
+dos registros DISTINTOS.
 """
 
 import json
 import logging
+import os
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 from agent_framework import MCPStreamableHTTPTool
 
@@ -43,7 +51,7 @@ class WorkspaceCapability:
         *,
         user_id: str,
         workspace_id: str,
-        tool: Optional[MCPStreamableHTTPTool] = None,
+        tool: MCPStreamableHTTPTool | None = None,
     ) -> None:
         self.user_id = user_id
         self.workspace_id = workspace_id
@@ -169,19 +177,51 @@ class WorkspaceCapability:
         )
 
 
-def discover() -> Optional[WorkspaceCapability]:
+def _pick_identity(aliases: list[tuple[str, str]]) -> tuple[str, str]:
+    """De varios alias del MISMO registro, la identidad con la que se trabaja.
+
+    El reconciliador no tiene identidad propia: usa la que sale de aquí para
+    llamar ``workspace_exec`` en ca-mcp, así que el ``user_id`` elegido tiene
+    que ser uno bajo el que el workspace es alcanzable. Todos los alias lo son.
+    ``INCIDENT_REGISTRY_USER_ID`` desempata cuando está declarado; si no, el
+    primero en orden, que es estable entre arranques.
+    """
+    declared = (os.environ.get("INCIDENT_REGISTRY_USER_ID") or "").strip()
+    if declared:
+        for alias in aliases:
+            if alias[0] == declared:
+                return alias
+        if len(aliases) > 1:
+            logger.info(
+                "INCIDENT_REGISTRY_USER_ID=%s no está entre los alias del "
+                "registro (%s); se toma el primero.",
+                declared,
+                ", ".join(u for u, _ in aliases),
+            )
+    return aliases[0]
+
+
+def discover() -> WorkspaceCapability | None:
     """El workspace que contiene ``docs/incidents``. ``None`` si no hay ninguno
     o si hay varios: con varios no se adivina, se nombran en el log."""
     if not WORKSPACE_ROOT.is_dir():
         logger.info("Registro de INC: no existe la raíz %s", WORKSPACE_ROOT)
         return None
-    found: list[tuple[str, str]] = []
+    # Candidatos por CONTENIDO, agrupados por la ruta FÍSICA que resuelven: el
+    # mismo registro alcanzable bajo varias identidades (un clon montado y
+    # enlazado desde varios user_id) es UN registro, no varios. Comparar
+    # nombres lo contaba como ambigüedad y el reconciliador no originaba
+    # trabajo nunca (medido 2026-09-24: tres alias del mismo directorio).
+    by_path: dict[str, list[tuple[str, str]]] = {}
     for user_dir in sorted(p for p in WORKSPACE_ROOT.iterdir() if p.is_dir()):
         for ws in sorted(user_dir.iterdir()):
             if (ws.is_dir() or ws.is_symlink()) and any(
                 (ws / INCIDENTS_DIR).glob("*.json")
             ):
-                found.append((user_dir.name, ws.name))
+                by_path.setdefault(str(ws.resolve()), []).append(
+                    (user_dir.name, ws.name)
+                )
+    found: list[tuple[str, str]] = [_pick_identity(a) for a in by_path.values()]
     # El workspace propio gana sin ambigüedad: es el único que el reconciliador
     # posee y adelanta. Los demás sólo cuentan si no existe.
     owned = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]

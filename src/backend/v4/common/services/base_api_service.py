@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import aiohttp
 
@@ -17,9 +17,9 @@ class BaseAPIService:
         self,
         base_url: str,
         *,
-        default_headers: Optional[Dict[str, str]] = None,
+        default_headers: dict[str, str] | None = None,
         timeout_seconds: int = 30,
-        session: Optional[aiohttp.ClientSession] = None,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
         if not base_url:
             raise ValueError("base_url is required")
@@ -27,14 +27,14 @@ class BaseAPIService:
         self.default_headers = default_headers or {}
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self._session_external = session is not None
-        self._session: Optional[aiohttp.ClientSession] = session
+        self._session: aiohttp.ClientSession | None = session
 
     @classmethod
     def from_config(
         cls,
         endpoint_attr: str,
         *,
-        default: Optional[str] = None,
+        default: str | None = None,
         **kwargs: Any,
     ) -> "BaseAPIService":
         """Create a service using an endpoint attribute from AppConfig.
@@ -67,9 +67,9 @@ class BaseAPIService:
         method: str,
         path: str = "",
         *,
-        headers: Optional[Dict[str, str]] = None,
-        params: Optional[Dict[str, Union[str, int, float]]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str | int | float] | None = None,
+        json: dict[str, Any] | None = None,
     ) -> aiohttp.ClientResponse:
         session = await self._ensure_session()
         url = self._url(path)
@@ -82,8 +82,8 @@ class BaseAPIService:
         self,
         path: str = "",
         *,
-        headers: Optional[Dict[str, str]] = None,
-        params: Optional[Dict[str, Union[str, int, float]]] = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str | int | float] | None = None,
     ) -> Any:
         resp = await self._request("GET", path, headers=headers, params=params)
         resp.raise_for_status()
@@ -93,9 +93,9 @@ class BaseAPIService:
         self,
         path: str = "",
         *,
-        headers: Optional[Dict[str, str]] = None,
-        params: Optional[Dict[str, Union[str, int, float]]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str | int | float] | None = None,
+        json: dict[str, Any] | None = None,
     ) -> Any:
         resp = await self._request(
             "POST", path, headers=headers, params=params, json=json

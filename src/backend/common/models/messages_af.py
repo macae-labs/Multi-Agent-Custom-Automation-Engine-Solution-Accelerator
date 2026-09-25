@@ -4,9 +4,9 @@ Agent Framework model equivalents for former agent framework -backed data models
 """
 
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 # ---------------------------------------------------------------------------
 
 
-class DataType(str, Enum):
+class DataType(StrEnum):
     session = "session"
     plan = "plan"
     step = "step"
@@ -27,7 +27,7 @@ class DataType(str, Enum):
     m_plan_message = "m_plan_message"
 
 
-class AgentType(str, Enum):
+class AgentType(StrEnum):
     HUMAN = "Human_Agent"
     HR = "Hr_Agent"
     MARKETING = "Marketing_Agent"
@@ -40,7 +40,7 @@ class AgentType(str, Enum):
     # Extend as needed
 
 
-class StepStatus(str, Enum):
+class StepStatus(StrEnum):
     planned = "planned"
     awaiting_feedback = "awaiting_feedback"
     approved = "approved"
@@ -50,7 +50,7 @@ class StepStatus(str, Enum):
     failed = "failed"
 
 
-class PlanStatus(str, Enum):
+class PlanStatus(StrEnum):
     in_progress = "in_progress"
     completed = "completed"
     failed = "failed"
@@ -59,20 +59,20 @@ class PlanStatus(str, Enum):
     created = "created"
 
 
-class HumanFeedbackStatus(str, Enum):
+class HumanFeedbackStatus(StrEnum):
     requested = "requested"
     accepted = "accepted"
     rejected = "rejected"
 
 
-class MessageRole(str, Enum):
+class MessageRole(StrEnum):
     system = "system"
     user = "user"
     assistant = "assistant"
     function = "function"
 
 
-class AgentMessageType(str, Enum):
+class AgentMessageType(StrEnum):
     # Removed trailing commas to avoid tuple enum values
     HUMAN_AGENT = "Human_Agent"
     AI_AGENT = "AI_Agent"
@@ -89,9 +89,7 @@ class BaseDataModel(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tenant_id: str = Field(default="")
-    timestamp: Optional[datetime] = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    timestamp: datetime | None = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class AgentMessage(BaseDataModel):
@@ -101,7 +99,7 @@ class AgentMessage(BaseDataModel):
     plan_id: str
     content: str
     source: str
-    step_id: Optional[str] = None
+    step_id: str | None = None
 
 
 class Session(BaseDataModel):
@@ -110,7 +108,7 @@ class Session(BaseDataModel):
     data_type: Literal[DataType.session] = DataType.session
     user_id: str
     current_status: str
-    message_to_user: Optional[str] = None
+    message_to_user: str | None = None
 
 
 class UserCurrentTeam(BaseDataModel):
@@ -143,18 +141,18 @@ class Plan(BaseDataModel):
     overall_status: PlanStatus = PlanStatus.in_progress
     approved: bool = False
     source: str = AgentType.PLANNER.value
-    m_plan: Optional[Dict[str, Any]] = None
-    summary: Optional[str] = None
-    team_id: Optional[str] = None
-    streaming_message: Optional[str] = None
-    human_clarification_request: Optional[str] = None
-    human_clarification_response: Optional[str] = None
+    m_plan: dict[str, Any] | None = None
+    summary: str | None = None
+    team_id: str | None = None
+    streaming_message: str | None = None
+    human_clarification_request: str | None = None
+    human_clarification_response: str | None = None
     # Pending request_info the workflow is idle on (durable; checkpoint-backed):
     # {kind, request_id, checkpoint_id, workflow_name, question, content_id}.
-    waiting_for: Optional[Dict[str, Any]] = None
+    waiting_for: dict[str, Any] | None = None
     # Linaje de checkpoints: un ``workflow_name`` por segmento de corrida (la
     # reanudación nace con nombre nuevo). Al plegar a terminal se borran todos.
-    workflow_names: List[str] = Field(default_factory=list)
+    workflow_names: list[str] = Field(default_factory=list)
 
 
 class Step(BaseDataModel):
@@ -166,10 +164,10 @@ class Step(BaseDataModel):
     action: str
     agent: AgentType
     status: StepStatus = StepStatus.planned
-    agent_reply: Optional[str] = None
-    human_feedback: Optional[str] = None
-    human_approval_status: Optional[HumanFeedbackStatus] = HumanFeedbackStatus.requested
-    updated_action: Optional[str] = None
+    agent_reply: str | None = None
+    human_feedback: str | None = None
+    human_approval_status: HumanFeedbackStatus | None = HumanFeedbackStatus.requested
+    updated_action: str | None = None
 
 
 class ActionRequest(BaseDataModel):
@@ -187,7 +185,7 @@ class HumanFeedback(BaseDataModel):
     step_id: str
     plan_id: str
     approved: bool
-    human_feedback: Optional[str] = None
+    human_feedback: str | None = None
 
 
 class TeamSelectionRequest(BaseDataModel):
@@ -244,18 +242,18 @@ class TeamConfiguration(BaseDataModel):
     created: str
     created_by: str
     deployment_name: str
-    agents: List[TeamAgent] = Field(default_factory=list)
+    agents: list[TeamAgent] = Field(default_factory=list)
     description: str = ""
     logo: str = ""
     plan: str = ""
-    starting_tasks: List[StartingTask] = Field(default_factory=list)
+    starting_tasks: list[StartingTask] = Field(default_factory=list)
     user_id: str  # who uploaded this configuration
 
 
 class PlanWithSteps(Plan):
     """Plan model that includes the associated steps."""
 
-    steps: List[Step] = Field(default_factory=list)
+    steps: list[Step] = Field(default_factory=list)
     total_steps: int = 0
     planned: int = 0
     awaiting_feedback: int = 0
@@ -303,7 +301,7 @@ class InputTask(BaseModel):
 
     session_id: str
     description: str
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
 
 
 class UserLanguage(BaseModel):
@@ -317,12 +315,12 @@ class AgentMessageData(BaseDataModel):
     plan_id: str
     user_id: str
     agent: str
-    m_plan_id: Optional[str] = None
+    m_plan_id: str | None = None
     agent_type: AgentMessageType = AgentMessageType.AI_AGENT
     content: str
     raw_data: str
-    steps: List[Any] = Field(default_factory=list)
-    next_steps: List[Any] = Field(default_factory=list)
+    steps: list[Any] = Field(default_factory=list)
+    next_steps: list[Any] = Field(default_factory=list)
 
 
 # ── Chat Mode Models (P0 — conversational without plan) ──────────────
@@ -333,13 +331,13 @@ class ChatMessageRequest(BaseModel):
 
     session_id: str = ""
     message: str
-    model: Optional[str] = None  # Optional model selector
+    model: str | None = None  # Optional model selector
     file_ids: list[str] = []  # Foundry file IDs attached by the user (code_interpreter)
     # When set, message is in-plan: never create a new plan
-    plan_id: Optional[str] = None
+    plan_id: str | None = None
     # Active workspace: artefacts produced by agents land in this workspace.
     # None = no workspace selected (Blob-only fallback, previous behaviour).
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
     # UI chat|plan selector. False = this message may NEVER create a plan (the
     # run_plan capability is withheld from the router). Plan position in the UI
     # does not use this flag — it calls /process_request explicitly instead.
@@ -351,13 +349,13 @@ class ChatMessageRequest(BaseModel):
     # Identidad del turno, acuñada por el cliente (uuid). Permite abortarlo por
     # identidad (POST /chat/turns/{turn_id}/abort): el ingress no propaga el
     # cierre del cliente al contenedor, así que el transporte no sirve de señal.
-    turn_id: Optional[str] = None
+    turn_id: str | None = None
     # Identidad de la clarificación que este mensaje responde. Sin ella el
     # mensaje es una tarea nueva: el backend nunca decide por sesión que un
     # texto es "la respuesta" a una pregunta que el usuario no vio (prod
     # 2026-09-22, autonoma-001: dos tareas nuevas tragadas como respuestas a
     # c817f2a3 / df7940b6 del plan e5b31dda, aparcado desde el día anterior).
-    clarification_request_id: Optional[str] = None
+    clarification_request_id: str | None = None
 
 
 class ResumePlanRequest(BaseModel):
@@ -401,4 +399,4 @@ class ChatMessageResponse(BaseModel):
     confidence: float
     response: str
     agent: str = "assistant"
-    redirect_to_plan: Optional[str] = None  # plan_id if redirected to task flow
+    redirect_to_plan: str | None = None  # plan_id if redirected to task flow

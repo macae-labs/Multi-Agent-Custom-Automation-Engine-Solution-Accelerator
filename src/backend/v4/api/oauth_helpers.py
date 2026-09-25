@@ -24,7 +24,7 @@ import os
 import re
 import secrets
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -60,7 +60,7 @@ def sign_state(user_id: str, server_name: str) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def verify_state(state: str) -> Tuple[str, str]:
+def verify_state(state: str) -> tuple[str, str]:
     """Verify a state token and return (user_id, server_name).
 
     Raises ValueError on invalid signature or expiration.
@@ -97,11 +97,11 @@ def build_redirect_uri() -> str:
 def build_authorize_url(
     authorize_url: str,
     client_id: str,
-    scopes: List[str],
+    scopes: list[str],
     state: str,
-    redirect_uri: Optional[str] = None,
-    code_challenge: Optional[str] = None,
-    resource: Optional[str] = None,
+    redirect_uri: str | None = None,
+    code_challenge: str | None = None,
+    resource: str | None = None,
 ) -> str:
     """Construct the provider authorize URL with required query params.
 
@@ -109,7 +109,7 @@ def build_authorize_url(
     spec); ``resource`` is the RFC 8707 audience binding the token to the MCP
     server so it cannot be replayed elsewhere.
     """
-    params: Dict[str, str] = {
+    params: dict[str, str] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri or build_redirect_uri(),
         "scope": " ".join(scopes) if scopes else "",
@@ -128,18 +128,18 @@ def build_authorize_url(
 async def exchange_code_for_token(
     token_url: str,
     client_id: str,
-    client_secret: Optional[str],
+    client_secret: str | None,
     code: str,
-    redirect_uri: Optional[str] = None,
-    code_verifier: Optional[str] = None,
-    resource: Optional[str] = None,
+    redirect_uri: str | None = None,
+    code_verifier: str | None = None,
+    resource: str | None = None,
 ) -> dict:
     """Exchange an authorization code for an access token.
 
     ``client_secret`` is optional: a dynamically registered public client
     authenticates with PKCE (``code_verifier``) only.
     """
-    data: Dict[str, str] = {
+    data: dict[str, str] = {
         "client_id": client_id,
         "code": code,
         "redirect_uri": redirect_uri or build_redirect_uri(),
@@ -164,7 +164,7 @@ async def exchange_code_for_token(
 # ---------------------------------------------------------------------------
 
 
-def generate_pkce() -> Tuple[str, str]:
+def generate_pkce() -> tuple[str, str]:
     """Return ``(code_verifier, code_challenge)`` per RFC 7636 (S256)."""
     verifier = secrets.token_urlsafe(64)[:128]
     digest = hashlib.sha256(verifier.encode()).digest()
@@ -182,7 +182,7 @@ def _origin(url: str) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 
-def parse_resource_metadata_hint(www_authenticate: Optional[str]) -> Optional[str]:
+def parse_resource_metadata_hint(www_authenticate: str | None) -> str | None:
     """Extract ``resource_metadata="..."`` from a 401 ``WWW-Authenticate``."""
     if not www_authenticate:
         return None
@@ -190,7 +190,7 @@ def parse_resource_metadata_hint(www_authenticate: Optional[str]) -> Optional[st
     return m.group(1) if m else None
 
 
-async def _get_json(client: httpx.AsyncClient, url: str) -> Optional[dict]:
+async def _get_json(client: httpx.AsyncClient, url: str) -> dict | None:
     try:
         r = await client.get(url, headers={"Accept": "application/json"})
         if r.status_code == 200:
@@ -201,8 +201,8 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> Optional[dict]:
 
 
 async def discover_oauth_metadata(
-    mcp_endpoint: str, resource_metadata_url: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    mcp_endpoint: str, resource_metadata_url: str | None = None
+) -> dict[str, Any] | None:
     """Discover the authorization server protecting ``mcp_endpoint``.
 
     Order (MCP authorization spec):
@@ -221,7 +221,7 @@ async def discover_oauth_metadata(
     origin = _origin(mcp_endpoint)
     path = urlparse(mcp_endpoint).path.rstrip("/")
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        prm: Optional[dict] = None
+        prm: dict | None = None
         prm_candidates = [u for u in [resource_metadata_url] if u]
         if path:
             prm_candidates.append(
@@ -234,9 +234,9 @@ async def discover_oauth_metadata(
                 break
             prm = None
 
-        as_candidates: List[str] = []
+        as_candidates: list[str] = []
         resource = mcp_endpoint
-        prm_scopes: List[str] = []
+        prm_scopes: list[str] = []
         if prm:
             as_candidates = [str(a).rstrip("/") for a in prm["authorization_servers"]]
             resource = prm.get("resource") or mcp_endpoint
@@ -280,15 +280,15 @@ async def discover_oauth_metadata(
 
 async def dynamic_client_register(
     registration_endpoint: str,
-    redirect_uri: Optional[str] = None,
+    redirect_uri: str | None = None,
     client_name: str = "MACAE",
-    scopes: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    scopes: list[str] | None = None,
+) -> dict[str, Any]:
     """RFC 7591: obtain a client_id (and maybe client_secret) without
     pre-registration. Requests a PKCE-capable code client; ``token_endpoint_
     auth_method=none`` asks for a public client, servers may still issue a
     secret — both are handled downstream."""
-    body: Dict[str, Any] = {
+    body: dict[str, Any] = {
         "client_name": client_name,
         "redirect_uris": [redirect_uri or build_redirect_uri()],
         "grant_types": ["authorization_code", "refresh_token"],
@@ -328,7 +328,7 @@ def _state_fingerprint(state: str) -> str:
 
 
 async def store_pending_oauth(
-    resolver, user_id: str, server_name: str, state: str, ctx: Dict[str, Any]
+    resolver, user_id: str, server_name: str, state: str, ctx: dict[str, Any]
 ) -> None:
     """Persist ``ctx`` (code_verifier, client_id, client_secret?, token_endpoint,
     resource, scopes) for the callback. Bound to ``state`` by fingerprint and
@@ -341,7 +341,7 @@ async def store_pending_oauth(
 
 async def load_pending_oauth(
     resolver, user_id: str, server_name: str, state: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Fetch the pending context for this (user, server) if it matches
     ``state`` and has not expired; else None (legacy env-var path applies)."""
     try:

@@ -2,7 +2,6 @@
 
 import json
 import logging
-from typing import Dict, Optional
 
 from azure.keyvault.secrets.aio import SecretClient
 
@@ -13,8 +12,8 @@ class CredentialResolver:
     """Resolves credentials from Key Vault at runtime."""
 
     def __init__(self):
-        self._kv_client: Optional[SecretClient] = None
-        self._cache: Dict[str, Dict[str, str]] = {}
+        self._kv_client: SecretClient | None = None
+        self._cache: dict[str, dict[str, str]] = {}
 
     async def initialize(self) -> None:
         """Pre-warm the Key Vault client during app startup."""
@@ -40,7 +39,7 @@ class CredentialResolver:
 
         return self._kv_client
 
-    async def resolve_by_secret_ref(self, secret_ref: str) -> Optional[Dict[str, str]]:
+    async def resolve_by_secret_ref(self, secret_ref: str) -> dict[str, str] | None:
         """Resolve credentials directly from a Key Vault secret URI.
 
         Args:
@@ -92,7 +91,7 @@ class CredentialResolver:
 
     async def resolve_credentials(
         self, project_id: str, provider_id: str
-    ) -> Optional[Dict[str, str]]:
+    ) -> dict[str, str] | None:
         """Resolve credentials for a project/provider from Key Vault.
 
         Args:
@@ -132,7 +131,7 @@ class CredentialResolver:
             return None
 
     async def store_credentials(
-        self, project_id: str, provider_id: str, credentials: Dict[str, str]
+        self, project_id: str, provider_id: str, credentials: dict[str, str]
     ) -> str:
         """Store credentials in Key Vault and return secret URI.
 

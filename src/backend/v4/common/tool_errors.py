@@ -25,9 +25,10 @@ import json
 import logging
 import random
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Awaitable, Callable, Optional, TypeVar
+from enum import StrEnum
+from typing import TypeVar
 
 from common.utils.event_utils import track_event_if_configured
 
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class ToolErrorCategory(str, Enum):
+class ToolErrorCategory(StrEnum):
     """Coarse buckets that map 1:1 to a recovery strategy and a user message."""
 
     TRANSIENT = "transient"  # retry with back-off
@@ -69,10 +70,10 @@ _USER_ACTION = frozenset({ToolErrorCategory.AUTH_CONSENT, ToolErrorCategory.PERM
 @dataclass(frozen=True)
 class ToolError:
     category: ToolErrorCategory
-    status_code: Optional[int]
+    status_code: int | None
     retryable: bool
     consent_required: bool
-    aadsts: Optional[str]
+    aadsts: str | None
     detail: str  # internal only — for logs/telemetry, never shown to the user
 
     @property
@@ -206,14 +207,14 @@ def _chain(exc: BaseException):
     """Yield exc and every linked cause/context, so a typed root exception is
     found even when an outer layer wrapped it in a plain Exception."""
     seen: set[int] = set()
-    cur: Optional[BaseException] = exc
+    cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         yield cur
         cur = cur.__cause__ or cur.__context__
 
 
-def _obj_status(exc: BaseException) -> Optional[int]:
+def _obj_status(exc: BaseException) -> int | None:
     """HTTP status read from the EXCEPTION OBJECT (or its .response), not a regex."""
     for obj in (exc, getattr(exc, "response", None)):
         if obj is None:
@@ -225,7 +226,7 @@ def _obj_status(exc: BaseException) -> Optional[int]:
     return None
 
 
-def _obj_retryable(exc: BaseException) -> Optional[bool]:
+def _obj_retryable(exc: BaseException) -> bool | None:
     """Honor an explicit SDK retry signal if the exception exposes one."""
     for attr in ("retryable", "should_retry", "is_retryable"):
         v = getattr(exc, attr, None)
@@ -246,7 +247,7 @@ _FOUNDRY_ERR_RE = re.compile(r"\{.*\}", re.S)
 _INNER_HTTP_RE = re.compile(r"HTTP status\s*(\d{3})|error[- ]code:\s*(\d{3})", re.I)
 
 
-def _foundry_tool_error(detail: str) -> Optional[dict]:
+def _foundry_tool_error(detail: str) -> dict | None:
     """Deserialize a server-side Foundry tool-error JSON embedded in the message.
     Returns the parsed dict (with ``code``/``tool``/``allow_retry``/``message``)
     or None when no JSON object is present."""
@@ -260,7 +261,7 @@ def _foundry_tool_error(detail: str) -> Optional[dict]:
     return obj if isinstance(obj, dict) else None
 
 
-def _inner_http_status(message: str) -> Optional[int]:
+def _inner_http_status(message: str) -> int | None:
     """Pull the inner HTTP status a tool reports inside its own message text."""
     m = _INNER_HTTP_RE.search(message or "")
     if not m:
@@ -269,7 +270,7 @@ def _inner_http_status(message: str) -> Optional[int]:
     return int(code) if code else None
 
 
-def _obj_error_code(exc: BaseException) -> Optional[str]:
+def _obj_error_code(exc: BaseException) -> str | None:
     """Structured error code from attributes: exc.error.code / exc.code / exc.type."""
     err = getattr(exc, "error", None)
     for src in (
@@ -308,9 +309,9 @@ def classify_tool_error(exc: BaseException) -> ToolError:
     exception type, and AAD ``error_codes`` — walking the cause chain so a wrapped
     typed exception is still found. The human-readable message is never parsed to
     decide the category (it is kept only as ``detail`` for display/telemetry)."""
-    status: Optional[int] = None
-    retryable_flag: Optional[bool] = None
-    error_code: Optional[str] = None
+    status: int | None = None
+    retryable_flag: bool | None = None
+    error_code: str | None = None
     aad: list[str] = []
     types: set[str] = set()
     for e in _chain(exc):
@@ -477,7 +478,7 @@ def safe_reason(detail: str, limit: int = 500) -> str:
     return d[:limit] + ("…" if len(d) > limit else "")
 
 
-def user_message_for(err: ToolError, tool: Optional[str] = None) -> str:
+def user_message_for(err: ToolError, tool: str | None = None) -> str:
     """Surface the real failure (tool, codes, actual reason) — not a fixed string."""
     bits = []
     if tool:

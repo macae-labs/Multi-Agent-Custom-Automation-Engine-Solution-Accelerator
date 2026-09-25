@@ -1,7 +1,6 @@
 """Database factory for creating database instances."""
 
 import logging
-from typing import Optional
 
 from common.config.app_config import config
 
@@ -12,7 +11,7 @@ from .database_base import DatabaseBase
 class DatabaseFactory:
     """Factory class for creating database instances."""
 
-    _instance: Optional[DatabaseBase] = None
+    _instance: DatabaseBase | None = None
     _logger = logging.getLogger(__name__)
 
     @staticmethod

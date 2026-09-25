@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from common.config.app_config import config
 
@@ -12,14 +12,14 @@ class MCPService(BaseAPIService):
     otherwise falls back to v4 MCP default in settings or localhost.
     """
 
-    def __init__(self, base_url: str, *, token: Optional[str] = None, **kwargs):
+    def __init__(self, base_url: str, *, token: str | None = None, **kwargs):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         super().__init__(base_url, default_headers=headers, **kwargs)
 
     @classmethod
-    def from_app_config(cls, **kwargs) -> "Optional[MCPService]":
+    def from_app_config(cls, **kwargs) -> "MCPService | None":
         # Prefer explicit MCP endpoint if defined; otherwise use the v4 settings default.
         endpoint = config.MCP_SERVER_ENDPOINT
         if not endpoint:
@@ -28,10 +28,10 @@ class MCPService(BaseAPIService):
         token = None  # add token retrieval if you enable auth later
         return cls(endpoint, token=token, **kwargs)
 
-    async def health(self) -> Dict[str, Any]:
+    async def health(self) -> dict[str, Any]:
         return await self.get_json("health")
 
     async def invoke_tool(
-        self, tool_name: str, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, tool_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         return await self.post_json(f"tools/{tool_name}", json=payload)

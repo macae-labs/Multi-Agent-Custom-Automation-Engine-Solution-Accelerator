@@ -1,11 +1,10 @@
 import uuid
-from enum import Enum
-from typing import List
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class PlanStatus(str, Enum):
+class PlanStatus(StrEnum):
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
@@ -34,6 +33,6 @@ class MPlan(BaseModel):
     plan_id: str = ""
     overall_status: PlanStatus = PlanStatus.CREATED
     user_request: str = ""
-    team: List[str] = []
+    team: list[str] = []
     facts: str = ""
-    steps: List[MStep] = []
+    steps: list[MStep] = []

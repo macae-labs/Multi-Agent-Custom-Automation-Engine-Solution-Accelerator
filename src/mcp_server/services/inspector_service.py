@@ -49,12 +49,8 @@ credential_resolver = None
 try:
     import importlib.util
 
-    _resolver_path = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "credential_resolver.py")
-    )
-    _spec = importlib.util.spec_from_file_location(
-        "credential_resolver", _resolver_path
-    )
+    _resolver_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "credential_resolver.py"))
+    _spec = importlib.util.spec_from_file_location("credential_resolver", _resolver_path)
     if _spec and _spec.loader:
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
@@ -75,10 +71,7 @@ def _redact(headers: dict[str, str]) -> dict[str, str]:
         "proxy-authorization",
     }
 
-    return {
-        k: ("***REDACTED***" if k.lower() in _SENSITIVE else v)
-        for k, v in headers.items()
-    }
+    return {k: ("***REDACTED***" if k.lower() in _SENSITIVE else v) for k, v in headers.items()}
 
 
 def _truncate(obj: Any, max_len: int) -> str:
@@ -112,8 +105,7 @@ class ToolSchemaCache:
         unchanged and the remote stays the authority.
         """
         stale = self._tool_index is None or (
-            tool_name not in self._tool_index
-            and time.time() - self._tool_index_at > self._REFRESH_INTERVAL
+            tool_name not in self._tool_index and time.time() - self._tool_index_at > self._REFRESH_INTERVAL
         )
         if stale:
             try:
@@ -121,9 +113,7 @@ class ToolSchemaCache:
             except Exception as exc:
                 logger.debug("tools/list for schema lookup failed: %s", exc)
                 return None
-            self._tool_index = {
-                t["name"]: t for t in tools if isinstance(t, dict) and t.get("name")
-            }
+            self._tool_index = {t["name"]: t for t in tools if isinstance(t, dict) and t.get("name")}
             self._tool_index_at = time.time()
         entry = (self._tool_index or {}).get(tool_name)
         schema = entry.get("inputSchema") if entry else None
@@ -173,18 +163,14 @@ class ExternalMCPSession(ToolSchemaCache):
                 secret_ref=self.secret_ref,
             )
         except Exception as exc:
-            logger.warning(
-                "[%s] per-call token resolution failed: %s", self.server_name, exc
-            )
+            logger.warning("[%s] per-call token resolution failed: %s", self.server_name, exc)
             return
         if not token:
             return
         # Same scheme rule as the connect paths: a secret that already carries
         # its scheme ("App <key>") is forwarded verbatim.
         _known_schemes = ("bearer ", "app ", "basic ", "token ")
-        self.extra_headers["Authorization"] = (
-            token if token.lower().startswith(_known_schemes) else f"Bearer {token}"
-        )
+        self.extra_headers["Authorization"] = token if token.lower().startswith(_known_schemes) else f"Bearer {token}"
 
     async def initialize(self) -> dict[str, Any]:
         """Perform MCP handshake with the external server."""
@@ -220,9 +206,7 @@ class ExternalMCPSession(ToolSchemaCache):
             logger.error(f"Failed to initialize connection to {self.server_url}: {e}")
             raise
 
-    async def _send_notification(
-        self, method: str, params: dict[str, Any] | None = None
-    ) -> None:
+    async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         """Send JSON-RPC 2.0 notification (no id, fire-and-forget)."""
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         headers = {
@@ -235,9 +219,7 @@ class ExternalMCPSession(ToolSchemaCache):
             headers.update(self.extra_headers)
 
         try:
-            async with self.client.stream(
-                "POST", self.server_url, json=payload, headers=headers
-            ) as response:
+            async with self.client.stream("POST", self.server_url, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 if "mcp-session-id" in response.headers:
                     self.session_id = response.headers["mcp-session-id"]
@@ -273,9 +255,7 @@ class ExternalMCPSession(ToolSchemaCache):
             headers.update(self.extra_headers)
 
         try:
-            async with self.client.stream(
-                "POST", self.server_url, json=payload, headers=headers
-            ) as response:
+            async with self.client.stream("POST", self.server_url, json=payload, headers=headers) as response:
                 # Read body BEFORE raise_for_status() to avoid stream closure
                 body = await response.aread()
 
@@ -289,9 +269,7 @@ class ExternalMCPSession(ToolSchemaCache):
                         method,
                         _redact(dict(response.request.headers)),
                         _truncate(payload, 2000),
-                        _redact(
-                            dict(response.headers)
-                        ),  # redacted to avoid leaking sensitive response headers
+                        _redact(dict(response.headers)),  # redacted to avoid leaking sensitive response headers
                         body.decode("utf-8", errors="replace")[:4000],
                     )
                     response.raise_for_status()
@@ -305,9 +283,7 @@ class ExternalMCPSession(ToolSchemaCache):
 
                 if "error" in result:
                     error = result["error"]
-                    raise Exception(
-                        f"JSON-RPC error {error.get('code')}: {error.get('message')}"
-                    )
+                    raise Exception(f"JSON-RPC error {error.get('code')}: {error.get('message')}")
                 return result.get("result", {})
 
         except httpx.HTTPStatusError:
@@ -350,13 +326,9 @@ class ExternalMCPSession(ToolSchemaCache):
         result = await self._call_jsonrpc("tools/list")
         return result.get("tools", [])
 
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call a tool on the external server."""
-        result = await self._call_jsonrpc(
-            "tools/call", {"name": tool_name, "arguments": arguments}
-        )
+        result = await self._call_jsonrpc("tools/call", {"name": tool_name, "arguments": arguments})
         return result
 
     async def list_resources(self) -> list[dict[str, Any]]:
@@ -535,9 +507,7 @@ class DirectStdioSession(ToolSchemaCache):
         if self._init_error:
             raise self._init_error
         if not self._initialized:
-            raise RuntimeError(
-                f"DirectStdioSession '{self.server_name}' failed to initialize"
-            )
+            raise RuntimeError(f"DirectStdioSession '{self.server_name}' failed to initialize")
 
         return self.server_info
 
@@ -556,20 +526,14 @@ class DirectStdioSession(ToolSchemaCache):
             )
         return tools
 
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if not self._session:
             raise RuntimeError("Not connected")
         result = await self._session.call_tool(tool_name, arguments=arguments)
         # Convert MCP SDK content items to dicts via model_dump()
         content = []
         for item in result.content:
-            d = (
-                item.model_dump()
-                if hasattr(item, "model_dump")
-                else {"type": "unknown", "data": str(item)}
-            )
+            d = item.model_dump() if hasattr(item, "model_dump") else {"type": "unknown", "data": str(item)}
             content.append(d)
         # Same shape as the JSON-RPC sessions: isError is part of the MCP
         # tool-result contract and the caller decides success on it.
@@ -622,7 +586,7 @@ class DirectStdioSession(ToolSchemaCache):
         if self._bg_task and not self._bg_task.done():
             try:
                 await asyncio.wait_for(self._bg_task, timeout=5.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
+            except (TimeoutError, asyncio.CancelledError, Exception) as e:
                 logger.debug(
                     "[DirectStdio] Background task cleanup for '%s': %s",
                     self.server_name,
@@ -715,12 +679,7 @@ class ProxiedStdioSession(ToolSchemaCache):
         """Open the SSE stream to the proxy's /stdio endpoint."""
         # Build query string
         args_encoded = quote(" ".join(self.args))
-        sse_url = (
-            f"{self.proxy_url}/stdio"
-            f"?transportType=stdio"
-            f"&command={quote(self.command)}"
-            f"&args={args_encoded}"
-        )
+        sse_url = f"{self.proxy_url}/stdio?transportType=stdio&command={quote(self.command)}&args={args_encoded}"
 
         # Add env vars as query params
         for k, v in self.env.items():
@@ -736,18 +695,13 @@ class ProxiedStdioSession(ToolSchemaCache):
         response = await self._sse_stream.__aenter__()
 
         # Start background reader
-        self._sse_task = asyncio.create_task(
-            self._read_sse(response), name=f"sse-{self.server_name}"
-        )
+        self._sse_task = asyncio.create_task(self._read_sse(response), name=f"sse-{self.server_name}")
 
         # Wait for the endpoint event
         try:
             await asyncio.wait_for(self._sse_connected.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            raise TimeoutError(
-                f"Timed out waiting for stdio server "
-                f"'{self.server_name}' to start via proxy"
-            )
+        except TimeoutError as err:
+            raise TimeoutError(f"Timed out waiting for stdio server '{self.server_name}' to start via proxy") from err
 
     async def _read_sse(self, response) -> None:
         """Background task: read SSE events and dispatch responses."""
@@ -790,9 +744,7 @@ class ProxiedStdioSession(ToolSchemaCache):
                         await self._response_queues[msg_id].put(parsed)
                     # Notifications — log and ignore
                     elif "method" in parsed and "id" not in parsed:
-                        logger.debug(
-                            f"[ProxiedStdio] Notification: {parsed.get('method')}"
-                        )
+                        logger.debug(f"[ProxiedStdio] Notification: {parsed.get('method')}")
 
                 event_type = None
 
@@ -806,9 +758,7 @@ class ProxiedStdioSession(ToolSchemaCache):
                 self._sse_dead.set()
                 self._initialized = False
                 for q in list(self._response_queues.values()):
-                    await q.put(
-                        {"error": {"code": -1, "message": "SSE connection lost"}}
-                    )
+                    await q.put({"error": {"code": -1, "message": "SSE connection lost"}})
                 logger.info(f"[ProxiedStdio] Session {self.server_name} marked dead")
 
     async def _send_request(
@@ -818,11 +768,7 @@ class ProxiedStdioSession(ToolSchemaCache):
         request_id: int | None = None,
     ) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response via SSE."""
-        needs_reconnect = (
-            not self._msg_url
-            or self._sse_dead.is_set()
-            or (self._sse_task and self._sse_task.done())
-        )
+        needs_reconnect = not self._msg_url or self._sse_dead.is_set() or (self._sse_task and self._sse_task.done())
         if needs_reconnect:
             logger.info(f"[ProxiedStdio] '{self.server_name}' reconnecting...")
             # Close stale stream and recreate client to avoid reuse of closed connections
@@ -868,17 +814,13 @@ class ProxiedStdioSession(ToolSchemaCache):
 
             if "error" in result:
                 error = result["error"]
-                raise Exception(
-                    f"JSON-RPC error {error.get('code')}: {error.get('message')}"
-                )
+                raise Exception(f"JSON-RPC error {error.get('code')}: {error.get('message')}")
             return result.get("result", {})
 
         finally:
             self._response_queues.pop(rid, None)
 
-    async def _send_notification(
-        self, method: str, params: dict[str, Any] | None = None
-    ) -> None:
+    async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         """Send a JSON-RPC notification (no id, no response expected)."""
         if not self._msg_url:
             raise RuntimeError("Not connected")
@@ -934,12 +876,8 @@ class ProxiedStdioSession(ToolSchemaCache):
         result = await self._send_request("tools/list")
         return result.get("tools", [])
 
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        return await self._send_request(
-            "tools/call", {"name": tool_name, "arguments": arguments}
-        )
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await self._send_request("tools/call", {"name": tool_name, "arguments": arguments})
 
     async def list_resources(self) -> list[dict[str, Any]]:
         if "resources" not in self.capabilities:
@@ -981,9 +919,7 @@ class ProxiedStdioSession(ToolSchemaCache):
 
 def _load_inspector_config() -> dict[str, Any]:
     """Load the mcp-inspector-config.json file if it exists."""
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "mcp-inspector-config.json"
-    )
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp-inspector-config.json")
     config_path = os.path.normpath(config_path)
     try:
         with open(config_path) as f:
@@ -1003,9 +939,7 @@ def _detect_inspector_token() -> str:
     """
     import re
 
-    log_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", ".inspector.log"
-    )
+    log_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".inspector.log")
     log_path = os.path.normpath(log_path)
     try:
         with open(log_path) as f:
@@ -1029,15 +963,11 @@ class RegistryBridge:
     """
 
     def __init__(self):
-        backend_url = os.environ.get(
-            "MACAE_BACKEND_URL", "http://localhost:8000"
-        ).rstrip("/")
+        backend_url = os.environ.get("MACAE_BACKEND_URL", "http://localhost:8000").rstrip("/")
         self.base = f"{backend_url}/api/v4/mcp/connections"
         self._client = httpx.AsyncClient(timeout=10.0)
 
-    def _user_headers(
-        self, user_id: str, bearer_token: str | None = None
-    ) -> dict[str, str]:
+    def _user_headers(self, user_id: str, bearer_token: str | None = None) -> dict[str, str]:
         """Build auth headers for requests on behalf of a user.
 
         Always forwards a Bearer: the one passed explicitly, else the one on
@@ -1078,9 +1008,7 @@ class RegistryBridge:
             logger.warning(f"Registry catalog fetch failed: {e}")
             return []
 
-    async def get_user_connection(
-        self, user_id: str, server_name: str
-    ) -> dict[str, Any] | None:
+    async def get_user_connection(self, user_id: str, server_name: str) -> dict[str, Any] | None:
         """Get a user's connection status for a specific server."""
         try:
             resp = await self._client.get(
@@ -1151,9 +1079,7 @@ class RegistryBridge:
             logger.warning(f"Server registration failed: {e}")
             return None, str(e)
 
-    async def activate_connection(
-        self, user_id: str, server_name: str, secret_ref: str = ""
-    ) -> dict[str, Any] | None:
+    async def activate_connection(self, user_id: str, server_name: str, secret_ref: str = "") -> dict[str, Any] | None:
         """Mark a user connection as active (after OAuth callback)."""
         try:
             body = {}
@@ -1170,9 +1096,7 @@ class RegistryBridge:
             logger.warning(f"Connection activation failed: {e}")
             return None
 
-    async def disconnect_user_connection(
-        self, user_id: str, server_name: str, bearer_token: str | None = None
-    ) -> bool:
+    async def disconnect_user_connection(self, user_id: str, server_name: str, bearer_token: str | None = None) -> bool:
         """Delete the user's connection record (DELETE {base}/user/{name}).
 
         Discards the stored credential (e.g. an OAuth token) so the next
@@ -1262,13 +1186,8 @@ def _pending_auth_response(
             f"OAuth flow is available. The user must add a token in Applications, "
             f"then call connect_from_registry again."
         )
-        summary = (
-            f"Server '{server_name}' requires {auth_type} auth. User must "
-            f"authorize first, then retry."
-        )
-    return format_success_response(
-        action="Authentication Required", details=details, summary=summary
-    )
+        summary = f"Server '{server_name}' requires {auth_type} auth. User must authorize first, then retry."
+    return format_success_response(action="Authentication Required", details=details, summary=summary)
 
 
 async def _oauth_discovery_pivot(
@@ -1307,9 +1226,7 @@ async def _oauth_discovery_pivot(
                 bearer_token=bearer_token,
             )
         except Exception as exc:  # best-effort; discovery still needs the entry
-            logger.debug(
-                "[oauth pivot] register '%s' best-effort: %s", server_name, exc
-            )
+            logger.debug("[oauth pivot] register '%s' best-effort: %s", server_name, exc)
     logger.info(
         "[oauth pivot] 401 from %s; requesting OAuth discovery (resource_metadata=%s)",
         endpoint,
@@ -1337,9 +1254,7 @@ def _caller_identity() -> tuple[str | None, str | None]:
     try:
         from fastmcp.server.dependencies import get_http_headers
 
-        headers = get_http_headers(
-            include={"x-ms-client-principal-id", "authorization"}
-        )
+        headers = get_http_headers(include={"x-ms-client-principal-id", "authorization"})
         principal = headers.get("x-ms-client-principal-id") or None
         auth = headers.get("authorization", "").strip()
         if auth.lower().startswith("bearer "):
@@ -1371,14 +1286,10 @@ class InspectorService(MCPToolBase):
         # Keyed by (user_id, server_name) for per-user session isolation.
         # user_id="" is the anonymous/shared namespace (dev / backward-compat).
         self._sessions: dict[tuple[str, str], ExternalMCPSession] = {}
-        self._proxied_sessions: dict[
-            tuple[str, str], ProxiedStdioSession | DirectStdioSession
-        ] = {}
+        self._proxied_sessions: dict[tuple[str, str], ProxiedStdioSession | DirectStdioSession] = {}
         self._registry = RegistryBridge()
         self._inspector_config = _load_inspector_config()
-        self._proxy_url = os.environ.get(
-            "MCP_INSPECTOR_PROXY_URL", "http://localhost:16277"
-        )
+        self._proxy_url = os.environ.get("MCP_INSPECTOR_PROXY_URL", "http://localhost:16277")
         # Token is resolved dynamically — see _get_proxy_token()
         self._cached_proxy_token: str = ""
 
@@ -1463,9 +1374,7 @@ class InspectorService(MCPToolBase):
                 _principal, _inbound_bearer = _caller_identity()
                 if not user_id and _principal:
                     user_id = _principal
-                    logger.info(
-                        f"[connect_mcp_server] Auto-detected user_id: {user_id}"
-                    )
+                    logger.info(f"[connect_mcp_server] Auto-detected user_id: {user_id}")
 
                 logger.info(
                     "[connect_mcp_server] called: server_url=%s, server_name=%s, user_id=%s, has_token=%s",
@@ -1490,15 +1399,10 @@ class InspectorService(MCPToolBase):
                     server_url = catalog_entry.get("endpoint", "")
                     if not server_url:
                         return format_error_response(
-                            error_message=(
-                                f"Server '{server_name}' found in "
-                                f"registry but has no endpoint."
-                            ),
+                            error_message=(f"Server '{server_name}' found in registry but has no endpoint."),
                             context="registry lookup",
                         )
-                    logger.info(
-                        f"Resolved '{server_name}' from registry -> {server_url}"
-                    )
+                    logger.info(f"Resolved '{server_name}' from registry -> {server_url}")
 
                 if not server_url:
                     return format_error_response(
@@ -1531,10 +1435,7 @@ class InspectorService(MCPToolBase):
                                 "connected_at": existing.connected_at,
                             },
                             summary=(
-                                f"Already connected to "
-                                f"'{server_name}'. Use "
-                                f"discover_mcp_capabilities "
-                                f"to explore."
+                                f"Already connected to '{server_name}'. Use discover_mcp_capabilities to explore."
                             ),
                         )
 
@@ -1553,13 +1454,8 @@ class InspectorService(MCPToolBase):
                     try:
                         _entry = await registry.lookup_server(server_name)
                         if _entry:
-                            _cred_source = (
-                                _entry.get("credential_source") or "static_secret"
-                            )
-                            _audience = (
-                                _entry.get("audience")
-                                or ((_entry.get("oauth_scopes") or [None])[0])
-                            )
+                            _cred_source = _entry.get("credential_source") or "static_secret"
+                            _audience = _entry.get("audience") or ((_entry.get("oauth_scopes") or [None])[0])
                     except Exception as e:
                         logger.debug(
                             "[connect_mcp_server] catalog lookup failed for '%s': %s",
@@ -1581,15 +1477,13 @@ class InspectorService(MCPToolBase):
                         )
                         if bearer:
                             logger.info(
-                                "[connect_mcp_server] Resolved managed-identity token "
-                                "for '%s' (audience=%s)",
+                                "[connect_mcp_server] Resolved managed-identity token for '%s' (audience=%s)",
                                 server_name,
                                 _audience,
                             )
                     except Exception as mi_err:
                         logger.error(
-                            "[connect_mcp_server] managed-identity mint failed for "
-                            "'%s': %s",
+                            "[connect_mcp_server] managed-identity mint failed for '%s': %s",
                             server_name,
                             mi_err,
                         )
@@ -1602,8 +1496,7 @@ class InspectorService(MCPToolBase):
                 if not bearer and _inbound_bearer:
                     bearer = _inbound_bearer
                     logger.info(
-                        "[connect_mcp_server] Forwarding inbound "
-                        "Authorization header to upstream '%s'",
+                        "[connect_mcp_server] Forwarding inbound Authorization header to upstream '%s'",
                         server_name,
                     )
 
@@ -1618,9 +1511,7 @@ class InspectorService(MCPToolBase):
 
                 if not bearer and lookup_user_id and server_name:
                     try:
-                        conn = await registry.get_user_connection(
-                            lookup_user_id, server_name
-                        )
+                        conn = await registry.get_user_connection(lookup_user_id, server_name)
                         if conn and conn.get("status") == "active":
                             secret_ref = conn.get("secret_ref", "")
                             if secret_ref and credential_resolver:
@@ -1641,9 +1532,7 @@ class InspectorService(MCPToolBase):
                                         f"(source={_cred_source}, user={lookup_user_id})"
                                     )
                     except Exception as kv_err:
-                        logger.debug(
-                            f"[connect_mcp_server] Could not resolve token from registry: {kv_err}"
-                        )
+                        logger.debug(f"[connect_mcp_server] Could not resolve token from registry: {kv_err}")
 
                 if bearer:
                     # Standard servers take "Bearer <token>". Some (Infobip:
@@ -1652,9 +1541,7 @@ class InspectorService(MCPToolBase):
                     # double-wrapping ("Bearer App <key>" → 401).
                     _known_schemes = ("bearer ", "app ", "basic ", "token ")
                     session.extra_headers["Authorization"] = (
-                        bearer
-                        if bearer.lower().startswith(_known_schemes)
-                        else f"Bearer {bearer}"
+                        bearer if bearer.lower().startswith(_known_schemes) else f"Bearer {bearer}"
                     )
 
                 try:
@@ -1685,9 +1572,7 @@ class InspectorService(MCPToolBase):
                             context=f"connecting to MCP server at {server_url}",
                         )
                     await session.close()
-                    return _pending_auth_response(
-                        server_name, server_url, "oauth2", user_id, {}, disc
-                    )
+                    return _pending_auth_response(server_name, server_url, "oauth2", user_id, {}, disc)
 
                 sessions[_key] = session
 
@@ -1840,10 +1725,7 @@ class InspectorService(MCPToolBase):
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
-                        error_message=(
-                            f"Server '{server_name}' not connected. "
-                            f"Available: {available or 'none'}."
-                        ),
+                        error_message=(f"Server '{server_name}' not connected. Available: {available or 'none'}."),
                         context="calling external tool",
                     )
 
@@ -1878,8 +1760,7 @@ class InspectorService(MCPToolBase):
                     args, renamed = conformed.arguments, conformed.renamed
                     if renamed:
                         logger.info(
-                            "[call_external_tool] %s/%s: arguments conformed to "
-                            "inputSchema: %s",
+                            "[call_external_tool] %s/%s: arguments conformed to inputSchema: %s",
                             server_name,
                             target_tool,
                             renamed,
@@ -1888,14 +1769,9 @@ class InspectorService(MCPToolBase):
                     if not check.ok:
                         problems = []
                         if check.missing_required:
-                            problems.append(
-                                f"missing required {check.missing_required}"
-                            )
+                            problems.append(f"missing required {check.missing_required}")
                         if check.unknown:
-                            problems.append(
-                                f"unknown {check.unknown} "
-                                f"(schema declares additionalProperties: false)"
-                            )
+                            problems.append(f"unknown {check.unknown} (schema declares additionalProperties: false)")
                         return format_error_response(
                             error_message=(
                                 f"Arguments for '{target_tool}' on '{server_name}' "
@@ -1925,16 +1801,12 @@ class InspectorService(MCPToolBase):
                 # the failure from the model.
                 if result.get("isError"):
                     schema_hint = (
-                        f" inputSchema: "
-                        f"{_truncate(json.dumps(schema, ensure_ascii=False), 2000)}"
+                        f" inputSchema: {_truncate(json.dumps(schema, ensure_ascii=False), 2000)}"
                         if schema is not None
                         else ""
                     )
                     return format_error_response(
-                        error_message=(
-                            text_content
-                            or f"'{target_tool}' returned isError with no message."
-                        ),
+                        error_message=(text_content or f"'{target_tool}' returned isError with no message."),
                         context=(
                             f"'{target_tool}' on '{server_name}' reported an error "
                             f"for arguments {_truncate(json.dumps(args), 1000)}."
@@ -1966,9 +1838,7 @@ class InspectorService(MCPToolBase):
                 )
 
         @mcp.tool(tags={self.domain.value})
-        async def read_external_resource(
-            server_name: str, resource_uri: str, user_id: str = ""
-        ) -> str:
+        async def read_external_resource(server_name: str, resource_uri: str, user_id: str = "") -> str:
             """
             Read a resource from a connected external MCP server.
 
@@ -1985,10 +1855,7 @@ class InspectorService(MCPToolBase):
                 if server_name not in all_sess:
                     available = list(all_sess.keys())
                     return format_error_response(
-                        error_message=(
-                            f"Server '{server_name}' not connected. "
-                            f"Available: {available or 'none'}."
-                        ),
+                        error_message=(f"Server '{server_name}' not connected. Available: {available or 'none'}."),
                         context="reading external resource",
                     )
 
@@ -2012,16 +1879,11 @@ class InspectorService(MCPToolBase):
                         "server_name": server_name,
                         "resource_uri": resource_uri,
                         "mimeType": mime_type,
-                        "content": (
-                            content_text[:500]
-                            if len(content_text) > 500
-                            else content_text
-                        ),
+                        "content": (content_text[:500] if len(content_text) > 500 else content_text),
                         "content_length": len(content_text),
                     },
                     summary=(
-                        f"Resource '{resource_uri}' from '{server_name}' "
-                        f"({mime_type}, {len(content_text)} bytes)."
+                        f"Resource '{resource_uri}' from '{server_name}' ({mime_type}, {len(content_text)} bytes)."
                     ),
                 )
 
@@ -2085,14 +1947,8 @@ class InspectorService(MCPToolBase):
                 inspector_servers = []
                 cfg_servers = inspector_config.get("mcpServers", {})
                 # Build set of connected server names for the current user scope
-                all_connected = {
-                    sname
-                    for (uid, sname) in sessions.keys()
-                    if not user_id or uid == user_id
-                } | {
-                    sname
-                    for (uid, sname) in proxied_sessions.keys()
-                    if not user_id or uid == user_id
+                all_connected = {sname for (uid, sname) in sessions.keys() if not user_id or uid == user_id} | {
+                    sname for (uid, sname) in proxied_sessions.keys() if not user_id or uid == user_id
                 }
                 for sname, sdef in cfg_servers.items():
                     transport = "streamable-http" if sdef.get("url") else "stdio"
@@ -2151,21 +2007,11 @@ class InspectorService(MCPToolBase):
 
                 parts = []
                 if total_active:
-                    all_names = [
-                        sname
-                        for (uid, sname) in sessions.keys()
-                        if not user_id or uid == user_id
-                    ] + [
-                        sname
-                        for (uid, sname) in proxied_sessions.keys()
-                        if not user_id or uid == user_id
+                    all_names = [sname for (uid, sname) in sessions.keys() if not user_id or uid == user_id] + [
+                        sname for (uid, sname) in proxied_sessions.keys() if not user_id or uid == user_id
                     ]
-                    parts.append(
-                        f"{total_active} active session(s): {', '.join(all_names)}"
-                    )
-                not_connected = [
-                    s["server_name"] for s in inspector_servers if not s["is_connected"]
-                ]
+                    parts.append(f"{total_active} active session(s): {', '.join(all_names)}")
+                not_connected = [s["server_name"] for s in inspector_servers if not s["is_connected"]]
                 if not_connected:
                     parts.append(
                         f"{len(not_connected)} available in inspector "
@@ -2303,8 +2149,7 @@ class InspectorService(MCPToolBase):
                         entry["auth_type"] = _norm
                     else:
                         logger.info(
-                            "[register_mcp_server] ignoring unknown auth_type=%r; "
-                            "backend will derive it",
+                            "[register_mcp_server] ignoring unknown auth_type=%r; backend will derive it",
                             auth_type,
                         )
                 if credential_source:
@@ -2312,14 +2157,11 @@ class InspectorService(MCPToolBase):
                 if audience:
                     entry["audience"] = audience
 
-                result, err = await registry.register_server(
-                    user_id, entry, bearer_token=_bearer_token
-                )
+                result, err = await registry.register_server(user_id, entry, bearer_token=_bearer_token)
                 if result is None:
                     return format_error_response(
                         error_message=(
-                            f"Failed to register '{name}': {err}. "
-                            "If it already exists, call connect_from_registry."
+                            f"Failed to register '{name}': {err}. If it already exists, call connect_from_registry."
                         ),
                         context="register_mcp_server",
                     )
@@ -2344,14 +2186,10 @@ class InspectorService(MCPToolBase):
                     ),
                 )
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="register_mcp_server"
-                )
+                return format_error_response(error_message=str(e), context="register_mcp_server")
 
         @mcp.tool(tags={self.domain.value})
-        async def connect_from_registry(
-            server_name: str, user_id: str = "sample_user"
-        ) -> str:
+        async def connect_from_registry(server_name: str, user_id: str = "sample_user") -> str:
             """
             Connect to an MCP server from the registry with
             user authorization check.
@@ -2383,9 +2221,7 @@ class InspectorService(MCPToolBase):
                     available = [s.get("server_name") for s in catalog]
                     return format_error_response(
                         error_message=(
-                            f"Server '{server_name}' not found in "
-                            f"registry. Available: "
-                            f"{available or 'none'}."
+                            f"Server '{server_name}' not found in registry. Available: {available or 'none'}."
                         ),
                         context="registry lookup",
                     )
@@ -2396,9 +2232,7 @@ class InspectorService(MCPToolBase):
                 # 2. Initiate / check user connection — forward the caller's
                 # Bearer token so the backend resolves the real user identity
                 # instead of falling back to sample_user.
-                conn_result = await registry.initiate_connection(
-                    user_id, server_name, bearer_token=_bearer_token
-                )
+                conn_result = await registry.initiate_connection(user_id, server_name, bearer_token=_bearer_token)
                 if not conn_result:
                     return format_error_response(
                         error_message=(
@@ -2421,16 +2255,12 @@ class InspectorService(MCPToolBase):
 
                 # 3. Handle pending auth
                 if status == "pending_auth":
-                    return _pending_auth_response(
-                        server_name, endpoint, auth_type, user_id, server, conn_result
-                    )
+                    return _pending_auth_response(server_name, endpoint, auth_type, user_id, server, conn_result)
 
                 # 4. Active — connect to endpoint
                 if not endpoint:
                     return format_error_response(
-                        error_message=(
-                            f"Server '{server_name}' has no endpoint in the registry."
-                        ),
+                        error_message=(f"Server '{server_name}' has no endpoint in the registry."),
                         context="endpoint resolution",
                     )
 
@@ -2445,10 +2275,7 @@ class InspectorService(MCPToolBase):
                 _secret_ref: str = ""
                 if auth_type != "none" and status == "active" and credential_resolver:
                     _cred_source = server.get("credential_source") or "static_secret"
-                    _audience = (
-                        server.get("audience")
-                        or ((server.get("oauth_scopes") or [None])[0])
-                    )
+                    _audience = server.get("audience") or ((server.get("oauth_scopes") or [None])[0])
                     _secret_ref = connection.get("secret_ref", "")
                     try:
                         bearer_token = await credential_resolver.resolve_valid_token(
@@ -2468,19 +2295,14 @@ class InspectorService(MCPToolBase):
                                 else f"Bearer {bearer_token}"
                             )
                             logger.info(
-                                f"[connect_from_registry] Resolved token for "
-                                f"'{server_name}' (source={_cred_source})"
+                                f"[connect_from_registry] Resolved token for '{server_name}' (source={_cred_source})"
                             )
                         else:
                             logger.warning(
-                                f"[connect_from_registry] No token resolved for "
-                                f"'{server_name}' (source={_cred_source})"
+                                f"[connect_from_registry] No token resolved for '{server_name}' (source={_cred_source})"
                             )
                     except Exception as kv_err:
-                        logger.error(
-                            f"[connect_from_registry] Token resolution failed for "
-                            f"'{server_name}': {kv_err}"
-                        )
+                        logger.error(f"[connect_from_registry] Token resolution failed for '{server_name}': {kv_err}")
 
                 # Already connected?
                 _reg_key = (user_id, server_name)
@@ -2505,12 +2327,7 @@ class InspectorService(MCPToolBase):
                                 "user_id": user_id,
                                 "registry_status": status,
                             },
-                            summary=(
-                                f"Already connected to "
-                                f"'{server_name}' "
-                                f"(auth={auth_type}, "
-                                f"status={status})."
-                            ),
+                            summary=(f"Already connected to '{server_name}' (auth={auth_type}, status={status})."),
                         )
 
                 # Create session with optional auth headers
@@ -2546,9 +2363,7 @@ class InspectorService(MCPToolBase):
                             ),
                             context=f"connecting to '{server_name}' from registry",
                         )
-                    return _pending_auth_response(
-                        server_name, endpoint, "oauth2", user_id, server, disc
-                    )
+                    return _pending_auth_response(server_name, endpoint, "oauth2", user_id, server, disc)
                 sessions[_reg_key] = session
 
                 return format_success_response(
@@ -2612,9 +2427,7 @@ class InspectorService(MCPToolBase):
 
                 # 1. Drop the live in-memory session, if this replica holds one.
                 _dis_key = (user_id, server_name)
-                session = sessions.pop(_dis_key, None) or proxied_sessions.pop(
-                    _dis_key, None
-                )
+                session = sessions.pop(_dis_key, None) or proxied_sessions.pop(_dis_key, None)
                 if session is not None:
                     try:
                         await session.close()
@@ -2624,9 +2437,7 @@ class InspectorService(MCPToolBase):
 
                 # 2. Delete the stored user connection (and its credential) so a
                 #    re-connect triggers a fresh sign-in instead of reusing it.
-                if await registry.disconnect_user_connection(
-                    user_id, server_name, bearer_token=_bearer
-                ):
+                if await registry.disconnect_user_connection(user_id, server_name, bearer_token=_bearer):
                     cleared.append("stored connection/credential")
 
                 if not cleared:
@@ -2643,9 +2454,7 @@ class InspectorService(MCPToolBase):
                         "server_name": server_name,
                         "user_id": user_id,
                         "cleared": cleared,
-                        "next_step": (
-                            f"connect_from_registry('{server_name}') to sign in again"
-                        ),
+                        "next_step": (f"connect_from_registry('{server_name}') to sign in again"),
                     },
                     summary=(
                         f"Disconnected from '{server_name}' ({', '.join(cleared)}). "
@@ -2706,10 +2515,7 @@ class InspectorService(MCPToolBase):
                             ),
                         )
                     # Dead session — clean up and reconnect
-                    logger.info(
-                        f"[connect_stdio_server] Stale session "
-                        f"'{server_name}' — reconnecting"
-                    )
+                    logger.info(f"[connect_stdio_server] Stale session '{server_name}' — reconnecting")
                     try:
                         await existing.close()
                     except Exception:
@@ -2762,11 +2568,7 @@ class InspectorService(MCPToolBase):
                             if credential_resolver:
                                 try:
                                     secret_name = env_key.lower().replace("_", "-")
-                                    creds = (
-                                        await credential_resolver.resolve_by_secret_ref(
-                                            secret_name
-                                        )
-                                    )
+                                    creds = await credential_resolver.resolve_by_secret_ref(secret_name)
                                     if creds:
                                         resolved = (
                                             creds.get("token")
@@ -2781,10 +2583,7 @@ class InspectorService(MCPToolBase):
                                                 f"for '{server_name}' from Key Vault"
                                             )
                                 except Exception as kv_err:
-                                    logger.debug(
-                                        f"[connect_stdio_server] KV lookup failed "
-                                        f"for '{env_key}': {kv_err}"
-                                    )
+                                    logger.debug(f"[connect_stdio_server] KV lookup failed for '{env_key}': {kv_err}")
 
                         if not resolved:
                             return format_error_response(

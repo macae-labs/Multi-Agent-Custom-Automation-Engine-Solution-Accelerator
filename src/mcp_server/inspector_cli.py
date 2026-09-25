@@ -59,7 +59,7 @@ import logging
 import sys
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 
@@ -99,7 +99,7 @@ class MCPClient:
     def __init__(
         self,
         server_url: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         timeout: float = 30.0,
         transport: str = "streamable-http",
     ):
@@ -108,12 +108,12 @@ class MCPClient:
         self.timeout = timeout
         self.extra_headers = headers or {}
         self.client = httpx.AsyncClient(timeout=timeout)
-        self.session_id: Optional[str] = None
-        self.server_info: Dict[str, Any] = {}
+        self.session_id: str | None = None
+        self.server_info: dict[str, Any] = {}
         self.protocol_version: str = ""
         self._initialized = False
 
-    async def initialize(self) -> Dict[str, Any]:
+    async def initialize(self) -> dict[str, Any]:
         """Perform MCP initialize + initialized handshake."""
         result = await self._call(
             "initialize",
@@ -135,14 +135,12 @@ class MCPClient:
         self._initialized = True
         return result
 
-    async def _notify(self, method: str, params: Optional[Dict] = None) -> None:
+    async def _notify(self, method: str, params: dict | None = None) -> None:
         """Send JSON-RPC notification (no id, no response expected)."""
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         headers = self._build_headers()
         try:
-            async with self.client.stream(
-                "POST", self.server_url, json=payload, headers=headers
-            ) as resp:
+            async with self.client.stream("POST", self.server_url, json=payload, headers=headers) as resp:
                 resp.raise_for_status()
                 if "mcp-session-id" in resp.headers:
                     self.session_id = resp.headers["mcp-session-id"]
@@ -152,9 +150,9 @@ class MCPClient:
     async def _call(
         self,
         method: str,
-        params: Optional[Dict] = None,
+        params: dict | None = None,
         skip_init_check: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call a JSON-RPC method and return the result."""
         if not skip_init_check and not self._initialized:
             await self.initialize()
@@ -168,9 +166,7 @@ class MCPClient:
         }
         headers = self._build_headers()
 
-        async with self.client.stream(
-            "POST", self.server_url, json=payload, headers=headers
-        ) as resp:
+        async with self.client.stream("POST", self.server_url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             if "mcp-session-id" in resp.headers:
                 self.session_id = resp.headers["mcp-session-id"]
@@ -179,12 +175,10 @@ class MCPClient:
 
         if "error" in result:
             err = result["error"]
-            raise RuntimeError(
-                f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}"
-            )
+            raise RuntimeError(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
         return result.get("result", {})
 
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -195,7 +189,7 @@ class MCPClient:
         return headers
 
     @staticmethod
-    def _parse_response(body: str) -> Dict[str, Any]:
+    def _parse_response(body: str) -> dict[str, Any]:
         """Parse SSE-wrapped or plain JSON-RPC response."""
         for event in body.split("\n\n"):
             data_lines = []
@@ -225,21 +219,21 @@ class MCPClient:
         await self._call("ping")
         return (time.monotonic() - t0) * 1000
 
-    async def list_tools(self) -> List[Dict]:
+    async def list_tools(self) -> list[dict]:
         result = await self._call("tools/list")
         return result.get("tools", [])
 
-    async def call_tool(self, name: str, arguments: Dict) -> Dict:
+    async def call_tool(self, name: str, arguments: dict) -> dict:
         return await self._call("tools/call", {"name": name, "arguments": arguments})
 
-    async def list_resources(self) -> List[Dict]:
+    async def list_resources(self) -> list[dict]:
         result = await self._call("resources/list")
         return result.get("resources", [])
 
-    async def read_resource(self, uri: str) -> Dict:
+    async def read_resource(self, uri: str) -> dict:
         return await self._call("resources/read", {"uri": uri})
 
-    async def list_prompts(self) -> List[Dict]:
+    async def list_prompts(self) -> list[dict]:
         result = await self._call("prompts/list")
         return result.get("prompts", [])
 
@@ -511,14 +505,12 @@ async def cmd_capabilities(client: MCPClient, args) -> int:
 
 async def cmd_validate(client: MCPClient, args) -> int:
     """Run full compatibility validation against a server."""
-    checks: List[Tuple[str, bool, str]] = []
+    checks: list[tuple[str, bool, str]] = []
     t_start = time.monotonic()
 
     if not args.json:
         srv = client.server_info
-        print(
-            f"\n  {BOLD}Validating:{RESET} {srv.get('name', '?')} v{srv.get('version', '?')}"
-        )
+        print(f"\n  {BOLD}Validating:{RESET} {srv.get('name', '?')} v{srv.get('version', '?')}")
         print(f"  {BOLD}Endpoint:{RESET}   {client.server_url}")
         print(f"  {'─' * 56}")
 
@@ -565,9 +557,7 @@ async def cmd_validate(client: MCPClient, args) -> int:
         if schema_errors == 0:
             checks.append(("tool schemas", True, f"all {len(tools)} valid"))
         else:
-            checks.append(
-                ("tool schemas", False, f"{schema_errors}/{len(tools)} invalid")
-            )
+            checks.append(("tool schemas", False, f"{schema_errors}/{len(tools)} invalid"))
 
     # 6. Call first tool with empty args (validation test)
     if tools:
@@ -607,9 +597,7 @@ async def cmd_validate(client: MCPClient, args) -> int:
                     "server_info": client.server_info,
                     "url": client.server_url,
                     "protocol_version": client.protocol_version,
-                    "checks": [
-                        {"name": c[0], "passed": c[1], "detail": c[2]} for c in checks
-                    ],
+                    "checks": [{"name": c[0], "passed": c[1], "detail": c[2]} for c in checks],
                     "summary": {
                         "total": len(checks),
                         "passed": sum(1 for c in checks if c[1]),
@@ -629,14 +617,8 @@ async def cmd_validate(client: MCPClient, args) -> int:
         passed = sum(1 for c in checks if c[1])
         failed = sum(1 for c in checks if not c[1])
         print(f"\n  {'─' * 56}")
-        status = (
-            f"{GREEN}ALL PASSED{RESET}"
-            if failed == 0
-            else f"{RED}{failed} FAILED{RESET}"
-        )
-        print(
-            f"  {BOLD}{passed}/{len(checks)} checks passed{RESET} — {status} ({total_time:.0f}ms)\n"
-        )
+        status = f"{GREEN}ALL PASSED{RESET}" if failed == 0 else f"{RED}{failed} FAILED{RESET}"
+        print(f"  {BOLD}{passed}/{len(checks)} checks passed{RESET} — {status} ({total_time:.0f}ms)\n")
 
     return 1 if any(not c[1] for c in checks) else 0
 
@@ -808,9 +790,7 @@ async def run(args) -> int:
         if args.json:
             print(json.dumps({"error": f"Timeout after {args.timeout}s"}))
         else:
-            print(
-                f"\r  {CROSS} {RED}Timeout{RESET} after {args.timeout}s connecting to {args.url}\n"
-            )
+            print(f"\r  {CROSS} {RED}Timeout{RESET} after {args.timeout}s connecting to {args.url}\n")
         return 1
     except Exception as e:
         if args.json:

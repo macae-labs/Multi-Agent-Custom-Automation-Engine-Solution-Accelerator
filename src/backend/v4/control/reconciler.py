@@ -23,9 +23,10 @@ apila ``incident_expiry`` por vencimiento (``rearm_due``).
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from time import monotonic
-from typing import Any, Callable, Optional
+from typing import Any
 
 from agent_framework import Content
 from agent_framework_orchestrations._magentic import MagenticPlanReviewResponse
@@ -67,7 +68,7 @@ REGISTRY_SCAN_INTERVAL_SECONDS = 300.0
 
 async def find_parked_plan(
     memory_store: DatabaseBase, *, kind: str, request_id: str
-) -> Optional[Plan]:
+) -> Plan | None:
     for plan in await memory_store.get_all_plans():
         waiting_for = plan.waiting_for or {}
         if (
@@ -90,9 +91,9 @@ def _response_for(kind: str, payload: dict[str, Any]) -> Any:
 async def apply_event(
     event: dict[str, Any],
     *,
-    user_access_token: Optional[str] = None,
-    store: Optional[EventStore] = None,
-    execute: Optional[Executor] = None,
+    user_access_token: str | None = None,
+    store: EventStore | None = None,
+    execute: Executor | None = None,
 ) -> None:
     """Una transición por evento. Lanza ``TransitionError`` si no puede aún."""
     kind, request_id, payload = event["kind"], event["identity"], event["payload"]
@@ -149,10 +150,10 @@ async def apply_event(
 class Reconciler:
     def __init__(
         self,
-        store: Optional[EventStore] = None,
+        store: EventStore | None = None,
         *,
-        registry: Optional[Registry] = None,
-        execute: Optional[Executor] = None,
+        registry: Registry | None = None,
+        execute: Executor | None = None,
         now: Callable[[], datetime] = utcnow,
     ) -> None:
         self._store = store
@@ -168,16 +169,16 @@ class Reconciler:
         # Tokens OBO por evento, sólo en proceso: el documento nunca los lleva.
         # Tras un reinicio la transición corre sin token de usuario.
         self._tokens: dict[str, str] = {}
-        self._task: Optional[asyncio.Task[None]] = None
+        self._task: asyncio.Task[None] | None = None
         self._stopping = False
-        self._last_seen_holder: Optional[str] = None
+        self._last_seen_holder: str | None = None
 
     @property
     def store(self) -> EventStore:
         return self._store if self._store is not None else get_event_store()
 
     def wake(
-        self, event_id: Optional[str] = None, user_access_token: Optional[str] = None
+        self, event_id: str | None = None, user_access_token: str | None = None
     ) -> None:
         if event_id and user_access_token:
             self._tokens[event_id] = user_access_token
@@ -227,7 +228,7 @@ class Reconciler:
                 logger.error("Reconciler iteration failed: %s", ex, exc_info=True)
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=POLL_INTERVAL_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._wake.clear()
 
@@ -259,7 +260,7 @@ class Reconciler:
             logger.warning("Lease release failed (non-fatal): %s", ex)
 
 
-_reconciler: Optional[Reconciler] = None
+_reconciler: Reconciler | None = None
 
 
 def get_reconciler() -> Reconciler:
@@ -269,6 +270,6 @@ def get_reconciler() -> Reconciler:
     return _reconciler
 
 
-def set_reconciler(reconciler: Optional[Reconciler]) -> None:
+def set_reconciler(reconciler: Reconciler | None) -> None:
     global _reconciler
     _reconciler = reconciler

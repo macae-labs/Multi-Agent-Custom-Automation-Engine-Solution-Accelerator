@@ -10,7 +10,7 @@ to avoid storing connection strings.
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import azure.functions as func
 import httpx
@@ -18,18 +18,18 @@ import httpx
 app = func.FunctionApp()
 
 
-def _extract_actions(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _extract_actions(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return payload.get("recommended_actions", []) or []
 
 
-async def _forward_to_webhook(payload: Dict[str, Any]) -> bool:
+async def _forward_to_webhook(payload: dict[str, Any]) -> bool:
     """Forward decision payload to external executor if configured."""
     webhook_url = os.getenv("STRATEGIC_ACTION_WEBHOOK_URL", "").strip()
     if not webhook_url:
         return False
 
     token = os.getenv("STRATEGIC_ACTION_WEBHOOK_BEARER_TOKEN", "").strip()
-    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
@@ -55,7 +55,7 @@ async def process_strategic_decision(message: func.ServiceBusMessage) -> None:
     """
     try:
         body = message.get_body().decode("utf-8")
-        payload: Dict[str, Any] = json.loads(body)
+        payload: dict[str, Any] = json.loads(body)
     except Exception as exc:
         logging.exception("Failed to parse Service Bus message: %s", exc)
         raise

@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 from contextlib import AsyncExitStack
-from typing import Annotated, Any, Optional, cast
+from typing import Annotated, Any, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, WorkflowEvent
 from azure.core.exceptions import ResourceNotFoundError
@@ -346,7 +346,7 @@ async def start_comms(
                     logging.debug(
                         f"Received WebSocket message from {user_id}: {message}"
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Ignore timeouts to keep the WebSocket connection open, but avoid a tight loop.
                     logging.debug(
                         f"WebSocket receive timeout for user {user_id}, process {process_id}"
@@ -576,7 +576,7 @@ async def _team_from_router_roster(
     description: str,
     user_id: str,
     memory_store: Any,
-    workspace_id: Optional[str] = None,
+    workspace_id: str | None = None,
     with_proxy: bool = True,
     persist: bool = True,
 ) -> TeamConfiguration:
@@ -751,13 +751,13 @@ async def _create_plan_and_start(
     background_tasks: BackgroundTasks,
     user_id: str,
     tenant_id: str,
-    user_access_token: Optional[str],
+    user_access_token: str | None,
     description: str,
     session_id: str,
-    history: Optional[list] = None,
+    history: list | None = None,
     persist_user_task: bool = False,
-    composed_agents: Optional[list] = None,
-    workspace_id: Optional[str] = None,
+    composed_agents: list | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     """Create a Plan and kick off the Magentic orchestration as a BackgroundTask.
 
@@ -776,7 +776,7 @@ async def _create_plan_and_start(
         memory_store = await DatabaseFactory.get_database(
             user_id=user_id, tenant_id=tenant_id
         )
-        team: Optional[TeamConfiguration] = None
+        team: TeamConfiguration | None = None
         if composed_agents:
             try:
                 team = await _team_from_router_roster(
@@ -973,7 +973,7 @@ async def _get_previous_intent(
     chat_svc: Any,
     session_id: str,
     user_id: str,
-) -> Optional[str]:
+) -> str | None:
     """Return the intent of the last assistant message in this session.
 
     Reads exclusively from chat_cosmos — single source of truth.
@@ -1142,7 +1142,7 @@ async def chat_upload_file(
             return {"file_id": uploaded.id, "filename": filename, "size": len(contents)}
     except Exception as ex:
         logger.error("File upload to Foundry failed: %s", ex)
-        raise HTTPException(status_code=500, detail=f"File upload failed: {ex}")
+        raise HTTPException(status_code=500, detail=f"File upload failed: {ex}") from ex
 
 
 # ── Generated-file persistence plumbing ──────────────────────────────
@@ -1369,7 +1369,9 @@ async def chat_download_file(
         logger.error(
             "File download from Foundry failed: file_id=%s error=%s", file_id, ex
         )
-        raise HTTPException(status_code=500, detail=f"File download failed: {ex}")
+        raise HTTPException(
+            status_code=500, detail=f"File download failed: {ex}"
+        ) from ex
 
 
 @app_v4.post("/chat/message")
@@ -1644,7 +1646,7 @@ def _build_agent_description(agent: Any, config: Any) -> str:
     return description or "(no description)"
 
 
-def _match_agent_by_name(chosen: str, agents: list[Any]) -> Optional[Any]:
+def _match_agent_by_name(chosen: str, agents: list[Any]) -> Any | None:
     """Fuzzy-match LLM response to an agent.
 
     Tries (in order):
@@ -1724,7 +1726,7 @@ async def _select_team_agent(message: str, team: Any, agents: list[Any]) -> Any:
         "Agent name:"
     )
 
-    chosen_agent: Optional[Any] = None
+    chosen_agent: Any | None = None
     try:
         project = app_config.get_ai_project_client()
         try:
@@ -1802,7 +1804,7 @@ def _build_direct_chat_prompt(message: str, team: Any, selected_agent: Any) -> s
     )
 
 
-def _get_m_plan_id_from_plan(plan: Any) -> Optional[str]:
+def _get_m_plan_id_from_plan(plan: Any) -> str | None:
     m_plan = getattr(plan, "m_plan", None)
     if isinstance(m_plan, dict):
         return m_plan.get("id") or m_plan.get("m_plan_id")
@@ -2082,7 +2084,7 @@ def _compose_tool(patterns: list[str]) -> dict:
 
 
 def _read_composition(
-    arguments: Optional[str], patterns: list[str]
+    arguments: str | None, patterns: list[str]
 ) -> tuple[str, str, list[dict]]:
     """``compose`` arguments -> ``(pattern, task, participants)``.
 
@@ -2135,10 +2137,11 @@ class _RouterChatClient:
     def __init__(
         self,
         agent_name: str,
-        user_access_token: Optional[str] = None,
-        user_id: Optional[str] = None,
-        workspace_id: Optional[str] = None,
+        user_access_token: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         memory_store: Any = None,
+        model: str | None = None,
     ) -> None:
         from common.config.app_config import config
 
@@ -2157,7 +2160,7 @@ class _RouterChatClient:
         # What the composer decided this turn: None when it answered directly,
         # else (pattern, task, participants). The SSE handler reads it after the
         # stream to create the formal Plan when the pattern is ``magentic``.
-        self.composition: Optional[tuple[str, str, list[dict]]] = None
+        self.composition: tuple[str, str, list[dict]] | None = None
         # AZURE_AI_PROJECT_ENDPOINT is {account}/api/projects/{project}. The
         # model's OpenAI-compatible Responses API lives at the ACCOUNT root
         # ({account}/openai, api-version 2025-03-01-preview — the first version
@@ -2166,7 +2169,35 @@ class _RouterChatClient:
         account = project.split("/api/projects/")[0]
         self._openai_base_url = f"{account}/openai"
         self._api_version = _DIRECT_RESPONSES_API_VERSION
-        self._model = config.CHAT_ORCHESTRATOR_MODEL
+        # The engine for THIS turn. Measured strengths differ by kind of work
+        # (codex-mini on workspace/code, gpt-5.4-mini on toolbox discovery), so
+        # the caller may name one; absent that, the configured default. No model
+        # is pinned in code.
+        self._model = model or config.CHAT_ORCHESTRATOR_MODEL
+        # Image generation deployment — the name differs per Foundry account,
+        # so it is configuration, and Azure reads it from a REQUEST HEADER
+        # (_responses_client), not from the tool spec.
+        self._image_deployment = config._get_optional(
+            "IMAGE_GENERATION_DEPLOYMENT", "gpt-image-2"
+        )
+        # ONE definition of how this project reaches a Foundry toolbox: name,
+        # pinned version and URL shape, declared as "Name:Version,Name" in
+        # CHAT_TOOLBOXES (omitting the version resolves to latest). The same
+        # contract written twice is what made the bridge answer 401 while this
+        # path worked.
+        self._toolboxes: list[tuple[str, str]] = []
+        for _spec in (config.CHAT_TOOLBOXES or "").split(","):
+            _spec = _spec.strip()
+            if not _spec:
+                continue
+            _name, _, _version = _spec.partition(":")
+            _name, _version = _name.strip(), _version.strip()
+            if not _name:
+                continue
+            _segment = f"/versions/{_version}" if _version else ""
+            self._toolboxes.append(
+                (_name, f"{project}/toolboxes/{_name}{_segment}/mcp?api-version=v1")
+            )
 
     async def _bearer(self) -> str:
         from common.config.app_config import config
@@ -2199,7 +2230,98 @@ class _RouterChatClient:
             api_key=bearer,
             base_url=self._openai_base_url,
             default_query={"api-version": self._api_version},
+            # Azure takes the image deployment from a request header, not from
+            # the tool spec: without it the whole call answers 400 "imagegen
+            # deployment must be provided through header" — including turns
+            # that were never going to generate an image.
+            default_headers={
+                "x-ms-oai-image-generation-deployment": self._image_deployment
+            },
             timeout=120,
+        )
+
+    def _capabilities(self, bearer: str) -> list[dict[str, Any]]:
+        """The orchestrator's OWN tools, next to ``compose``.
+
+        What it can resolve itself it resolves in this same call — an image, a
+        live search, a computation, the project's toolboxes. Composing a
+        specialist for those means publishing a Foundry agent version and
+        building a workflow to end up calling the same tool. ``compose`` stays
+        for work that genuinely needs specialists, and each participant keeps
+        its own capabilities (``_PARTICIPANT_SCHEMA``).
+
+        ``Foundry-Features`` is not optional on a toolbox: the endpoint is
+        preview-gated and answers 401 without it, however valid the token is.
+        """
+        tools: list[dict[str, Any]] = [
+            {"type": "image_generation"},
+            {"type": "web_search"},
+            {"type": "code_interpreter", "container": {"type": "auto"}},
+        ]
+        tools.extend(
+            {
+                "type": "mcp",
+                "server_label": label,
+                "server_url": url,
+                "require_approval": "never",
+                "headers": {
+                    "Authorization": f"Bearer {bearer}",
+                    "Foundry-Features": "Toolboxes=V1Preview",
+                },
+            }
+            for label, url in self._toolboxes
+        )
+        return tools
+
+    async def _image_as_generated_file(self, item: Any):
+        """An image the orchestrator generated, through the EXISTING channel.
+
+        The hosted tool answers with the bytes INLINE (base64 in the item's
+        result) and nowhere else: no Foundry file, no container, so nothing can
+        fetch them later. They are kept here, at generation time, in the same
+        ``GeneratedFileStore`` every other generated file uses — awaited, not
+        spawned, because the download link is announced on the next line and a
+        race would 404 it — and announced as a ``hosted_file`` content. From
+        there the SSE handler's existing branch emits ``generated_file``,
+        renders the image inside the message and persists the descriptor with
+        the turn. No new channel and no shim: the framework has the type.
+        """
+        import base64
+        import binascii
+
+        from v4.common.services.generated_file_store import GeneratedFileStore
+
+        payload = getattr(item, "result", None)
+        if not payload:
+            logger.warning("image_generation_call arrived with no result payload")
+            return
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (ValueError, binascii.Error) as ex:
+            logger.error("image_generation_call result is not base64: %s", ex)
+            return
+        # The tool reports the format it produced; only its absence defaults.
+        ext = str(getattr(item, "output_format", None) or "png").lower()
+        file_id = f"img_{uuid.uuid4().hex[:12]}"
+        filename = f"{file_id}.{ext}"
+        await GeneratedFileStore.get_instance().save(file_id, filename, data)
+        logger.info(
+            "Generated image stored: file_id=%s name=%s bytes=%d",
+            file_id,
+            filename,
+            len(data),
+        )
+        yield AgentResponseUpdate(
+            contents=[
+                Content.from_hosted_file(
+                    file_id,
+                    media_type=f"image/{'jpeg' if ext in ('jpg', 'jpeg') else ext}",
+                    name=filename,
+                    additional_properties={"filename": filename},
+                )
+            ],
+            role="assistant",
+            author_name=self.agent_name,
         )
 
     def _instructions(self) -> str:
@@ -2217,7 +2339,7 @@ class _RouterChatClient:
         )
 
     @staticmethod
-    def _composer_input(prompt: str, history: Optional[list]) -> list:
+    def _composer_input(prompt: str, history: list | None) -> list:
         # Memory = the conversation itself, rebuilt from Cosmos + AI Search and
         # passed as input message items (NOT previous_response_id); store=False
         # on every call, nothing is threaded server-side.
@@ -2282,9 +2404,9 @@ class _RouterChatClient:
     async def invoke(
         self,
         prompt: str,
-        history: Optional[list] = None,
+        history: list | None = None,
         allow_plan: bool = True,
-        file_ids: Optional[list[str]] = None,
+        file_ids: list[str] | None = None,
         **_ignored,
     ):
         """Chat position: the composer answers, or composes and runs.
@@ -2296,8 +2418,9 @@ class _RouterChatClient:
         takes ``magentic`` out of the offer: a plan never spawns another plan.
         """
         patterns = [p for p in _PATTERNS if allow_plan or p != "magentic"]
-        client = self._responses_client(await self._bearer())
-        composition: Optional[tuple[str, str, list[dict]]] = None
+        bearer = await self._bearer()
+        client = self._responses_client(bearer)
+        composition: tuple[str, str, list[dict]] | None = None
         pending = ""
         marker_blocked = False
         try:
@@ -2305,7 +2428,7 @@ class _RouterChatClient:
                 model=self._model,
                 instructions=self._instructions(),
                 input=cast(Any, self._composer_input(prompt, history)),
-                tools=cast(Any, [_compose_tool(patterns)]),
+                tools=cast(Any, [_compose_tool(patterns), *self._capabilities(bearer)]),
                 tool_choice="auto",
                 stream=True,
                 store=False,
@@ -2340,7 +2463,10 @@ class _RouterChatClient:
                         pending = pending[-hold:]
                 elif etype == "response.output_item.done":
                     item = getattr(evt, "item", None)
-                    if (
+                    if getattr(item, "type", None) == "image_generation_call":
+                        async for _img in self._image_as_generated_file(item):
+                            yield _img
+                    elif (
                         getattr(item, "type", None) == "function_call"
                         and getattr(item, "name", "") == "compose"
                     ):
@@ -2385,7 +2511,7 @@ class _RouterChatClient:
         pattern: str,
         task: str,
         participants: list[dict],
-        history: Optional[list],
+        history: list | None,
     ):
         """Build the composed participants with the existing factory and run
         them with the framework builder of ``pattern`` inside this turn.
@@ -2468,9 +2594,9 @@ class _RouterChatClient:
 
     def _spawn_container_file_persist(
         self,
-        file_id: Optional[str],
-        container_id: Optional[str],
-        filename: Optional[str],
+        file_id: str | None,
+        container_id: str | None,
+        filename: str | None,
     ) -> None:
         """Copy a code-interpreter output file to the persistent store the
         moment it exists — its Foundry container expires minutes later.
@@ -2563,8 +2689,8 @@ class _RouterChatClient:
 async def _create_direct_response_workflow(
     user_id: str,
     tenant_id: str,
-    team_config_input: Optional[TeamConfiguration] = None,
-    user_access_token: Optional[str] = None,
+    team_config_input: TeamConfiguration | None = None,
+    user_access_token: str | None = None,
     proxy_only: bool = False,
 ) -> tuple[Any, list[Any], TeamConfiguration]:
     """Create a Magentic workflow for a single direct chat request.
@@ -2740,7 +2866,7 @@ async def chat_message_stream(
     )
     active_plan = None
     active_plan_team = None
-    active_m_plan_id: Optional[str] = None
+    active_m_plan_id: str | None = None
     if chat_request.plan_id:
         active_plan = await memory_store.get_plan_by_plan_id(
             plan_id=chat_request.plan_id
@@ -2880,7 +3006,7 @@ async def chat_message_stream(
         previous_intent,
         chat_request.message[:80],
     )
-    plan_id: Optional[str] = None
+    plan_id: str | None = None
 
     # ── SSE async generator ──────────────────────────────────────
     async def event_stream():
@@ -2935,8 +3061,8 @@ async def chat_message_stream(
         full_text = ""
         collected_generated_files: list[dict] = []
         _cleanup = AsyncExitStack()
-        last_mcp_tool_call: Optional[tuple[str, str]] = None
-        current_speaker: Optional[str] = None
+        last_mcp_tool_call: tuple[str, str] | None = None
+        current_speaker: str | None = None
         # A function_result carries only its call_id; the name comes from
         # the function_call that opened it.
         _call_names: dict[str, str] = {}
@@ -3030,7 +3156,7 @@ async def chat_message_stream(
                 logger.warning("MCP auth pre-check failed: %s", _pre_check_exc)
             # --- end pre-check ---
 
-            _last_tool_activity_key: Optional[tuple] = None
+            _last_tool_activity_key: tuple | None = None
             # Turn ledger: the "floating membranes" (tool calls + args + result
             # heads) that used to evaporate with store=False. Persisted in
             # assistant metadata.turn_log at close (NOT in content) so the deeds
@@ -3727,7 +3853,7 @@ async def _get_mcp_query_response(
     user_id: str,
     chat_svc: Any,
     tenant_id: str = "",
-    user_access_token: Optional[str] = None,
+    user_access_token: str | None = None,
 ) -> str:
     """Get a non-streaming direct response through Magentic orchestration.
 
@@ -4277,11 +4403,11 @@ async def _plan_waiting_for(
     memory_store: DatabaseBase,
     *,
     kind: str = "clarification",
-    request_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    plan_id: Optional[str] = None,
-    m_plan_id: Optional[str] = None,
-) -> Optional[Plan]:
+    request_id: str | None = None,
+    session_id: str | None = None,
+    plan_id: str | None = None,
+    m_plan_id: str | None = None,
+) -> Plan | None:
     """The plan parked on a request_info of ``kind`` (clarification /
     plan_review): by plan_id when the client sends it, otherwise the user's plan
     whose ``waiting_for`` carries this request_id / m_plan_id or belongs to this
@@ -4307,7 +4433,7 @@ async def _plan_waiting_for(
 
 async def _clarification_answer_target(
     memory_store: DatabaseBase, chat_request: ChatMessageRequest
-) -> Optional[Plan]:
+) -> Plan | None:
     """The parked plan this chat message answers, by identity only.
 
     ``clarification_request_id`` names the question. Without it the message is
@@ -4339,8 +4465,8 @@ async def _append_event(
     kind: str,
     request_id: str,
     user_id: str,
-    tenant_id: Optional[str],
-    user_access_token: Optional[str],
+    tenant_id: str | None,
+    user_access_token: str | None,
     payload: dict[str, Any],
 ) -> bool:
     """Persist the human decision as a ``work_event`` and wake the reconciler.
@@ -4707,7 +4833,7 @@ async def agent_message_user(
 async def upload_team_config(
     request: Request,
     file: UploadFile = File(...),
-    team_id: Optional[str] = Query(None),
+    team_id: str | None = Query(None),
 ):
     """
     Upload and save a team configuration JSON file.
@@ -4886,7 +5012,9 @@ async def upload_team_config(
         raise
     except Exception as e:
         logging.error("Unexpected error uploading team configuration: %s", str(e))
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 @app_v4.get("/team_configs")
@@ -4956,7 +5084,9 @@ async def get_team_configs(request: Request):
 
     except Exception as e:
         logging.error(f"Error retrieving team configurations: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 @app_v4.get("/team_configs/{team_id}")
@@ -5035,7 +5165,9 @@ async def get_team_config_by_id(team_id: str, request: Request):
         raise
     except Exception as e:
         logging.error(f"Error retrieving team configuration: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 @app_v4.delete("/team_configs/{team_id}")
@@ -5110,7 +5242,9 @@ async def delete_team_config(team_id: str, request: Request):
         raise
     except Exception as e:
         logging.error(f"Error deleting team configuration: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 @app_v4.post("/select_team")
@@ -5197,7 +5331,9 @@ async def select_team(selection: TeamSelectionRequest, request: Request):
                 "error": str(e),
             },
         )
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 # Get plans is called in the initial side rendering of the frontend
@@ -5285,7 +5421,7 @@ async def get_plans(request: Request):
 @app_v4.get("/plan")
 async def get_plan_by_id(
     request: Request,
-    plan_id: Optional[str] = Query(None),
+    plan_id: str | None = Query(None),
 ):
     """
     Retrieve plans for the current user.
@@ -5427,7 +5563,9 @@ async def get_plan_by_id(
             raise HTTPException(status_code=400, detail="no plan id")
     except Exception as e:
         logging.error(f"Error retrieving plan: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        raise HTTPException(
+            status_code=500, detail="Internal server error occurred"
+        ) from e
 
 
 # ============================================================================
@@ -5499,7 +5637,7 @@ async def discover_mcp_capabilities(
         logger.error(f"Error discovering MCP capabilities: {str(e)}")
         raise HTTPException(
             status_code=500, detail="Failed to discover MCP capabilities"
-        )
+        ) from e
 
 
 @app_v4.post("/mcp/resources/read")
@@ -5541,7 +5679,9 @@ async def read_mcp_resource(
         raise
     except Exception as e:
         logger.error(f"Error reading MCP resource: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to read MCP resource")
+        raise HTTPException(
+            status_code=500, detail="Failed to read MCP resource"
+        ) from e
 
 
 @app_v4.get("/mcp/resources/list")
@@ -5566,7 +5706,9 @@ async def list_mcp_resources(user_id: str = Query(None)):
 
     except Exception as e:
         logger.error(f"Error listing MCP resources: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to list MCP resources")
+        raise HTTPException(
+            status_code=500, detail="Failed to list MCP resources"
+        ) from e
 
 
 @app_v4.get("/mcp/resources/templates/list")
@@ -5593,7 +5735,7 @@ async def list_mcp_resource_templates(user_id: str = Query(None)):
         logger.error(f"Error listing MCP resource templates: {str(e)}")
         raise HTTPException(
             status_code=500, detail="Failed to list MCP resource templates"
-        )
+        ) from e
 
 
 # =========================================================================
@@ -5620,7 +5762,7 @@ async def list_mcp_servers(request: Request):
         }
     except Exception as e:
         logger.error(f"Error listing MCP servers: {e}")
-        raise HTTPException(status_code=500, detail="Failed to list MCP servers")
+        raise HTTPException(status_code=500, detail="Failed to list MCP servers") from e
 
 
 @app_v4.post("/mcp/connections/servers")
@@ -5661,7 +5803,9 @@ async def register_mcp_server(entry: MCPServerEntry, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error registering MCP server: {e}")
-        raise HTTPException(status_code=500, detail="Failed to register MCP server")
+        raise HTTPException(
+            status_code=500, detail="Failed to register MCP server"
+        ) from e
 
 
 @app_v4.put("/mcp/connections/servers/{server_id}")
@@ -5702,7 +5846,9 @@ async def update_mcp_server(
         raise
     except Exception as e:
         logger.error(f"Error updating MCP server: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update MCP server")
+        raise HTTPException(
+            status_code=500, detail="Failed to update MCP server"
+        ) from e
 
 
 @app_v4.delete("/mcp/connections/servers/{server_id}")
@@ -5723,7 +5869,9 @@ async def delete_mcp_server(server_id: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error deleting MCP server: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete MCP server")
+        raise HTTPException(
+            status_code=500, detail="Failed to delete MCP server"
+        ) from e
 
 
 @app_v4.get("/mcp/connections/user")
@@ -5745,7 +5893,9 @@ async def get_user_mcp_connections(request: Request):
 
     except Exception as e:
         logger.error(f"Error getting user connections: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get user connections")
+        raise HTTPException(
+            status_code=500, detail="Failed to get user connections"
+        ) from e
 
 
 @app_v4.get("/mcp/connections/user/{server_name}")
@@ -5775,11 +5925,13 @@ async def get_user_mcp_connection_by_server(server_name: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error getting user connection: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get user connection")
+        raise HTTPException(
+            status_code=500, detail="Failed to get user connection"
+        ) from e
 
 
 async def _start_discovered_oauth(
-    svc, server, user_id: str, resource_metadata_hint: Optional[str] = None
+    svc, server, user_id: str, resource_metadata_hint: str | None = None
 ) -> str:
     """Zero-config OAuth for a URL the user pasted: discover the AS (RFC 9728 ->
     8414), register a client if none is cached (RFC 7591), mint PKCE, persist
@@ -5830,7 +5982,7 @@ async def _start_discovered_oauth(
             scopes = list(meta.get("scopes_supported") or [])
 
     # 2. Client: cached dynamic registration in KV, else DCR now.
-    client: Optional[dict] = None
+    client: dict | None = None
     if server.oauth_client_ref:
         client = await resolver.resolve_credentials(
             "catalog", dcr_provider_id(server.server_name)
@@ -5853,7 +6005,7 @@ async def _start_discovered_oauth(
             logger.error("DCR failed for %s: %s", server.server_name, exc)
             raise HTTPException(
                 status_code=502, detail=f"Dynamic client registration failed: {exc}"
-            )
+            ) from exc
         client = {
             "client_id": reg["client_id"],
             "client_secret": reg.get("client_secret") or "",
@@ -5991,7 +6143,7 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
 
         status = MCPConnectionStatus.PENDING_AUTH
         secret_ref = None
-        oauth_url: Optional[str] = None
+        oauth_url: str | None = None
 
         # Operator-preconfigured OAuth (client_id via env var) keeps its legacy path.
         _preconfigured_oauth = bool(
@@ -6035,7 +6187,7 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to securely store credentials",
-                )
+                ) from kv_err
         elif server.auth_type == MCPAuthType.OAUTH2:
             from v4.api.oauth_helpers import build_authorize_url, sign_state
 
@@ -6105,7 +6257,9 @@ async def connect_user_to_mcp_server(server_name: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error connecting user to MCP server: {e}")
-        raise HTTPException(status_code=500, detail="Failed to connect to MCP server")
+        raise HTTPException(
+            status_code=500, detail="Failed to connect to MCP server"
+        ) from e
 
 
 @app_v4.patch("/mcp/connections/user/{server_name}/activate")
@@ -6142,12 +6296,14 @@ async def activate_user_mcp_connection(server_name: str, request: Request):
         return {"connection": result.model_dump(mode="json"), "activated": True}
 
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        raise HTTPException(status_code=404, detail=str(ve)) from ve
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error activating MCP connection: {e}")
-        raise HTTPException(status_code=500, detail="Failed to activate connection")
+        raise HTTPException(
+            status_code=500, detail="Failed to activate connection"
+        ) from e
 
 
 @app_v4.get(
@@ -6210,8 +6366,8 @@ async def mcp_oauth_callback(query: Annotated[OAuthCallbackQuery, Query()]):
     # operator env vars. Never mix.
     resolver = CredentialResolver()
     pending = await load_pending_oauth(resolver, user_id, server_name, state)
-    code_verifier: Optional[str] = None
-    resource: Optional[str] = None
+    code_verifier: str | None = None
+    resource: str | None = None
     if pending:
         client_id = pending.get("client_id", "")
         client_secret = pending.get("client_secret") or ""
@@ -6332,7 +6488,7 @@ async def disconnect_user_from_mcp_server(server_name: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error disconnecting from MCP server: {e}")
-        raise HTTPException(status_code=500, detail="Failed to disconnect")
+        raise HTTPException(status_code=500, detail="Failed to disconnect") from e
 
 
 @app_v4.get("/mcp/inspector/status")
@@ -6349,4 +6505,6 @@ async def mcp_inspector_status():
         return await get_inspector_bridge().get_status()
     except Exception as e:
         logger.error(f"Error getting Inspector status: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get Inspector status")
+        raise HTTPException(
+            status_code=500, detail="Failed to get Inspector status"
+        ) from e

@@ -19,7 +19,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
@@ -66,7 +66,7 @@ class AppendResult:
 class Lease:
     holder: str
     expires_at: float
-    etag: Optional[str] = None
+    etag: str | None = None
     held: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -161,7 +161,7 @@ class EventStore:
 
     def __init__(self, container: Any = None) -> None:
         self._container = container
-        self._client: Optional[CosmosClient] = None
+        self._client: CosmosClient | None = None
 
     async def _ensure_initialized(self) -> Any:
         if self._container is not None:
@@ -229,7 +229,7 @@ class EventStore:
             return AppendResult(id=doc_id, duplicate=True)
         return AppendResult(id=doc_id, duplicate=False)
 
-    async def find(self, kind: str, identity: str) -> Optional[dict[str, Any]]:
+    async def find(self, kind: str, identity: str) -> dict[str, Any] | None:
         """El evento de esa causa o ``None``: lectura por identidad, sin consulta."""
         container = await self._ensure_initialized()
         try:
@@ -253,7 +253,7 @@ class EventStore:
         return docs
 
     async def mark(
-        self, event: dict[str, Any], status: str, *, error: Optional[str] = None
+        self, event: dict[str, Any], status: str, *, error: str | None = None
     ) -> bool:
         """Cierra el evento. ``False`` si otro proceso lo cerró antes (412)."""
         container = await self._ensure_initialized()
@@ -348,7 +348,7 @@ def new_holder_id() -> str:
     return f"{revision}:{uuid.uuid4().hex}"
 
 
-_store: Optional[EventStore] = None
+_store: EventStore | None = None
 
 
 def get_event_store() -> EventStore:
@@ -358,7 +358,7 @@ def get_event_store() -> EventStore:
     return _store
 
 
-def set_event_store(store: Optional[EventStore]) -> None:
+def set_event_store(store: EventStore | None) -> None:
     """Inyección para tests y para el lifespan."""
     global _store
     _store = store

@@ -4,7 +4,7 @@ Core MCP server components and factory patterns.
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -47,8 +47,8 @@ class MCPToolFactory:
     """Factory for creating and managing MCP tools."""
 
     def __init__(self):
-        self._services: Dict[Domain, MCPToolBase] = {}
-        self._mcp_server: Optional[FastMCP] = None
+        self._services: dict[Domain, MCPToolBase] = {}
+        self._mcp_server: FastMCP | None = None
 
     def register_service(self, service: MCPToolBase) -> None:
         """Register a tool service with the factory."""
@@ -64,21 +64,19 @@ class MCPToolFactory:
 
         return self._mcp_server
 
-    def get_services_by_domain(self, domain: Domain) -> Optional[MCPToolBase]:
+    def get_services_by_domain(self, domain: Domain) -> MCPToolBase | None:
         """Get service by domain."""
         return self._services.get(domain)
 
-    def get_all_services(self) -> Dict[Domain, MCPToolBase]:
+    def get_all_services(self) -> dict[Domain, MCPToolBase]:
         """Get all registered services."""
         return self._services.copy()
 
-    def get_tool_summary(self) -> Dict[str, Any]:
+    def get_tool_summary(self) -> dict[str, Any]:
         """Get a summary of all tools and services."""
         summary = {
             "total_services": len(self._services),
-            "total_tools": sum(
-                service.tool_count for service in self._services.values()
-            ),
+            "total_tools": sum(service.tool_count for service in self._services.values()),
             "services": {},
         }
 

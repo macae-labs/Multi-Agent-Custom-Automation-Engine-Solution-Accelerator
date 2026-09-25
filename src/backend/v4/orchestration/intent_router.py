@@ -12,15 +12,14 @@ Routes messages to:
 """
 
 import logging
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 
-class Intent(str, Enum):
+class Intent(StrEnum):
     TASK = "task"
     CONVERSATIONAL = "conversational"
     MCP_QUERY = "mcp_query"
@@ -98,8 +97,8 @@ class IntentRouter:
     @staticmethod
     async def classify_async(
         message: str,
-        previous_intent: Optional[str] = None,
-        agent_response: Optional[str] = None,
+        previous_intent: str | None = None,
+        agent_response: str | None = None,
     ) -> IntentResult:
         """Classify using LLM as the sole decision maker.
 

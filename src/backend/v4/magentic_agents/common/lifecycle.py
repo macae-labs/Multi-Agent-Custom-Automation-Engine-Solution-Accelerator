@@ -4,7 +4,7 @@ import inspect
 import logging
 import os
 from contextlib import AsyncExitStack
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -178,14 +178,14 @@ class MCPEnabledBase:
         self._agent: Agent | None = None
         self.team_service: TeamService | None = team_service
         self.team_config: TeamConfiguration | None = team_config
-        self.client: Optional[AgentsClient] = None
+        self.client: AgentsClient | None = None
         self.project_endpoint = project_endpoint
         self.creds = None
         # True only when self.creds is a per-user (OBO/passthrough) credential this
         # agent created and must close. The process-scoped Managed Identity
         # credential is borrowed (owned by config) and must NOT be closed here.
         self._owns_creds = False
-        self.memory_store: Optional[DatabaseBase] = memory_store
+        self.memory_store: DatabaseBase | None = memory_store
         self.agent_name: str | None = agent_name
         self.agent_description: str | None = agent_description
         self.agent_instructions: str | None = agent_instructions
@@ -194,7 +194,7 @@ class MCPEnabledBase:
         self.user_access_token = user_access_token
         self.logger = logging.getLogger(__name__)
 
-    async def open(self) -> "MCPEnabledBase":
+    async def open(self) -> MCPEnabledBase:
         if self._stack is not None:
             return self
         self._stack = AsyncExitStack()
@@ -345,7 +345,7 @@ class MCPEnabledBase:
             self._owns_creds = False
 
     # Context manager
-    async def __aenter__(self) -> "MCPEnabledBase":
+    async def __aenter__(self) -> MCPEnabledBase:
         return await self.open()
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: D401
@@ -361,7 +361,7 @@ class MCPEnabledBase:
         """Subclasses must build self._agent here."""
         raise NotImplementedError
 
-    def get_chat_client(self) -> "AzureAIClient[AzureAIProjectAgentOptions]":
+    def get_chat_client(self) -> AzureAIClient[AzureAIProjectAgentOptions]:
         """Return AzureAIClient for agents WITHOUT runtime tools (e.g. Azure Search path).
 
         Uses agent_name with use_latest_version=True to get the latest agent version.

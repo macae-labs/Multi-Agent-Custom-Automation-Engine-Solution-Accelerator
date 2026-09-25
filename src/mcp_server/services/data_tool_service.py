@@ -1,7 +1,7 @@
-import os
 import logging
-from typing import List
-from core.factory import MCPToolBase, Domain
+import os
+
+from core.factory import Domain, MCPToolBase
 
 ALLOWED_FILES = [
     "competitor_pricing_analysis.csv",
@@ -45,9 +45,7 @@ class DataToolService(MCPToolBase):
                 full_path = os.path.join(root, filename)
                 logger.info("Found file: %s", full_path)
                 return full_path
-        logger.warning(
-            "File '%s' not found in '%s' directory.", filename, self.dataset_path
-        )
+        logger.warning("File '%s' not found in '%s' directory.", filename, self.dataset_path)
         return f"Error reading file '{filename}': File not found."
 
     def register_tools(self, mcp):
@@ -57,11 +55,7 @@ class DataToolService(MCPToolBase):
             logger = logging.getLogger("file_provider")
             logger.info("Table '%s' requested.", tablename)
             tablename = tablename.strip()
-            filename = (
-                f"{tablename}.csv"
-                if not tablename.lower().endswith(".csv")
-                else tablename
-            )
+            filename = f"{tablename}.csv" if not tablename.lower().endswith(".csv") else tablename
             if filename not in self.allowed_files:
                 logger.error("File '%s' is not allowed.", filename)
                 return f"File '{filename}' is not allowed."
@@ -70,15 +64,15 @@ class DataToolService(MCPToolBase):
                 logger.error("File '%s' not found.", filename)
                 return f"Error reading file '{filename}': File not found."
             try:
-                with open(file_path, "r", encoding="utf-8") as file:
+                with open(file_path, encoding="utf-8") as file:
                     data = file.read()
                 return data
-            except IOError as e:
+            except OSError as e:
                 logger.error("Error reading file '%s': %s", filename, e)
                 return f"Error reading file '{filename}': {e}"
 
         @mcp.tool()
-        def show_tables() -> List[str]:
+        def show_tables() -> list[str]:
             """Returns a list of allowed table names (without .csv extension) that exist in the dataset path."""
             logger = logging.getLogger("show_tables")
             found_tables = []
@@ -89,7 +83,5 @@ class DataToolService(MCPToolBase):
                     found_tables.append(table_name)
                     logger.info("Found table: %s", table_name)
             if not found_tables:
-                logger.warning(
-                    "No allowed CSV tables found in '%s' directory.", self.dataset_path
-                )
+                logger.warning("No allowed CSV tables found in '%s' directory.", self.dataset_path)
             return found_tables

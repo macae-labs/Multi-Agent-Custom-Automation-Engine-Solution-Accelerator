@@ -2,13 +2,12 @@ import json
 import locale
 import logging
 from datetime import datetime
-from typing import Optional
 
 import regex as re
 from dateutil import parser
 
 
-def format_date_for_user(date_str: str, user_locale: Optional[str] = None) -> str:
+def format_date_for_user(date_str: str, user_locale: str | None = None) -> str:
     """
     Format date based on user's desktop locale preference.
 
