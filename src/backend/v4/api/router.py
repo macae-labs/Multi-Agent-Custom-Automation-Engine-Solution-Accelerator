@@ -2304,7 +2304,10 @@ class _RouterChatClient:
         ext = str(getattr(item, "output_format", None) or "png").lower()
         file_id = f"img_{uuid.uuid4().hex[:12]}"
         filename = f"{file_id}.{ext}"
-        await GeneratedFileStore.get_instance().save(file_id, filename, data)
+        saved = await GeneratedFileStore.get_instance().save(file_id, filename, data)
+        if not saved:
+            logger.error("Generated image could not be persisted: file_id=%s", file_id)
+            return
         logger.info(
             "Generated image stored: file_id=%s name=%s bytes=%d",
             file_id,
