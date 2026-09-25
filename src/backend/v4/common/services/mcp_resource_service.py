@@ -12,7 +12,7 @@ Uses JSON-RPC 2.0 over HTTP to /mcp endpoint.
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -31,7 +31,7 @@ class MCPResourceService:
         """
         self.mcp_server_url = mcp_server_url.rstrip("/")
         self.client = httpx.AsyncClient(timeout=30.0)
-        self.session_id: Optional[str] = None
+        self.session_id: str | None = None
         self._initialized: bool = False
 
     async def _ensure_initialized(self) -> None:
@@ -68,8 +68,8 @@ class MCPResourceService:
             raise
 
     async def _call_jsonrpc(
-        self, method: str, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Call JSON-RPC with automatic initialization."""
         # Initialize session if not already done
         if method not in ["initialize"]:
@@ -78,7 +78,7 @@ class MCPResourceService:
         return await self._call_jsonrpc_raw(method, params)
 
     async def _send_notification(
-        self, method: str, params: Optional[Dict[str, Any]] = None
+        self, method: str, params: dict[str, Any] | None = None
     ) -> None:
         """
         Send JSON-RPC 2.0 notification (no id, no response expected).
@@ -122,8 +122,8 @@ class MCPResourceService:
             # Don't raise - notifications are fire-and-forget
 
     async def _call_jsonrpc_raw(
-        self, method: str, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Call MCP server using JSON-RPC 2.0 protocol over streamable-http (SSE).
 
@@ -196,7 +196,7 @@ class MCPResourceService:
 
     def _parse_jsonrpc_response_bytes(
         self, body: bytes, content_type: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Parse JSON-RPC response handling both application/json and text/event-stream.
         """
@@ -223,7 +223,7 @@ class MCPResourceService:
                 f"Cannot parse JSON-RPC response (content-type='{ct}')"
             ) from exc
 
-    def _parse_sse_response(self, body: str) -> Dict[str, Any]:
+    def _parse_sse_response(self, body: str) -> dict[str, Any]:
         """
         Parse JSON-RPC response from SSE (text/event-stream) body.
 
@@ -238,7 +238,7 @@ class MCPResourceService:
             Parsed JSON-RPC response dict
         """
         for event in body.split("\n\n"):
-            data_lines: List[str] = []
+            data_lines: list[str] = []
             for line in event.splitlines():
                 if line.startswith("data:"):
                     data_lines.append(line[5:].strip())
@@ -256,7 +256,7 @@ class MCPResourceService:
 
         raise ValueError("No valid JSON-RPC payload found in SSE response")
 
-    def _parse_jsonrpc_response(self, response: httpx.Response) -> Dict[str, Any]:
+    def _parse_jsonrpc_response(self, response: httpx.Response) -> dict[str, Any]:
         """
         Parse JSON-RPC response from either application/json or text/event-stream.
 
@@ -274,7 +274,7 @@ class MCPResourceService:
         if "text/event-stream" in content_type:
             body = response.text
             for event in body.split("\n\n"):
-                data_lines: List[str] = []
+                data_lines: list[str] = []
                 for line in event.splitlines():
                     if line.startswith("data:"):
                         data_lines.append(line[5:].strip())
@@ -300,7 +300,7 @@ class MCPResourceService:
                 f"Unsupported response content-type '{content_type}' for JSON-RPC"
             ) from exc
 
-    async def list_resources(self) -> List[Dict[str, Any]]:
+    async def list_resources(self) -> list[dict[str, Any]]:
         """
         List all available MCP resources.
 
@@ -318,7 +318,7 @@ class MCPResourceService:
             logger.error(f"Failed to list resources: {e}")
             return []
 
-    async def list_resource_templates(self) -> List[Dict[str, Any]]:
+    async def list_resource_templates(self) -> list[dict[str, Any]]:
         """
         List all parameterized resource templates (e.g., ui://product-card/{id}).
 
@@ -336,7 +336,7 @@ class MCPResourceService:
             logger.error(f"Failed to list resource templates: {e}")
             return []
 
-    async def read_resource(self, uri: str) -> Optional[Dict[str, Any]]:
+    async def read_resource(self, uri: str) -> dict[str, Any] | None:
         """
         Read a specific MCP resource by URI via JSON-RPC.
 
@@ -393,7 +393,7 @@ class MCPResourceService:
 
 
 # Global singleton instance
-_mcp_resource_service: Optional[MCPResourceService] = None
+_mcp_resource_service: MCPResourceService | None = None
 
 
 async def aclose_mcp_resource_service() -> None:
@@ -414,7 +414,7 @@ async def aclose_mcp_resource_service() -> None:
 
 
 def get_mcp_resource_service(
-    mcp_server_url: Optional[str] = None,
+    mcp_server_url: str | None = None,
 ) -> MCPResourceService:
     """
     Get or create the global MCP Resource Service instance.

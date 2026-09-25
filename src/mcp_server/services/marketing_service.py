@@ -21,9 +21,7 @@ class MarketingService(MCPToolBase):
             return f"Look through the conversation history. Identify the content. Now you must generate a press release based on this content {key_information_for_press_release}. Make it approximately 2 paragraphs."
 
         @mcp.tool(tags={self.domain.value})
-        async def handle_influencer_collaboration(
-            influencer_name: str, campaign_name: str
-        ) -> str:
+        async def handle_influencer_collaboration(influencer_name: str, campaign_name: str) -> str:
             """Handle collaboration with an influencer."""
 
             return f"Collaboration with influencer '{influencer_name}' for campaign '{campaign_name}' handled."

@@ -2,8 +2,8 @@
 
 import time
 from dataclasses import asdict, dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from enum import StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -23,7 +23,7 @@ class AgentMessage:
     timestamp: str
     content: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -49,7 +49,7 @@ class AgentMessageStreaming:
     content: str
     is_final: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -58,9 +58,9 @@ class AgentToolMessage:
     """Message representing that an agent produced one or more tool calls."""
 
     agent_name: str
-    tool_calls: List["AgentToolCall"] = field(default_factory=list)
+    tool_calls: list["AgentToolCall"] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -69,9 +69,9 @@ class AgentToolCall:
     """A single tool invocation."""
 
     tool_name: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -83,7 +83,7 @@ class PlanApprovalRequest:
     status: PlanStatus
     context: dict | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "plan": self.plan.model_dump(),
             "status": self.status,
@@ -148,10 +148,10 @@ class FinalResultMessage:
 
     content: str
     status: str = "completed"
-    timestamp: Optional[float] = None
+    timestamp: float | None = None
     summary: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = {
             "content": self.content,
             "status": self.status,
@@ -172,7 +172,7 @@ class ApprovalRequest(BaseModel):
     action: str
     agent_name: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         # Consistent with dataclass pattern
         return self.model_dump()
 
@@ -200,7 +200,7 @@ class TimeoutNotification:
     timestamp: float  # epoch time
     timeout_duration: float  # seconds waited
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "timeout_type": self.timeout_type,
             "request_id": self.request_id,
@@ -210,7 +210,7 @@ class TimeoutNotification:
         }
 
 
-class WebsocketMessageType(str, Enum):
+class WebsocketMessageType(StrEnum):
     """Types of WebSocket messages."""
 
     SYSTEM_MESSAGE = "system_message"

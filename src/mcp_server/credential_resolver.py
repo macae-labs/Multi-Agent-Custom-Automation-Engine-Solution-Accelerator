@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import time
-from typing import Dict, Optional
 
 from azure.identity.aio import DefaultAzureCredential
 from azure.keyvault.secrets.aio import SecretClient
@@ -44,8 +43,8 @@ class CredentialResolver:
     """Resolves credentials from Key Vault at runtime (env-configured, no backend)."""
 
     def __init__(self) -> None:
-        self._kv_client: Optional[SecretClient] = None
-        self._cache: Dict[str, Dict[str, str]] = {}
+        self._kv_client: SecretClient | None = None
+        self._cache: dict[str, dict[str, str]] = {}
 
     async def initialize(self) -> None:
         """Pre-warm the Key Vault client during app startup (best-effort)."""
@@ -64,13 +63,9 @@ class CredentialResolver:
 
             # DefaultAzureCredential covers both prod (user-assigned MI via
             # AZURE_CLIENT_ID) and local dev (az login), same as the backend.
-            client_id = (
-                os.environ.get("AZURE_CLIENT_ID") or os.environ.get("CLIENT_ID") or None
-            )
+            client_id = os.environ.get("AZURE_CLIENT_ID") or os.environ.get("CLIENT_ID") or None
             credential = (
-                DefaultAzureCredential(managed_identity_client_id=client_id)
-                if client_id
-                else DefaultAzureCredential()
+                DefaultAzureCredential(managed_identity_client_id=client_id) if client_id else DefaultAzureCredential()
             )
             self._kv_client = SecretClient(vault_url=kv_url, credential=credential)
         return self._kv_client
@@ -86,7 +81,7 @@ class CredentialResolver:
             return parts[-1].split("/")[0]
         return secret_ref
 
-    async def resolve_by_secret_ref(self, secret_ref: str) -> Optional[Dict[str, str]]:
+    async def resolve_by_secret_ref(self, secret_ref: str) -> dict[str, str] | None:
         """Resolve credentials from a Key Vault secret URI or bare secret name.
 
         Returns a dict of credential key-value pairs, or None if not found. A
@@ -120,9 +115,9 @@ class CredentialResolver:
         self,
         *,
         credential_source: str = "static_secret",
-        audience: Optional[str] = None,
-        secret_ref: Optional[str] = None,
-    ) -> Optional[str]:
+        audience: str | None = None,
+        secret_ref: str | None = None,
+    ) -> str | None:
         """Return a VALID bearer token for a server, per its ``credential_source``.
 
         This is the single dispatch point that the connect tools call. It hides HOW
@@ -151,32 +146,21 @@ class CredentialResolver:
 
         # static_secret (and any unknown source) — return the stored token as-is.
         return (
-            creds.get("access_token")
-            or creds.get("token")
-            or creds.get("api_key")
-            or next(iter(creds.values()), None)
+            creds.get("access_token") or creds.get("token") or creds.get("api_key") or next(iter(creds.values()), None)
         )
 
-    async def _mint_managed_identity_token(
-        self, audience: Optional[str]
-    ) -> Optional[str]:
+    async def _mint_managed_identity_token(self, audience: str | None) -> str | None:
         """Mint a fresh AAD token for ``audience`` using the platform's Managed Identity.
 
         Requires the MI (AZURE_CLIENT_ID / CLIENT_ID) to hold a role on the target
         resource (e.g. Grafana Viewer). Returns None if no audience is configured.
         """
         if not audience:
-            logger.warning(
-                "managed_identity credential_source requires an audience but none is configured"
-            )
+            logger.warning("managed_identity credential_source requires an audience but none is configured")
             return None
-        client_id = (
-            os.environ.get("AZURE_CLIENT_ID") or os.environ.get("CLIENT_ID") or None
-        )
+        client_id = os.environ.get("AZURE_CLIENT_ID") or os.environ.get("CLIENT_ID") or None
         credential = (
-            DefaultAzureCredential(managed_identity_client_id=client_id)
-            if client_id
-            else DefaultAzureCredential()
+            DefaultAzureCredential(managed_identity_client_id=client_id) if client_id else DefaultAzureCredential()
         )
         try:
             token = await credential.get_token(audience)
@@ -188,9 +172,7 @@ class CredentialResolver:
         finally:
             await credential.close()
 
-    async def _resolve_oauth_refresh(
-        self, secret_ref: str, creds: Dict[str, str]
-    ) -> Optional[str]:
+    async def _resolve_oauth_refresh(self, secret_ref: str, creds: dict[str, str]) -> str | None:
         """Return a valid OAuth access_token, refreshing + writing back if expired.
 
         The Key Vault blob is expected to hold:
@@ -277,7 +259,7 @@ class CredentialResolver:
         logger.info("oauth_refresh: refreshed access_token and wrote back to Key Vault")
         return new_access
 
-    async def _write_back(self, secret_ref: str, blob: Dict[str, str]) -> None:
+    async def _write_back(self, secret_ref: str, blob: dict[str, str]) -> None:
         """Persist an updated credential blob back to Key Vault (needs write access).
 
         Requires the MI to hold **Key Vault Secrets Officer** (Secrets User is
@@ -288,13 +270,10 @@ class CredentialResolver:
             kv_client = self._get_keyvault_client()
             secret_name = self._secret_name_from_ref(secret_ref)
             await kv_client.set_secret(secret_name, json.dumps(blob))
-            logger.info(
-                "oauth_refresh: rotated token persisted to Key Vault successfully"
-            )
+            logger.info("oauth_refresh: rotated token persisted to Key Vault successfully")
         except Exception as e:  # noqa: BLE001 - never surface KV internals
             logger.error(
-                "oauth_refresh: write-back failed (MI needs Key Vault Secrets "
-                "Officer?): %s",
+                "oauth_refresh: write-back failed (MI needs Key Vault Secrets Officer?): %s",
                 type(e).__name__,
             )
         finally:

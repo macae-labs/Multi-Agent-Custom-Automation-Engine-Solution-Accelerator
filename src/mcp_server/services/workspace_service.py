@@ -32,9 +32,7 @@ from pathlib import Path
 from core.factory import Domain, MCPToolBase
 from utils.formatters import format_error_response, format_success_response
 
-WORKSPACE_ROOT = Path(
-    os.getenv("MACAE_WORKSPACE_ROOT") or str(Path.home() / ".macae" / "workspaces")
-).resolve()
+WORKSPACE_ROOT = Path(os.getenv("MACAE_WORKSPACE_ROOT") or str(Path.home() / ".macae" / "workspaces")).resolve()
 MAX_FILE_BYTES = 1 * 1024 * 1024  # 1 MB — same read cap as the backend
 MAX_ENTRIES = 200
 _META_FILE = ".macae_workspace_meta.json"
@@ -49,9 +47,7 @@ EXEC_TIMEOUT_MAX = 600
 EXEC_OUTPUT_LIMIT = 60000  # chars per stream, then truncated with a marker
 # Env vars whose NAME suggests a credential are stripped from the child process:
 # the agent gets a real terminal, not the server's secrets.
-_SECRET_ENV_HINT = re.compile(
-    r"SECRET|PASSWORD|PASSWD|TOKEN|_KEY$|APIKEY|CREDENTIAL", re.I
-)
+_SECRET_ENV_HINT = re.compile(r"SECRET|PASSWORD|PASSWD|TOKEN|_KEY$|APIKEY|CREDENTIAL", re.I)
 
 
 class WorkspaceAccessError(Exception):
@@ -77,9 +73,7 @@ def _workspace_dir(user_id: str, workspace_id: str) -> Path:
             raise WorkspaceAccessError("Linked workspace escapes the link root.")
         ws = target
     elif not ws.is_dir():
-        raise WorkspaceAccessError(
-            f"Workspace '{workspace_id}' does not exist for this user."
-        )
+        raise WorkspaceAccessError(f"Workspace '{workspace_id}' does not exist for this user.")
     return ws
 
 
@@ -88,9 +82,7 @@ def _workspace_dir_write(user_id: str, workspace_id: str) -> Path:
     name makes call-sites clearer about intent."""
     ws = _workspace_dir(user_id, workspace_id)
     if _git(ws, "rev-parse", "--is-inside-work-tree").returncode != 0:
-        raise WorkspaceAccessError(
-            "Workspace is not a git repository; it must be initialized by the backend first."
-        )
+        raise WorkspaceAccessError("Workspace is not a git repository; it must be initialized by the backend first.")
     return ws
 
 
@@ -133,8 +125,7 @@ def _git_commit_all(ws: Path, message: str) -> None:
     commit_result = _git(ws, "commit", "-q", "-m", message)
     if commit_result.returncode != 0:
         raise WorkspaceAccessError(
-            "git commit failed: "
-            + commit_result.stderr.decode("utf-8", errors="replace").strip()
+            "git commit failed: " + commit_result.stderr.decode("utf-8", errors="replace").strip()
         )
 
 
@@ -161,9 +152,7 @@ class WorkspaceToolService(MCPToolBase):
         # ── READ TOOLS ────────────────────────────────────────────────────
 
         @mcp.tool(tags={self.domain.value})
-        def workspace_list_entries(
-            user_id: str, workspace_id: str, path: str = ""
-        ) -> str:
+        def workspace_list_entries(user_id: str, workspace_id: str, path: str = "") -> str:
             """List ONE directory level of the user's project workspace
             (directories first). Call with path='' for the root, then with a
             directory path to descend. user_id and workspace_id are MANDATORY
@@ -197,13 +186,9 @@ class WorkspaceToolService(MCPToolBase):
                     f"'{path or '/'}' of workspace '{workspace_id}'.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_list_entries"
-                )
+                return format_error_response(error_message=str(e), context="workspace_list_entries")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_list_entries"
-                )
+                return format_error_response(error_message=str(e), context="workspace_list_entries")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_read_file(user_id: str, workspace_id: str, path: str) -> str:
@@ -230,13 +215,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"Read {len(raw)} bytes from '{path}'.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_read_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_read_file")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_read_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_read_file")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_search_files(user_id: str, workspace_id: str, query: str) -> str:
@@ -252,32 +233,23 @@ class WorkspaceToolService(MCPToolBase):
                 for extra in ((), ("--others", "--exclude-standard")):
                     result = _git(ws, "ls-files", *extra)
                     if result.returncode == 0:
-                        names.update(
-                            result.stdout.decode("utf-8", errors="replace").splitlines()
-                        )
+                        names.update(result.stdout.decode("utf-8", errors="replace").splitlines())
                 names.discard(_META_FILE)
                 matches = sorted(p for p in names if q in p.lower())[:MAX_ENTRIES]
                 return format_success_response(
                     action="workspace_search_files",
                     details={"query": query, "matches": matches},
-                    summary=f"{len(matches)} files match '{query}' in "
-                    f"workspace '{workspace_id}'.",
+                    summary=f"{len(matches)} files match '{query}' in workspace '{workspace_id}'.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_search_files"
-                )
+                return format_error_response(error_message=str(e), context="workspace_search_files")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_search_files"
-                )
+                return format_error_response(error_message=str(e), context="workspace_search_files")
 
         # ── GIT-READ TOOLS ────────────────────────────────────────────────
 
         @mcp.tool(tags={self.domain.value})
-        def workspace_search_content(
-            user_id: str, workspace_id: str, pattern: str, path: str = ""
-        ) -> str:
+        def workspace_search_content(user_id: str, workspace_id: str, pattern: str, path: str = "") -> str:
             """Grep for *pattern* (literal string, case-insensitive) inside tracked
             and untracked files. Optionally restrict to a sub-path (relative to
             the workspace root). Returns up to 200 matching lines as
@@ -312,13 +284,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"{len(rel_lines)} matching lines for '{pattern}'.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_search_content"
-                )
+                return format_error_response(error_message=str(e), context="workspace_search_content")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_search_content"
-                )
+                return format_error_response(error_message=str(e), context="workspace_search_content")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_git_status(user_id: str, workspace_id: str) -> str:
@@ -337,18 +305,12 @@ class WorkspaceToolService(MCPToolBase):
                     summary="Git status retrieved.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_status"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_status")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_status"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_status")
 
         @mcp.tool(tags={self.domain.value})
-        def workspace_git_diff(
-            user_id: str, workspace_id: str, path: str = "", staged: bool = False
-        ) -> str:
+        def workspace_git_diff(user_id: str, workspace_id: str, path: str = "", staged: bool = False) -> str:
             """Show the diff of uncommitted changes. Set staged=true to see
             staged (indexed) changes. Optionally restrict to a sub-path.
             Output is capped at 64 KB."""
@@ -374,18 +336,12 @@ class WorkspaceToolService(MCPToolBase):
                     summary="Git diff retrieved.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_diff"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_diff")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_diff"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_diff")
 
         @mcp.tool(tags={self.domain.value})
-        def workspace_git_log(
-            user_id: str, workspace_id: str, max_entries: int = 20
-        ) -> str:
+        def workspace_git_log(user_id: str, workspace_id: str, max_entries: int = 20) -> str:
             """Return the last *max_entries* (capped at 100) git commits in the
             workspace as a list of {hash, author, date, message}."""
             try:
@@ -398,9 +354,7 @@ class WorkspaceToolService(MCPToolBase):
                     "--pretty=format:%H\x1f%an\x1f%ai\x1f%s",
                 )
                 entries = []
-                for line in result.stdout.decode(
-                    "utf-8", errors="replace"
-                ).splitlines():
+                for line in result.stdout.decode("utf-8", errors="replace").splitlines():
                     parts = line.split("\x1f", 3)
                     if len(parts) == 4:
                         entries.append(
@@ -417,13 +371,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"{len(entries)} commit(s) retrieved.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_log"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_log")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_log"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_log")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_git_current_branch(user_id: str, workspace_id: str) -> str:
@@ -436,23 +386,16 @@ class WorkspaceToolService(MCPToolBase):
                     branch = result.stdout.decode("utf-8", errors="replace").strip()
                 else:
                     rev = _git(ws, "rev-parse", "--short", "HEAD")
-                    branch = (
-                        "(detached) "
-                        + rev.stdout.decode("utf-8", errors="replace").strip()
-                    )
+                    branch = "(detached) " + rev.stdout.decode("utf-8", errors="replace").strip()
                 return format_success_response(
                     action="workspace_git_current_branch",
                     details={"branch": branch},
                     summary=f"Current branch: {branch}",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_current_branch"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_current_branch")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_current_branch"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_current_branch")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_git_list_branches(user_id: str, workspace_id: str) -> str:
@@ -463,9 +406,7 @@ class WorkspaceToolService(MCPToolBase):
                 result = _git(ws, "branch", "--list")
                 branches = [
                     line.strip()
-                    for line in result.stdout.decode(
-                        "utf-8", errors="replace"
-                    ).splitlines()
+                    for line in result.stdout.decode("utf-8", errors="replace").splitlines()
                     if line.strip()
                 ]
                 return format_success_response(
@@ -474,13 +415,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"{len(branches)} branch(es) found.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_list_branches"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_list_branches")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_git_list_branches"
-                )
+                return format_error_response(error_message=str(e), context="workspace_git_list_branches")
 
         # ── WRITE TOOLS ───────────────────────────────────────────────────
 
@@ -502,9 +439,7 @@ class WorkspaceToolService(MCPToolBase):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 data = content.encode("utf-8")
                 if len(data) > MAX_FILE_BYTES:
-                    raise WorkspaceAccessError(
-                        f"File too large ({len(data)} bytes). Max is {MAX_FILE_BYTES} bytes."
-                    )
+                    raise WorkspaceAccessError(f"File too large ({len(data)} bytes). Max is {MAX_FILE_BYTES} bytes.")
                 dest.write_bytes(data)
                 msg = commit_message.strip() or f"agent: write {path}"
                 _git_commit_all(ws, msg)
@@ -514,13 +449,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"Wrote {len(data)} bytes to '{path}' and committed.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_write_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_write_file")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_write_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_write_file")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_create_file(
@@ -537,9 +468,7 @@ class WorkspaceToolService(MCPToolBase):
                 ws = _workspace_dir_write(user_id, workspace_id)
                 dest = _resolve_in(ws, path)
                 if dest.exists():
-                    raise WorkspaceAccessError(
-                        f"File already exists: '{path}'. Use workspace_write_file to overwrite."
-                    )
+                    raise WorkspaceAccessError(f"File already exists: '{path}'. Use workspace_write_file to overwrite.")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(content, encoding="utf-8")
                 msg = commit_message.strip() or f"agent: create {path}"
@@ -550,13 +479,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"Created '{path}' ({len(content.encode('utf-8'))} bytes) and committed.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_create_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_create_file")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_create_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_create_file")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_update_file(
@@ -573,9 +498,7 @@ class WorkspaceToolService(MCPToolBase):
                 ws = _workspace_dir_write(user_id, workspace_id)
                 dest = _resolve_in(ws, path)
                 if not dest.exists():
-                    raise WorkspaceAccessError(
-                        f"File not found: '{path}'. Use workspace_create_file to create it."
-                    )
+                    raise WorkspaceAccessError(f"File not found: '{path}'. Use workspace_create_file to create it.")
                 if not dest.is_file():
                     raise WorkspaceAccessError(f"Path is a directory: '{path}'.")
                 dest.write_text(content, encoding="utf-8")
@@ -587,13 +510,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"Updated '{path}' ({len(content.encode('utf-8'))} bytes) and committed.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_update_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_update_file")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_update_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_update_file")
 
         @mcp.tool(tags={self.domain.value})
         def workspace_delete_file(
@@ -611,9 +530,7 @@ class WorkspaceToolService(MCPToolBase):
                     raise WorkspaceAccessError(f"Path not found: '{path}'.")
                 if target.is_dir():
                     if any(target.iterdir()):
-                        raise WorkspaceAccessError(
-                            f"Directory '{path}' is not empty. Delete its contents first."
-                        )
+                        raise WorkspaceAccessError(f"Directory '{path}' is not empty. Delete its contents first.")
                     target.rmdir()
                 else:
                     target.unlink()
@@ -625,13 +542,9 @@ class WorkspaceToolService(MCPToolBase):
                     summary=f"Deleted '{path}' and committed.",
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_delete_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_delete_file")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_delete_file"
-                )
+                return format_error_response(error_message=str(e), context="workspace_delete_file")
 
         # ── TERMINAL ──────────────────────────────────────────────────────
 
@@ -662,19 +575,14 @@ class WorkspaceToolService(MCPToolBase):
             workspace. timeout is in seconds (default 120, max 600)."""
             try:
                 if not EXEC_ENABLED:
-                    raise WorkspaceAccessError(
-                        "Shell execution is disabled on this server "
-                        "(MACAE_WORKSPACE_EXEC=0)."
-                    )
+                    raise WorkspaceAccessError("Shell execution is disabled on this server (MACAE_WORKSPACE_EXEC=0).")
                 if not (command or "").strip():
                     raise WorkspaceAccessError("Empty command.")
                 ws = _workspace_dir(user_id, workspace_id)
                 cwd = _resolve_in(ws, path) if path else ws
                 if not cwd.is_dir():
                     raise WorkspaceAccessError(f"Not a directory: '{path}'.")
-                secs = max(
-                    1, min(int(timeout or EXEC_TIMEOUT_DEFAULT), EXEC_TIMEOUT_MAX)
-                )
+                secs = max(1, min(int(timeout or EXEC_TIMEOUT_DEFAULT), EXEC_TIMEOUT_MAX))
                 try:
                     proc = subprocess.run(
                         ["bash", "-c", command],
@@ -684,13 +592,9 @@ class WorkspaceToolService(MCPToolBase):
                         env=_child_env(),
                     )
                 except FileNotFoundError as exc:
-                    raise WorkspaceAccessError(
-                        "bash is not available in this environment."
-                    ) from exc
-                except subprocess.TimeoutExpired:
-                    raise WorkspaceAccessError(
-                        f"Command timed out after {secs}s: {command[:120]}"
-                    )
+                    raise WorkspaceAccessError("bash is not available in this environment.") from exc
+                except subprocess.TimeoutExpired as exc:
+                    raise WorkspaceAccessError(f"Command timed out after {secs}s: {command[:120]}") from exc
                 out, out_cut = _clip(proc.stdout.decode("utf-8", errors="replace"))
                 err, err_cut = _clip(proc.stderr.decode("utf-8", errors="replace"))
                 rel_cwd = "/" if cwd == ws else str(cwd.relative_to(ws))
@@ -704,18 +608,12 @@ class WorkspaceToolService(MCPToolBase):
                         "stderr": err,
                         "truncated": out_cut or err_cut,
                     },
-                    summary=(
-                        f"exit={proc.returncode} for `{command[:80]}` in '{rel_cwd}'."
-                    ),
+                    summary=(f"exit={proc.returncode} for `{command[:80]}` in '{rel_cwd}'."),
                 )
             except WorkspaceAccessError as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_exec"
-                )
+                return format_error_response(error_message=str(e), context="workspace_exec")
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="workspace_exec"
-                )
+                return format_error_response(error_message=str(e), context="workspace_exec")
 
     @property
     def tool_count(self) -> int:

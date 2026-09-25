@@ -18,7 +18,7 @@ quien reanude debe verificar antes que la team-config no cambió.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
@@ -83,7 +83,7 @@ class CosmosCheckpointStorage:
 
     def __init__(self, container: Any = None) -> None:
         self._container = container
-        self._client: Optional[CosmosClient] = None
+        self._client: CosmosClient | None = None
 
     async def _ensure_initialized(self) -> Any:
         if self._container is not None:
@@ -129,7 +129,7 @@ class CosmosCheckpointStorage:
         encoded = {k: v for k, v in doc.items() if k not in _COSMOS_FIELDS}
         return WorkflowCheckpoint.from_dict(decode_checkpoint_value(encoded))
 
-    async def _find(self, checkpoint_id: str) -> Optional[dict[str, Any]]:
+    async def _find(self, checkpoint_id: str) -> dict[str, Any] | None:
         container = await self._ensure_initialized()
         items = container.query_items(
             query="SELECT * FROM c WHERE c.id = @id",
@@ -169,7 +169,7 @@ class CosmosCheckpointStorage:
         workflow_name: str,
         checkpoint_id: str,
         *,
-        keep_token: Optional[str] = None,
+        keep_token: str | None = None,
     ) -> None:
         container = await self._ensure_initialized()
         for part in await self._part_docs(workflow_name, checkpoint_id):
@@ -292,7 +292,7 @@ class CosmosCheckpointStorage:
         )
         return True
 
-    async def get_latest(self, *, workflow_name: str) -> Optional[WorkflowCheckpoint]:
+    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         heads = await self._heads(workflow_name)
         if not heads:
             return None
@@ -302,7 +302,7 @@ class CosmosCheckpointStorage:
         return [head["id"] for head in await self._heads(workflow_name)]
 
 
-_storage: Optional[CheckpointStorage] = None
+_storage: CheckpointStorage | None = None
 
 
 def get_checkpoint_storage() -> CheckpointStorage:

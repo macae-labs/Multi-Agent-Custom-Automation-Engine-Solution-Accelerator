@@ -25,7 +25,7 @@ Typical flow:
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 _TTL_SECONDS: int = 3600  # 1 hour
 
 # The pool and its last-used timestamps.
-_pool: Dict[Tuple[str, str, str], Any] = {}
-_last_used: Dict[Tuple[str, str, str], float] = {}
+_pool: dict[tuple[str, str, str], Any] = {}
+_last_used: dict[tuple[str, str, str], float] = {}
 
 # Session metadata persisted to Cosmos (lightweight, no actual session object).
 # Schema:  { "tenant_id": str, "user_id": str, "server_name": str,
 #            "server_url": str, "transport": str, "registered_at": float }
-_metadata: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ class TenantConnectionRegistry:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def get(tenant_id: str, user_id: str, server_name: str) -> Optional[Any]:
+    def get(tenant_id: str, user_id: str, server_name: str) -> Any | None:
         """Return the cached session or None if missing / evicted."""
         _evict_stale()
         key = (tenant_id, user_id, server_name)
@@ -138,8 +138,7 @@ class TenantConnectionRegistry:
             "registered_at": time.time(),
         }
         logger.info(
-            "TenantRegistry: registered session tenant=%s user=%s server=%s "
-            "transport=%s (pool=%d)",
+            "TenantRegistry: registered session tenant=%s user=%s server=%s transport=%s (pool=%d)",
             tenant_id[:8],
             user_id[:8],
             server_name,
@@ -148,7 +147,7 @@ class TenantConnectionRegistry:
         )
 
     @staticmethod
-    def evict(tenant_id: str, user_id: str, server_name: str) -> Optional[Any]:
+    def evict(tenant_id: str, user_id: str, server_name: str) -> Any | None:
         """Remove and return a session from the pool (no close()).
 
         Returns the evicted session object so the caller can close it
@@ -168,7 +167,7 @@ class TenantConnectionRegistry:
         return session
 
     @staticmethod
-    def list_sessions(tenant_id: str = "", user_id: str = "") -> List[Dict[str, Any]]:
+    def list_sessions(tenant_id: str = "", user_id: str = "") -> list[dict[str, Any]]:
         """Return metadata for all matching sessions.
 
         If tenant_id / user_id are empty they are treated as wildcards.
@@ -208,9 +207,7 @@ class TenantConnectionRegistry:
                               If None, persistence is skipped (dev / test).
         """
         if cosmos_container is None:
-            logger.debug(
-                "TenantRegistry.persist: no container provided — skipping Cosmos write"
-            )
+            logger.debug("TenantRegistry.persist: no container provided — skipping Cosmos write")
             return
 
         doc_id = f"session#{tenant_id}#{user_id}#{server_name}"
@@ -235,15 +232,13 @@ class TenantConnectionRegistry:
                 server_name,
             )
         except Exception as e:
-            logger.warning(
-                "TenantRegistry.persist: Cosmos write failed for %s: %s", doc_id, e
-            )
+            logger.warning("TenantRegistry.persist: Cosmos write failed for %s: %s", doc_id, e)
 
     @staticmethod
     async def recover_sessions(
         tenant_id: str,
         cosmos_container=None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Read persisted session metadata from Cosmos for a tenant.
 
         Returns a list of metadata dicts that the caller can use to
@@ -259,11 +254,7 @@ class TenantConnectionRegistry:
             return []
 
         pk = f"session#{tenant_id}"
-        query = (
-            "SELECT * FROM c "
-            "WHERE c.doc_type = 'mcp_session_meta' "
-            "AND c.tenant_id = @tenant_id"
-        )
+        query = "SELECT * FROM c WHERE c.doc_type = 'mcp_session_meta' AND c.tenant_id = @tenant_id"
         params = [{"name": "@tenant_id", "value": tenant_id}]
         results = []
         try:
@@ -288,9 +279,7 @@ class TenantConnectionRegistry:
                 tenant_id[:8],
             )
         except Exception as e:
-            logger.warning(
-                "TenantRegistry.recover_sessions: Cosmos query failed: %s", e
-            )
+            logger.warning("TenantRegistry.recover_sessions: Cosmos query failed: %s", e)
         return results
 
     # ------------------------------------------------------------------

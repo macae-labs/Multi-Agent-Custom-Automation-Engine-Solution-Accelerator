@@ -51,9 +51,7 @@ class Normalization:
     renamed: dict[str, str] = field(default_factory=dict)
 
 
-def normalize_arguments(
-    arguments: dict[str, Any], schema: Any, _path: str = ""
-) -> Normalization:
+def normalize_arguments(arguments: dict[str, Any], schema: Any, _path: str = "") -> Normalization:
     """Return ``arguments`` re-keyed to the schema's property names.
 
     A key is renamed only when (a) it is not itself a declared property,
@@ -76,11 +74,7 @@ def normalize_arguments(
         target = key
         if key not in props:
             candidates = canon_index.get(canonical_key(key), [])
-            if (
-                len(candidates) == 1
-                and candidates[0] not in arguments
-                and candidates[0] not in out
-            ):
+            if len(candidates) == 1 and candidates[0] not in arguments and candidates[0] not in out:
                 target = candidates[0]
                 renamed[f"{_path}{key}"] = f"{_path}{target}"
 
@@ -111,9 +105,7 @@ class Validation:
         return not self.missing_required and not self.unknown
 
 
-def validate_arguments(
-    arguments: dict[str, Any], schema: Any, _path: str = ""
-) -> Validation:
+def validate_arguments(arguments: dict[str, Any], schema: Any, _path: str = "") -> Validation:
     """Report what the remote server would reject for ``arguments``.
 
     ``missing_required`` lists declared ``required`` properties absent from
@@ -131,9 +123,7 @@ def validate_arguments(
     required = schema.get("required")
     if isinstance(required, list):
         result.missing_required.extend(
-            f"{_path}{name}"
-            for name in required
-            if isinstance(name, str) and name not in arguments
+            f"{_path}{name}" for name in required if isinstance(name, str) and name not in arguments
         )
 
     if props and schema.get("additionalProperties") is False:
@@ -141,11 +131,7 @@ def validate_arguments(
 
     for key, value in arguments.items():
         sub_schema = props.get(key)
-        if (
-            isinstance(value, dict)
-            and isinstance(sub_schema, dict)
-            and sub_schema.get("type") == "object"
-        ):
+        if isinstance(value, dict) and isinstance(sub_schema, dict) and sub_schema.get("type") == "object":
             nested = validate_arguments(value, sub_schema, f"{_path}{key}.")
             result.missing_required.extend(nested.missing_required)
             result.unknown.extend(nested.unknown)

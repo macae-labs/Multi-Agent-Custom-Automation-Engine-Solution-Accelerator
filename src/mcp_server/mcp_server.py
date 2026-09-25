@@ -5,19 +5,20 @@ MACAE MCP Server - FastMCP server with organized tools and services.
 import argparse
 import logging
 from typing import Literal, cast
-###
 
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+###
 from config.settings import config
 from core.factory import MCPToolFactory
-from fastmcp.server.auth.providers.jwt import JWTVerifier
+from services.data_tool_service import DataToolService
+from services.general_service import GeneralService
 from services.hr_service import HRService
 from services.inspector_service import InspectorService
 from services.marketing_service import MarketingService
 from services.product_service import ProductService
 from services.product_service_widgets import ProductServiceWithWidgets
 from services.tech_support_service import TechSupportService
-from services.general_service import GeneralService
-from services.data_tool_service import DataToolService
 from services.workspace_service import WorkspaceToolService
 
 # Setup logging
@@ -86,17 +87,13 @@ def log_server_info():
     logger.info(f"🔐 Authentication: {'Enabled' if config.enable_auth else 'Disabled'}")
 
     for domain, info in summary["services"].items():
-        logger.info(
-            f"   📁 {domain}: {info['tool_count']} tools ({info['class_name']})"
-        )
+        logger.info(f"   📁 {domain}: {info['tool_count']} tools ({info['class_name']})")
 
 
 Transport = Literal["stdio", "http", "streamable-http", "sse"]
 
 
-def run_server(
-    transport: str = "stdio", host: str = "127.0.0.1", port: int = 9000, **kwargs
-):
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 9000, **kwargs):
     """Run the FastMCP server with specified transport."""
     if not mcp:
         logger.error("❌ Cannot start FastMCP server - not available")
@@ -108,9 +105,7 @@ def run_server(
     logger.info(f"🤖 Starting FastMCP server with {transport} transport")
     if transport in ["http", "streamable-http", "sse"]:
         logger.info(f"🌐 Server will be available at: http://{host}:{port}/mcp/")
-        mcp.run(
-            transport=_transport, host=host, port=port, json_response=True, **kwargs
-        )
+        mcp.run(transport=_transport, host=host, port=port, json_response=True, **kwargs)
     else:
         # For STDIO transport, only pass kwargs that are supported
         stdio_kwargs = {k: v for k, v in kwargs.items() if k not in ["log_level"]}

@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from typing import Any, ClassVar, Dict, List, Optional, Type, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from azure.cosmos.aio import ContainerProxy, CosmosClient
 from azure.cosmos.aio._database import DatabaseProxy
@@ -28,7 +28,7 @@ _T = TypeVar("_T", bound="BaseDataModel")
 class CosmosDBClient(DatabaseBase):
     """CosmosDB implementation of the database interface."""
 
-    MODEL_CLASS_MAPPING: ClassVar[Dict[str, Type["BaseDataModel"]]] = {
+    MODEL_CLASS_MAPPING: ClassVar[dict[str, type["BaseDataModel"]]] = {
         DataType.plan: Plan,
         DataType.step: Step,
         DataType.agent_message: AgentMessage,
@@ -55,9 +55,9 @@ class CosmosDBClient(DatabaseBase):
         self.tenant_id = tenant_id
 
         self.logger = logging.getLogger(__name__)
-        self.client: Optional[CosmosClient] = None
-        self.database: Optional[DatabaseProxy] = None
-        self.container: Optional[ContainerProxy] = None
+        self.client: CosmosClient | None = None
+        self.database: DatabaseProxy | None = None
+        self.container: ContainerProxy | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -134,8 +134,8 @@ class CosmosDBClient(DatabaseBase):
             raise
 
     async def get_item_by_id(
-        self, item_id: str, partition_key: str, model_class: Type[_T]
-    ) -> Optional[_T]:
+        self, item_id: str, partition_key: str, model_class: type[_T]
+    ) -> _T | None:
         """Retrieve an item by its ID and partition key."""
         await self._ensure_initialized()
         assert self.container is not None
@@ -152,9 +152,9 @@ class CosmosDBClient(DatabaseBase):
     async def query_items(
         self,
         query: str,
-        parameters: List[Dict[str, Any]],
-        model_class: Type[_T],
-    ) -> List[_T]:
+        parameters: list[dict[str, Any]],
+        model_class: type[_T],
+    ) -> list[_T]:
         """Query items from CosmosDB and return a list of model instances."""
         await self._ensure_initialized()
         assert self.container is not None
@@ -194,7 +194,7 @@ class CosmosDBClient(DatabaseBase):
         """Update a plan in CosmosDB."""
         await self.update_item(plan)
 
-    async def get_plan_by_plan_id(self, plan_id: str) -> Optional[Plan]:
+    async def get_plan_by_plan_id(self, plan_id: str) -> Plan | None:
         """Retrieve a plan by plan_id."""
         query = "SELECT * FROM c WHERE c.id=@plan_id AND c.data_type=@data_type"
         parameters = [
@@ -205,11 +205,11 @@ class CosmosDBClient(DatabaseBase):
         results = await self.query_items(query, parameters, Plan)
         return results[0] if results else None
 
-    async def get_plan(self, plan_id: str) -> Optional[Plan]:
+    async def get_plan(self, plan_id: str) -> Plan | None:
         """Retrieve a plan by plan_id."""
         return await self.get_plan_by_plan_id(plan_id)
 
-    async def get_all_plans(self) -> List[Plan]:
+    async def get_all_plans(self) -> list[Plan]:
         """Retrieve all plans for the user."""
         query = "SELECT * FROM c WHERE c.user_id=@user_id AND c.data_type=@data_type"
         parameters = [
@@ -218,7 +218,7 @@ class CosmosDBClient(DatabaseBase):
         ]
         return await self.query_items(query, parameters, Plan)
 
-    async def get_all_plans_by_team_id(self, team_id: str) -> List[Plan]:
+    async def get_all_plans_by_team_id(self, team_id: str) -> list[Plan]:
         """Retrieve all plans for a specific team."""
         query = "SELECT * FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type and c.user_id=@user_id"
         parameters = [
@@ -230,7 +230,7 @@ class CosmosDBClient(DatabaseBase):
 
     async def get_all_plans_by_team_id_status(
         self, user_id: str, team_id: str, status: str
-    ) -> List[Plan]:
+    ) -> list[Plan]:
         """Retrieve all plans for a specific team."""
         query = "SELECT * FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type and c.user_id=@user_id and c.overall_status=@status ORDER BY c._ts DESC"
         parameters = [
@@ -250,7 +250,7 @@ class CosmosDBClient(DatabaseBase):
         """Update a step in CosmosDB."""
         await self.update_item(step)
 
-    async def get_steps_by_plan(self, plan_id: str) -> List[Step]:
+    async def get_steps_by_plan(self, plan_id: str) -> list[Step]:
         """Retrieve all steps for a plan."""
         query = "SELECT * FROM c WHERE c.plan_id=@plan_id AND c.data_type=@data_type ORDER BY c.timestamp"
         parameters = [
@@ -259,7 +259,7 @@ class CosmosDBClient(DatabaseBase):
         ]
         return await self.query_items(query, parameters, Step)
 
-    async def get_step(self, step_id: str, session_id: str) -> Optional[Step]:
+    async def get_step(self, step_id: str, session_id: str) -> Step | None:
         """Retrieve a step by step_id and session_id."""
         query = "SELECT * FROM c WHERE c.id=@step_id AND c.session_id=@session_id AND c.data_type=@data_type"
         parameters = [
@@ -272,7 +272,7 @@ class CosmosDBClient(DatabaseBase):
 
     # Removed duplicate update_team method definition
 
-    async def get_team(self, team_id: str) -> Optional[TeamConfiguration]:
+    async def get_team(self, team_id: str) -> TeamConfiguration | None:
         """Retrieve a specific team configuration by team_id.
 
         Args:
@@ -289,7 +289,7 @@ class CosmosDBClient(DatabaseBase):
         teams = await self.query_items(query, parameters, TeamConfiguration)
         return teams[0] if teams else None
 
-    async def get_team_by_id(self, team_id: str) -> Optional[TeamConfiguration]:
+    async def get_team_by_id(self, team_id: str) -> TeamConfiguration | None:
         """Retrieve a specific team configuration by its document id.
 
         Args:
@@ -306,7 +306,7 @@ class CosmosDBClient(DatabaseBase):
         teams = await self.query_items(query, parameters, TeamConfiguration)
         return teams[0] if teams else None
 
-    async def get_all_teams(self) -> List[TeamConfiguration]:
+    async def get_all_teams(self) -> list[TeamConfiguration]:
         """Retrieve all team configurations for a specific user.
 
         Args:
@@ -345,7 +345,7 @@ class CosmosDBClient(DatabaseBase):
             return False
 
     # Data Management Operations
-    async def get_data_by_type(self, data_type: str) -> List[BaseDataModel]:
+    async def get_data_by_type(self, data_type: str) -> list[BaseDataModel]:
         """Retrieve all data of a specific type."""
         query = "SELECT * FROM c WHERE c.data_type=@data_type AND c.user_id=@user_id"
         parameters = [
@@ -357,10 +357,10 @@ class CosmosDBClient(DatabaseBase):
         model_class = self.MODEL_CLASS_MAPPING.get(data_type, BaseDataModel)
         return await self.query_items(query, parameters, model_class)
 
-    async def get_all_items(self) -> List[Dict[str, Any]]:
+    async def get_all_items(self) -> list[dict[str, Any]]:
         """Retrieve all items as dictionaries."""
         query = "SELECT * FROM c WHERE c.user_id=@user_id"
-        parameters: List[Dict[str, object]] = [
+        parameters: list[dict[str, object]] = [
             {"name": "@user_id", "value": self.user_id},
         ]
 
@@ -375,7 +375,7 @@ class CosmosDBClient(DatabaseBase):
     # Collection Management (for compatibility)
 
     # Additional compatibility methods
-    async def get_steps_for_plan(self, plan_id: str) -> List[Step]:
+    async def get_steps_for_plan(self, plan_id: str) -> list[Step]:
         """Alias for get_steps_by_plan for compatibility."""
         return await self.get_steps_by_plan(plan_id)
 
@@ -395,7 +395,7 @@ class CosmosDBClient(DatabaseBase):
         """
         await self.update_item(team)
 
-    async def get_current_team(self, user_id: str) -> Optional[UserCurrentTeam]:
+    async def get_current_team(self, user_id: str) -> UserCurrentTeam | None:
         """Retrieve the current team for a user."""
         await self._ensure_initialized()
         if self.container is None:
@@ -417,7 +417,7 @@ class CosmosDBClient(DatabaseBase):
         assert self.container is not None
         query = "SELECT c.id, c.session_id FROM c WHERE c.user_id=@user_id AND c.data_type=@data_type"
 
-        params: List[Dict[str, object]] = [
+        params: list[dict[str, object]] = [
             {"name": "@user_id", "value": user_id},
             {"name": "@data_type", "value": DataType.user_current_team},
         ]
@@ -452,7 +452,7 @@ class CosmosDBClient(DatabaseBase):
         assert self.container is not None
         query = "SELECT c.id, c.session_id FROM c WHERE c.id=@plan_id "
 
-        params: List[Dict[str, object]] = [
+        params: list[dict[str, object]] = [
             {"name": "@plan_id", "value": plan_id},
         ]
         items = self.container.query_items(query=query, parameters=params)
@@ -484,12 +484,12 @@ class CosmosDBClient(DatabaseBase):
         document = mplan.model_dump()
         await self.container.upsert_item(body=document)
 
-    async def get_mplan(self, plan_id: str) -> Optional[messages.MPlan]:
+    async def get_mplan(self, plan_id: str) -> messages.MPlan | None:
         """Retrieve a mplan configuration by mplan_id."""
         await self._ensure_initialized()
         assert self.container is not None
         query = "SELECT * FROM c WHERE c.plan_id=@plan_id AND c.data_type=@data_type"
-        parameters: List[Dict[str, object]] = [
+        parameters: list[dict[str, object]] = [
             {"name": "@plan_id", "value": plan_id},
             {"name": "@data_type", "value": DataType.m_plan},
         ]
@@ -506,7 +506,7 @@ class CosmosDBClient(DatabaseBase):
         """Update an agent message in the database."""
         await self.update_item(message)
 
-    async def get_agent_messages(self, plan_id: str) -> List[AgentMessageData]:
+    async def get_agent_messages(self, plan_id: str) -> list[AgentMessageData]:
         """Retrieve an agent message by message_id."""
         query = "SELECT * FROM c WHERE c.plan_id=@plan_id AND c.data_type=@data_type ORDER BY c._ts ASC"
         parameters = [
@@ -529,7 +529,7 @@ class CosmosDBClient(DatabaseBase):
         assert self.container is not None
         query = "SELECT c.id, c.session_id FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type AND c.agent_name=@agent_name"
 
-        params: List[Dict[str, object]] = [
+        params: list[dict[str, object]] = [
             {"name": "@team_id", "value": team_id},
             {"name": "@agent_name", "value": agent_name},
             {"name": "@data_type", "value": DataType.current_team_agent},
@@ -549,7 +549,7 @@ class CosmosDBClient(DatabaseBase):
 
     async def get_team_agent(
         self, team_id: str, agent_name: str
-    ) -> Optional[CurrentTeamAgent]:
+    ) -> CurrentTeamAgent | None:
         """Retrieve a team agent by team_id and agent_name."""
         query = "SELECT * FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type AND c.agent_name=@agent_name"
         params = [

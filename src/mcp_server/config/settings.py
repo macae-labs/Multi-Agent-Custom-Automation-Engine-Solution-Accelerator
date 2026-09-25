@@ -2,8 +2,6 @@
 Configuration settings for the MCP server.
 """
 
-from typing import Optional
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,11 +21,11 @@ class MCPServerConfig(BaseSettings):
     debug: bool = Field(default=False)
 
     # Authentication settings
-    tenant_id: Optional[str] = Field(default=None)
-    client_id: Optional[str] = Field(default=None)
-    jwks_uri: Optional[str] = Field(default=None)
-    issuer: Optional[str] = Field(default=None)
-    audience: Optional[str] = Field(default=None)
+    tenant_id: str | None = Field(default=None)
+    client_id: str | None = Field(default=None)
+    jwks_uri: str | None = Field(default=None)
+    issuer: str | None = Field(default=None)
+    audience: str | None = Field(default=None)
 
     # MCP specific settings
     server_name: str = Field(default="MacaeMcpServer")

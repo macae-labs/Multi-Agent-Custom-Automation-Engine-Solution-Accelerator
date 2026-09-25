@@ -10,7 +10,7 @@ the ENTIRE conversation history — no message limit.
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -43,7 +43,7 @@ class SearchIndexService:
         # credential can be different async credential implementations
         # (DefaultAzureCredential, ManagedIdentityCredential, etc.),
         # so annotate as Any to avoid overly strict type checks.
-        self._credential: Optional[Any] = None
+        self._credential: Any | None = None
         self._search_endpoint: str = ""
         self._openai_endpoint: str = ""
         self._embedding_deployment: str = ""
@@ -109,7 +109,7 @@ class SearchIndexService:
 
     # ── Embedding generation ─────────────────────────────────────
 
-    async def generate_embedding(self, text: str) -> Optional[List[float]]:
+    async def generate_embedding(self, text: str) -> list[float] | None:
         """Generate embedding vector via Azure OpenAI."""
         if not await self._ensure():
             return None
@@ -239,7 +239,7 @@ class SearchIndexService:
         user_id: str = "",
         session_id: str = "",
         top_k: int = 15,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Hybrid search (keyword + vector + semantic reranking) over chat history.
 
         Returns the top_k most relevant messages across ALL sessions,
@@ -254,7 +254,7 @@ class SearchIndexService:
             return []
 
         # Build hybrid search request (keyword + vector + semantic)
-        search_body: Dict[str, Any] = {
+        search_body: dict[str, Any] = {
             "search": query,
             "queryType": "semantic",
             "semanticConfiguration": "chat-semantic-config",
@@ -336,7 +336,7 @@ class SearchIndexService:
         recency_boost: float = 1.3,
         chat_query: str = "",
         sort_by: str = "relevance",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search across ALL indices (chat history + documents) in parallel.
 
         Fuses results by combining semantic score with recency boost for
@@ -363,10 +363,10 @@ class SearchIndexService:
 
         async def _search_one_index(
             index_name: str, semantic_config: str, is_chat: bool
-        ) -> List[Dict[str, Any]]:
+        ) -> list[dict[str, Any]]:
             """Search a single index and tag results with source."""
             text_query = (chat_query or query) if is_chat else query
-            search_body: Dict[str, Any] = {
+            search_body: dict[str, Any] = {
                 "search": text_query,
                 "queryType": "semantic",
                 "semanticConfiguration": semantic_config,
@@ -437,7 +437,7 @@ class SearchIndexService:
         all_results_nested = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Flatten and filter errors
-        fused: List[Dict[str, Any]] = []
+        fused: list[dict[str, Any]] = []
         for result in all_results_nested:
             if isinstance(result, list):
                 fused.extend(result)
@@ -451,7 +451,7 @@ class SearchIndexService:
             # will be treated as very old (None -> minimal value).
             from datetime import datetime
 
-            def _ts_key(item: Dict[str, Any]):
+            def _ts_key(item: dict[str, Any]):
                 ts = item.get("timestamp")
                 if not ts:
                     return datetime.min
@@ -533,7 +533,7 @@ class SearchIndexService:
 
 # ── Singleton ────────────────────────────────────────────────────
 
-_instance: Optional[SearchIndexService] = None
+_instance: SearchIndexService | None = None
 
 
 async def get_search_index_service() -> SearchIndexService:

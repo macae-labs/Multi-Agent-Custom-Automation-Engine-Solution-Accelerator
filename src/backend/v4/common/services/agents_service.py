@@ -10,7 +10,7 @@ agent instances.
 """
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from common.models.messages_af import TeamAgent, TeamConfiguration
 from v4.common.services.team_service import TeamService
@@ -36,8 +36,8 @@ class AgentsService:
         self.logger = logging.getLogger(__name__)
 
     async def get_agents_from_team_config(
-        self, team_config: Union[TeamConfiguration, Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, team_config: TeamConfiguration | dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Return a list of lightweight agent descriptors derived from a
         TeamConfiguration or a raw dict.
 
@@ -67,7 +67,7 @@ class AgentsService:
             except Exception:
                 agents_raw = []
 
-        descriptors: List[Dict[str, Any]] = []
+        descriptors: list[dict[str, Any]] = []
         for a in agents_raw:
             if isinstance(a, TeamAgent):
                 desc = {
@@ -106,7 +106,7 @@ class AgentsService:
 
         return descriptors
 
-    async def instantiate_agents(self, agent_descriptors: List[Dict[str, Any]]):
+    async def instantiate_agents(self, agent_descriptors: list[dict[str, Any]]):
         """Placeholder for instantiating runtime agent objects from descriptors.
 
         The real implementation should create agent framework  / Foundry agents

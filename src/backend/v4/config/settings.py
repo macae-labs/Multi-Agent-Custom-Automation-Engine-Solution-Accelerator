@@ -6,7 +6,7 @@ Handles Azure OpenAI, MCP, and environment setup (agent_framework version).
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent_framework import ChatOptions
 from agent_framework.azure import AzureOpenAIChatClient
@@ -87,14 +87,14 @@ class OrchestrationConfig:
 
     def __init__(self):
         # Previously Dict[str, MagenticOrchestration]; now generic workflow objects from MagenticBuilder.build()
-        self.orchestrations: Dict[str, Any] = {}  # user_id -> workflow instance
-        self.managers: Dict[
+        self.orchestrations: dict[str, Any] = {}  # user_id -> workflow instance
+        self.managers: dict[
             str, Any
         ] = {}  # user_id -> HumanApprovalMagenticManager (same lifecycle as its workflow)
-        self.agent_wrappers: Dict[
-            str, List[Any]
+        self.agent_wrappers: dict[
+            str, list[Any]
         ] = {}  # user_id -> list of lifecycle-managed agent wrappers (for proper close)
-        self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
+        self.sockets: dict[str, WebSocket] = {}  # user_id -> WebSocket
         self.max_rounds: int = 20  # Maximum replanning rounds
 
         # No in-process waits for humans. Plan review and clarification are
@@ -143,10 +143,10 @@ class ConnectionConfig:
     """
 
     def __init__(self):
-        self.connections: Dict[str, WebSocket] = {}
+        self.connections: dict[str, WebSocket] = {}
 
     def add_connection(
-        self, process_id: str, connection: WebSocket, user_id: Optional[str] = None
+        self, process_id: str, connection: WebSocket, user_id: str | None = None
     ):
         """Register the socket of a plan, replacing a previous one for the same plan."""
         process_id = str(process_id)
@@ -196,7 +196,7 @@ class ConnectionConfig:
         user_id: str,
         message_type: WebsocketMessageType = WebsocketMessageType.SYSTEM_MESSAGE,
         *,
-        process_id: Optional[str] = None,
+        process_id: str | None = None,
     ):
         """Send a message to the socket of the plan it belongs to.
 
@@ -260,13 +260,13 @@ class TeamConfig:
     """Team configuration for agents."""
 
     def __init__(self):
-        self.teams: Dict[str, TeamConfiguration] = {}
+        self.teams: dict[str, TeamConfiguration] = {}
 
     def set_current_team(self, user_id: str, team_configuration: TeamConfiguration):
         """Store current team configuration for user."""
         self.teams[user_id] = team_configuration
 
-    def get_current_team(self, user_id: str) -> Optional[TeamConfiguration]:
+    def get_current_team(self, user_id: str) -> TeamConfiguration | None:
         """Retrieve current team configuration for user."""
         return self.teams.get(user_id, None)
 

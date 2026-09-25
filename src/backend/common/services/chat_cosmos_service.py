@@ -10,7 +10,7 @@ Pattern: sessions with embedded messages (denormalized, same as customer-chatbot
 import datetime
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from azure.cosmos import exceptions
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
@@ -44,9 +44,9 @@ class ChatCosmosService:
     """CRUD for chat sessions stored in Cosmos DB."""
 
     def __init__(self) -> None:
-        self._client: Optional[CosmosClient] = None
-        self._database: Optional[DatabaseProxy] = None
-        self._container: Optional[ContainerProxy] = None
+        self._client: CosmosClient | None = None
+        self._database: DatabaseProxy | None = None
+        self._container: ContainerProxy | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -101,8 +101,8 @@ class ChatCosmosService:
     async def create_session(
         self,
         user_id: str,
-        session_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        session_name: str | None = None,
+    ) -> dict[str, Any]:
         """Create a new chat session."""
         if not await self._ensure():
             return self._fallback_session(user_id, session_name)
@@ -136,7 +136,7 @@ class ChatCosmosService:
         self,
         session_id: str,
         user_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a session by ID."""
         if not await self._ensure():
             return None
@@ -159,7 +159,7 @@ class ChatCosmosService:
         self,
         user_id: str,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get all sessions for a user, most recent first."""
         if not await self._ensure():
             return []
@@ -175,7 +175,7 @@ class ChatCosmosService:
                 "ORDER BY c.updated_at DESC "
                 "OFFSET 0 LIMIT @limit"
             )
-            params: List[Dict[str, object]] = [
+            params: list[dict[str, object]] = [
                 {"name": "@user_id", "value": user_id},
                 {"name": "@limit", "value": limit},
             ]
@@ -225,8 +225,8 @@ class ChatCosmosService:
         user_id: str,
         content: str,
         role: str = "user",
-        metadata: Optional[Dict] = None,
-    ) -> Optional[Dict[str, Any]]:
+        metadata: dict | None = None,
+    ) -> dict[str, Any] | None:
         """Append a message to session's embedded messages array.
 
         Pattern: read → append → upsert (same as customer-chatbot).
@@ -389,7 +389,7 @@ class ChatCosmosService:
         self,
         session_id: str,
         user_id: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Return the Foundry conversation_id persisted for this session, if any."""
         session = await self.get_session(session_id, user_id)
         if session:
@@ -426,8 +426,8 @@ class ChatCosmosService:
     @staticmethod
     def _fallback_session(
         user_id: str,
-        session_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        session_name: str | None = None,
+    ) -> dict[str, Any]:
         """Return an in-memory-only session when Cosmos is unavailable."""
         now = _utc_now_iso()
         return {
@@ -447,7 +447,7 @@ class ChatCosmosService:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[ChatCosmosService] = None
+_instance: ChatCosmosService | None = None
 
 
 async def get_chat_cosmos_service() -> ChatCosmosService:

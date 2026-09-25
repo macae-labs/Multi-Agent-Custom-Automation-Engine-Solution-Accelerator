@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, AsyncIterable, Awaitable, Final
+from collections.abc import AsyncIterable, Awaitable
+from typing import Any, Final
 
 from agent_framework import (
     AgentResponse,

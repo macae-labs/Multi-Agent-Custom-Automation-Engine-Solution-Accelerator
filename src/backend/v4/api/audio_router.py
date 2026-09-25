@@ -213,7 +213,7 @@ async def audio_stream(
                     await _cancel_active_response(vl)
                     try:
                         await asyncio.wait_for(response_idle.wait(), timeout=1.5)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logging.warning(
                             "[audio/stream] turn=%s lane=%s: la respuesta previa "
                             "no reportó done en 1.5s; creando igual",
@@ -281,7 +281,7 @@ async def audio_stream(
                     await _cancel_active_response(vl)
                     try:
                         await asyncio.wait_for(response_idle.wait(), timeout=1.5)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logging.warning(
                             "[audio/stream] turn=%s lane=%s: timeout esperando "
                             "response_idle tras cancel en retry (attempt=%d); "

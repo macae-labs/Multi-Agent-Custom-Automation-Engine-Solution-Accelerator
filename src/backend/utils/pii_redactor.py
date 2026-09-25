@@ -14,7 +14,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Tuple
 
 
 class PIIType(Enum):
@@ -35,7 +34,7 @@ class PIIToken:
     token: str
     original_value: str
     pii_type: PIIType
-    position: Tuple[int, int]  # start, end in original text
+    position: tuple[int, int]  # start, end in original text
 
 
 @dataclass
@@ -43,8 +42,8 @@ class RedactionResult:
     """Result of PII redaction."""
 
     redacted_text: str
-    tokens: List[PIIToken] = field(default_factory=list)
-    token_map: Dict[str, str] = field(default_factory=dict)  # token -> original
+    tokens: list[PIIToken] = field(default_factory=list)
+    token_map: dict[str, str] = field(default_factory=dict)  # token -> original
 
     def rehydrate(self, text: str) -> str:
         """Replace tokens with original values in the given text."""
@@ -92,7 +91,7 @@ class PIIRedactor:
     }
 
     def __init__(self):
-        self._counters: Dict[PIIType, int] = {t: 0 for t in PIIType}
+        self._counters: dict[PIIType, int] = {t: 0 for t in PIIType}
 
     def _get_next_token(self, pii_type: PIIType) -> str:
         """Generate the next token for a given PII type."""
@@ -115,11 +114,11 @@ class PIIRedactor:
         # Reset counters for each redaction
         self._counters = {t: 0 for t in PIIType}
 
-        tokens: List[PIIToken] = []
-        token_map: Dict[str, str] = {}
+        tokens: list[PIIToken] = []
+        token_map: dict[str, str] = {}
 
         # Find all PII matches with their positions
-        all_matches: List[Tuple[int, int, str, PIIType]] = []
+        all_matches: list[tuple[int, int, str, PIIType]] = []
 
         for pii_type, pattern in self.PATTERNS.items():
             for match in pattern.finditer(text):
@@ -131,7 +130,7 @@ class PIIRedactor:
         all_matches.sort(key=lambda x: x[0])
 
         # Build redacted text
-        redacted_parts: List[str] = []
+        redacted_parts: list[str] = []
         last_end = 0
 
         for start, end, value, pii_type in all_matches:
@@ -172,7 +171,7 @@ class PIIRedactor:
         """Check if text looks like a PII token."""
         return bool(re.match(r"\{\{[A-Z]+_\d+\}\}", text))
 
-    def extract_tokens(self, text: str) -> List[str]:
+    def extract_tokens(self, text: str) -> list[str]:
         """Extract all PII tokens from text."""
         return re.findall(r"\{\{[A-Z]+_\d+\}\}", text)
 
@@ -187,7 +186,7 @@ class PIIContext:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.redactor = PIIRedactor()
-        self._token_map: Dict[str, str] = {}
+        self._token_map: dict[str, str] = {}
 
     def redact(self, text: str) -> str:
         """Redact PII and store mappings. Returns redacted text."""
@@ -202,7 +201,7 @@ class PIIContext:
             result = result.replace(token, original)
         return result
 
-    def get_token_map(self) -> Dict[str, str]:
+    def get_token_map(self) -> dict[str, str]:
         """Get a copy of the current token map."""
         return self._token_map.copy()
 
@@ -216,7 +215,7 @@ class PIIContext:
 
 
 # Global registry for session PII contexts
-_pii_contexts: Dict[str, PIIContext] = {}
+_pii_contexts: dict[str, PIIContext] = {}
 
 
 def get_pii_context(session_id: str) -> PIIContext:

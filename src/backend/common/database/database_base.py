@@ -2,7 +2,7 @@
 
 import copy
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 import v4.models.messages as messages
 
@@ -59,8 +59,8 @@ class DatabaseBase(ABC):
 
     @abstractmethod
     async def get_item_by_id(
-        self, item_id: str, partition_key: str, model_class: Type[_T]
-    ) -> Optional[_T]:
+        self, item_id: str, partition_key: str, model_class: type[_T]
+    ) -> _T | None:
         """Retrieve an item by its ID and partition key."""
         pass
 
@@ -68,9 +68,9 @@ class DatabaseBase(ABC):
     async def query_items(
         self,
         query: str,
-        parameters: List[Dict[str, Any]],
-        model_class: Type[_T],
-    ) -> List[_T]:
+        parameters: list[dict[str, Any]],
+        model_class: type[_T],
+    ) -> list[_T]:
         """Query items from the database and return a list of model instances."""
         pass
 
@@ -91,29 +91,29 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
-    async def get_plan_by_plan_id(self, plan_id: str) -> Optional[Plan]:
+    async def get_plan_by_plan_id(self, plan_id: str) -> Plan | None:
         """Retrieve a plan by plan_id."""
         pass
 
     @abstractmethod
-    async def get_plan(self, plan_id: str) -> Optional[Plan]:
+    async def get_plan(self, plan_id: str) -> Plan | None:
         """Retrieve a plan by plan_id."""
         pass
 
     @abstractmethod
-    async def get_all_plans(self) -> List[Plan]:
+    async def get_all_plans(self) -> list[Plan]:
         """Retrieve all plans for the user."""
         pass
 
     @abstractmethod
-    async def get_all_plans_by_team_id(self, team_id: str) -> List[Plan]:
+    async def get_all_plans_by_team_id(self, team_id: str) -> list[Plan]:
         """Retrieve all plans for a specific team."""
         pass
 
     @abstractmethod
     async def get_all_plans_by_team_id_status(
         self, user_id: str, team_id: str, status: str
-    ) -> List[Plan]:
+    ) -> list[Plan]:
         """Retrieve all plans for a specific team."""
         pass
 
@@ -129,12 +129,12 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
-    async def get_steps_by_plan(self, plan_id: str) -> List[Step]:
+    async def get_steps_by_plan(self, plan_id: str) -> list[Step]:
         """Retrieve all steps for a plan."""
         pass
 
     @abstractmethod
-    async def get_step(self, step_id: str, session_id: str) -> Optional[Step]:
+    async def get_step(self, step_id: str, session_id: str) -> Step | None:
         """Retrieve a step by step_id and session_id."""
         pass
 
@@ -150,17 +150,17 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
-    async def get_team(self, team_id: str) -> Optional[TeamConfiguration]:
+    async def get_team(self, team_id: str) -> TeamConfiguration | None:
         """Retrieve a team configuration by team_id."""
         pass
 
     @abstractmethod
-    async def get_team_by_id(self, team_id: str) -> Optional[TeamConfiguration]:
+    async def get_team_by_id(self, team_id: str) -> TeamConfiguration | None:
         """Retrieve a team configuration by internal id."""
         pass
 
     @abstractmethod
-    async def get_all_teams(self) -> List[TeamConfiguration]:
+    async def get_all_teams(self) -> list[TeamConfiguration]:
         """Retrieve all team configurations for the given user."""
         pass
 
@@ -171,12 +171,12 @@ class DatabaseBase(ABC):
 
     # Data Management Operations
     @abstractmethod
-    async def get_data_by_type(self, data_type: str) -> List[BaseDataModel]:
+    async def get_data_by_type(self, data_type: str) -> list[BaseDataModel]:
         """Retrieve all data of a specific type."""
         pass
 
     @abstractmethod
-    async def get_all_items(self) -> List[Dict[str, Any]]:
+    async def get_all_items(self) -> list[dict[str, Any]]:
         """Retrieve all items as dictionaries."""
         pass
 
@@ -191,12 +191,12 @@ class DatabaseBase(ABC):
         await self.close()
 
     @abstractmethod
-    async def get_steps_for_plan(self, plan_id: str) -> List[Step]:
+    async def get_steps_for_plan(self, plan_id: str) -> list[Step]:
         """Convenience method aliasing get_steps_by_plan for compatibility."""
         pass
 
     @abstractmethod
-    async def get_current_team(self, user_id: str) -> Optional[UserCurrentTeam]:
+    async def get_current_team(self, user_id: str) -> UserCurrentTeam | None:
         """Retrieve the current team for a user."""
         pass
 
@@ -231,7 +231,7 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
-    async def get_mplan(self, plan_id: str) -> Optional[messages.MPlan]:
+    async def get_mplan(self, plan_id: str) -> messages.MPlan | None:
         """Retrieve an mplan configuration by plan_id."""
         pass
 
@@ -246,7 +246,7 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
-    async def get_agent_messages(self, plan_id: str) -> List[AgentMessageData]:
+    async def get_agent_messages(self, plan_id: str) -> list[AgentMessageData]:
         """Retrieve agent messages by plan_id."""
         pass
 
@@ -263,6 +263,6 @@ class DatabaseBase(ABC):
     @abstractmethod
     async def get_team_agent(
         self, team_id: str, agent_name: str
-    ) -> Optional[CurrentTeamAgent]:
+    ) -> CurrentTeamAgent | None:
         """Retrieve a team agent by team_id and agent_name."""
         pass

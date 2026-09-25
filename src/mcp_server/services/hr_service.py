@@ -149,9 +149,7 @@ class HRService(MCPToolBase):
                     summary=summary,
                 )
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="scheduling orientation session"
-                )
+                return format_error_response(error_message=str(e), context="scheduling orientation session")
 
         @mcp.tool(tags={self.domain.value})
         async def assign_mentor(employee_name: str, mentor_name: str = "TBD") -> str:
@@ -162,22 +160,14 @@ class HRService(MCPToolBase):
                     "mentor_name": mentor_name,
                     "status": "Assigned",
                 }
-                summary = (
-                    f"Successfully assigned mentor {mentor_name} to {employee_name}."
-                )
+                summary = f"Successfully assigned mentor {mentor_name} to {employee_name}."
 
-                return format_success_response(
-                    action="Mentor Assignment", details=details, summary=summary
-                )
+                return format_success_response(action="Mentor Assignment", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="assigning mentor"
-                )
+                return format_error_response(error_message=str(e), context="assigning mentor")
 
         @mcp.tool(tags={self.domain.value})
-        async def register_for_benefits(
-            employee_name: str, benefits_package: str = "Standard"
-        ) -> str:
+        async def register_for_benefits(employee_name: str, benefits_package: str = "Standard") -> str:
             """Register a new employee for benefits."""
             try:
                 details = {
@@ -187,13 +177,9 @@ class HRService(MCPToolBase):
                 }
                 summary = f"Successfully registered {employee_name} for {benefits_package} benefits package."
 
-                return format_success_response(
-                    action="Benefits Registration", details=details, summary=summary
-                )
+                return format_success_response(action="Benefits Registration", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="registering for benefits"
-                )
+                return format_error_response(error_message=str(e), context="registering for benefits")
 
         @mcp.tool(tags={self.domain.value})
         async def provide_employee_handbook(employee_name: str) -> str:
@@ -213,14 +199,10 @@ class HRService(MCPToolBase):
                     summary=summary,
                 )
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="providing employee handbook"
-                )
+                return format_error_response(error_message=str(e), context="providing employee handbook")
 
         @mcp.tool(tags={self.domain.value})
-        async def initiate_background_check(
-            employee_name: str, check_type: str = "Standard"
-        ) -> str:
+        async def initiate_background_check(employee_name: str, check_type: str = "Standard") -> str:
             """Initiate a background check for a new employee."""
             try:
                 details = {
@@ -237,14 +219,10 @@ class HRService(MCPToolBase):
                     summary=summary,
                 )
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="initiating background check"
-                )
+                return format_error_response(error_message=str(e), context="initiating background check")
 
         @mcp.tool(tags={self.domain.value})
-        async def request_id_card(
-            employee_name: str, department: str = "General"
-        ) -> str:
+        async def request_id_card(employee_name: str, department: str = "General") -> str:
             """Request an ID card for a new employee."""
             try:
                 details = {
@@ -256,18 +234,12 @@ class HRService(MCPToolBase):
                 }
                 summary = f"ID card request submitted for {employee_name} in {department} department."
 
-                return format_success_response(
-                    action="ID Card Request", details=details, summary=summary
-                )
+                return format_success_response(action="ID Card Request", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="requesting ID card"
-                )
+                return format_error_response(error_message=str(e), context="requesting ID card")
 
         @mcp.tool(tags={self.domain.value})
-        async def set_up_payroll(
-            employee_name: str, salary: str = "As per contract"
-        ) -> str:
+        async def set_up_payroll(employee_name: str, salary: str = "As per contract") -> str:
             """Set up payroll for a new employee."""
             try:
                 details = {
@@ -279,13 +251,9 @@ class HRService(MCPToolBase):
                 }
                 summary = f"Payroll has been successfully set up for {employee_name}."
 
-                return format_success_response(
-                    action="Payroll Setup", details=details, summary=summary
-                )
+                return format_success_response(action="Payroll Setup", details=details, summary=summary)
             except Exception as e:
-                return format_error_response(
-                    error_message=str(e), context="setting up payroll"
-                )
+                return format_error_response(error_message=str(e), context="setting up payroll")
 
     @property
     def tool_count(self) -> int:

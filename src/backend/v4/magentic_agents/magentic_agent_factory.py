@@ -4,7 +4,7 @@
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, List, Optional, Union
+from typing import Any
 
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
@@ -27,7 +27,7 @@ class InvalidConfigurationError(Exception):
 
 
 def _with_workspace(
-    instructions: str, user_id: str, workspace_id: Optional[str], has_mcp: bool
+    instructions: str, user_id: str, workspace_id: str | None, has_mcp: bool
 ) -> str:
     """Decirle al agente CUÁL es su workspace, o se lo inventa.
 
@@ -53,9 +53,9 @@ def _with_workspace(
 class MagenticAgentFactory:
     """Factory for creating and managing magentic agents from JSON configurations."""
 
-    def __init__(self, team_service: Optional[TeamService] = None):
+    def __init__(self, team_service: TeamService | None = None):
         self.logger = logging.getLogger(__name__)
-        self._agent_list: List = []
+        self._agent_list: list = []
         self.team_service = team_service
 
     # Ensure only an explicit boolean True in the source sets this flag.
@@ -72,12 +72,12 @@ class MagenticAgentFactory:
     async def create_agent_from_config(
         self,
         user_id: str,
-        agent_obj: Union[SimpleNamespace, Any],
+        agent_obj: SimpleNamespace | Any,
         team_config: TeamConfiguration,
         memory_store: DatabaseBase,
-        user_access_token: Optional[str] = None,
-        workspace_id: Optional[str] = None,
-    ) -> Union[FoundryAgentTemplate, ProxyAgent]:
+        user_access_token: str | None = None,
+        workspace_id: str | None = None,
+    ) -> FoundryAgentTemplate | ProxyAgent:
         """
         Create an agent from configuration object.
 
@@ -213,9 +213,9 @@ class MagenticAgentFactory:
         user_id: str,
         team_config_input: TeamConfiguration,
         memory_store: DatabaseBase,
-        user_access_token: Optional[str] = None,
-        workspace_id: Optional[str] = None,
-    ) -> List:
+        user_access_token: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list:
         """
         Create and return a team of agents from JSON configuration.
 
@@ -280,7 +280,7 @@ class MagenticAgentFactory:
             raise
 
     @classmethod
-    async def cleanup_all_agents(cls, agent_list: List):
+    async def cleanup_all_agents(cls, agent_list: list):
         """Clean up all created agents."""
         logger = logging.getLogger(__name__)
         logger.info(f"Cleaning up {len(agent_list)} agents")

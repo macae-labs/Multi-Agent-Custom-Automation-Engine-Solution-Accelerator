@@ -66,16 +66,16 @@ _init_lock = threading.Lock()
 # ── core primitives ──────────────────────────────────────────────────────────
 
 
-def _git(ws: Path, *args: str) -> "subprocess.CompletedProcess[bytes]":
+def _git(ws: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(["git", *args], cwd=ws, capture_output=True, timeout=15)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=503,
             detail="git is not installed in this image; workspaces need it.",
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="git operation timed out.")
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="git operation timed out.") from exc
 
 
 def _contained(base: Path, *parts: str) -> Path:
@@ -142,8 +142,8 @@ def _resolve(ws: Path, raw: str) -> Path:
     resolved = candidate.resolve()
     try:
         rel = resolved.relative_to(ws)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Path outside workspace.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Path outside workspace.") from exc
     if ".git" in rel.parts:
         raise HTTPException(status_code=400, detail="The .git directory is managed.")
     return resolved
@@ -232,12 +232,12 @@ def _clone_into(ws: Path, url: str, token: str | None) -> None:
     args += ["clone", "-q", "--", url, str(ws)]
     try:
         result = subprocess.run(args, capture_output=True, timeout=180)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=503, detail="git is not installed in this image."
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="git clone timed out.")
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="git clone timed out.") from exc
     if result.returncode != 0:
         raise HTTPException(
             status_code=400,

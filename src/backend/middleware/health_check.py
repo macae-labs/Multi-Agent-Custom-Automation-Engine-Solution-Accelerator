@@ -1,5 +1,5 @@
 import logging
-from typing import Awaitable, Callable, Dict, Optional
+from collections.abc import Awaitable, Callable
 
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
@@ -40,8 +40,8 @@ class HealthCheckMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        checks: Dict[str, Callable[..., Awaitable[HealthCheckResult]]],
-        password: Optional[str] = None,
+        checks: dict[str, Callable[..., Awaitable[HealthCheckResult]]],
+        password: str | None = None,
     ):
         super().__init__(app)
         self.checks = checks

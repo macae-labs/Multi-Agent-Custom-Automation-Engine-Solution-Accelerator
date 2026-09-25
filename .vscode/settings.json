@@ -15,6 +15,13 @@
   "python.testing.unittestEnabled": false,
   "python.testing.pytestArgs": ["--no-header", "-q", "-m", "not integration"],
 
+  // ── mypy en el editor: determinista, misma vista que el gate ──────
+  // Sin cwd, la extensión corre mypy desde donde caiga y los tests
+  // (src/tests, sin pyproject en su ruta) terminan con Config File:
+  // Default. Anclado a src/backend usa el mismo pyproject que
+  // `uv run mypy .` (mypy_path con $MYPY_CONFIG_FILE_DIR + overrides).
+  "mypy-type-checker.cwd": "${workspaceFolder}/src/backend",
+
   "[python]": {
     "editor.defaultFormatter": "ms-python.autopep8",
     "editor.formatOnSave": true

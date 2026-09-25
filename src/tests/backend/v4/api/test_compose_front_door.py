@@ -72,12 +72,16 @@ def _compose_item(**args):
     )
 
 
-def _client(memory_store=None):
+def _client(memory_store=None, toolboxes=None):
     c = router._RouterChatClient.__new__(router._RouterChatClient)
     c.agent_name = "Composer"
     c._openai_base_url = "https://account.invalid/openai"
     c._api_version = "2025-03-01-preview"
     c._model = "o4-mini"
+    # Capacidades propias del orquestador: el despliegue de imagen viaja como
+    # cabecera y los toolboxes declarados se adjuntan junto a ``compose``.
+    c._image_deployment = "gpt-image-2"
+    c._toolboxes = list(toolboxes or [])
     c._memory_store = memory_store
     c.composition = None
     c._user_id = "u1"

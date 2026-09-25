@@ -83,9 +83,7 @@ class ProductServiceWithWidgets(MCPToolBase):
 
     async def get_product_info(self, product_id: str = "premium-plan") -> dict:
         """Get information about phone plans with interactive widget."""
-        markdown = (
-            f"## Product Info for {product_id}\n\nPrice: $70/month\nData: Unlimited"
-        )
+        markdown = f"## Product Info for {product_id}\n\nPrice: $70/month\nData: Unlimited"
 
         return {
             "content": [{"type": "text", "text": markdown}],
@@ -105,9 +103,7 @@ class ProductServiceWithWidgets(MCPToolBase):
         return {
             "content": [{"type": "text", "text": markdown}],
             "structuredContent": {"plans": 3},
-            "_meta": {
-                "ui": {"resourceUri": "ui://product-comparison", "fallback": "markdown"}
-            },
+            "_meta": {"ui": {"resourceUri": "ui://product-comparison", "fallback": "markdown"}},
         }
 
     @property

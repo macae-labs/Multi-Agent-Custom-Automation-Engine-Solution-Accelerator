@@ -21,9 +21,9 @@ Credential flow:
 """
 
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from typing import ClassVar, Dict, List, Optional
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import ClassVar
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
-class MCPTransportType(str, Enum):
+class MCPTransportType(StrEnum):
     """Supported MCP transport protocols."""
 
     STREAMABLE_HTTP = "streamable-http"
@@ -41,7 +41,7 @@ class MCPTransportType(str, Enum):
     STDIO = "stdio"
 
 
-class MCPAuthType(str, Enum):
+class MCPAuthType(StrEnum):
     """How the MCP server authenticates clients."""
 
     NONE = "none"
@@ -51,7 +51,7 @@ class MCPAuthType(str, Enum):
     MANAGED_IDENTITY = "managed_identity"
 
 
-class MCPCredentialSource(str, Enum):
+class MCPCredentialSource(StrEnum):
     """How the platform OBTAINS a valid token for the server.
 
     Distinct from ``auth_type`` (what the target server sees on the wire — almost
@@ -71,7 +71,7 @@ class MCPCredentialSource(str, Enum):
     MANAGED_IDENTITY = "managed_identity"
 
 
-class MCPConnectionStatus(str, Enum):
+class MCPConnectionStatus(StrEnum):
     """User-level connection status to an MCP server."""
 
     ACTIVE = "active"
@@ -100,7 +100,7 @@ class MCPServerEntry(BaseModel):
     doc_type: str = "mcp_server"
 
     # Multi-tenancy — empty string means globally shared catalog entry
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="AAD tenant ID. None / empty = shared catalog visible to all tenants.",
     )
@@ -109,7 +109,7 @@ class MCPServerEntry(BaseModel):
     server_name: str  # unique key, e.g. "github-corp", "slack-workspace"
     display_name: str  # UI-friendly name, e.g. "GitHub Corporate"
     description: str = ""
-    icon_url: Optional[str] = None
+    icon_url: str | None = None
 
     # Connection
     endpoint: str  # full URL, e.g. "https://mcp-github.corp.com/mcp"
@@ -121,56 +121,56 @@ class MCPServerEntry(BaseModel):
     # How the platform OBTAINS the token (independent of auth_type, which is what
     # the wire looks like). See MCPCredentialSource. The resolver dispatches on this.
     credential_source: MCPCredentialSource = MCPCredentialSource.STATIC_SECRET
-    audience: Optional[str] = Field(
+    audience: str | None = Field(
         default=None,
         description=(
             "AAD audience/scope to mint a token for when credential_source is "
             "managed_identity, e.g. 'ce34e7e5-485f-4d76-964f-b3d2b16d1e4f/.default'."
         ),
     )
-    auth_fields: List[str] = Field(
+    auth_fields: list[str] = Field(
         default_factory=list,
         description="Credential field names required, e.g. ['api_key'] or ['client_id','client_secret']",
     )
-    oauth_scopes: List[str] = Field(
+    oauth_scopes: list[str] = Field(
         default_factory=list,
         description="OAuth2 scopes if auth_type is oauth2",
     )
 
     # OAuth2 provider endpoints (only used when auth_type == oauth2)
-    oauth_authorize_url: Optional[str] = Field(
+    oauth_authorize_url: str | None = Field(
         default=None,
         description="OAuth2 authorization endpoint, e.g. 'https://github.com/login/oauth/authorize'",
     )
-    oauth_token_url: Optional[str] = Field(
+    oauth_token_url: str | None = Field(
         default=None,
         description="OAuth2 token exchange endpoint, e.g. 'https://github.com/login/oauth/access_token'",
     )
-    oauth_client_id_env: Optional[str] = Field(
+    oauth_client_id_env: str | None = Field(
         default=None,
         description="Env var name holding the OAuth client_id (e.g. 'GITHUB_CLIENT_ID')",
     )
-    oauth_client_secret_env: Optional[str] = Field(
+    oauth_client_secret_env: str | None = Field(
         default=None,
         description="Env var name holding the OAuth client_secret (e.g. 'GITHUB_CLIENT_SECRET')",
     )
     # Discovered at runtime (RFC 9728/8414/7591) for servers registered by URL
     # with no operator pre-configuration. The dynamic client credentials live
     # in Key Vault (``oauth_client_ref``), never here.
-    oauth_registration_url: Optional[str] = Field(
+    oauth_registration_url: str | None = Field(
         default=None, description="RFC 7591 registration_endpoint (discovered)."
     )
-    oauth_resource: Optional[str] = Field(
+    oauth_resource: str | None = Field(
         default=None,
         description="RFC 8707 resource indicator (canonical MCP server URI).",
     )
-    oauth_client_ref: Optional[str] = Field(
+    oauth_client_ref: str | None = Field(
         default=None,
         description="Key Vault secret URI holding the dynamically registered client.",
     )
 
     # Capabilities discovered on last connect (cached)
-    capabilities: List[str] = Field(
+    capabilities: list[str] = Field(
         default_factory=list,
         description="['tools', 'resources', 'prompts']",
     )
@@ -178,16 +178,16 @@ class MCPServerEntry(BaseModel):
     resource_count: int = 0
 
     # Access control
-    allowed_agents: List[str] = Field(
+    allowed_agents: list[str] = Field(
         default_factory=list,
         description="Agent types allowed to use this server. Empty = all agents.",
     )
     enabled: bool = True
 
     # Audit
-    added_by: Optional[str] = ""
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    added_by: str | None = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("added_by", mode="before")
     @classmethod
@@ -201,7 +201,7 @@ class MCPServerEntry(BaseModel):
     # (an az-cli/portal token expires within the hour). Suffixes starting with
     # "." match subdomains; bare hosts match exactly. Audience = what the
     # resolver mints for. Extend here when a new Azure data plane is proven.
-    _AZURE_HOST_AUDIENCES: ClassVar[Dict[str, str]] = {
+    _AZURE_HOST_AUDIENCES: ClassVar[dict[str, str]] = {
         ".search.windows.net": "https://search.azure.com/.default",
         ".grafana.azure.com": "ce34e7e5-485f-4d76-964f-b3d2b16d1e4f/.default",
         ".services.ai.azure.com": "https://ai.azure.com/.default",
@@ -209,7 +209,7 @@ class MCPServerEntry(BaseModel):
     }
 
     @classmethod
-    def _azure_audience_for(cls, endpoint: Optional[str]) -> Optional[str]:
+    def _azure_audience_for(cls, endpoint: str | None) -> str | None:
         """Audience to mint for ``endpoint`` if it lives on a known Azure data
         plane, else None."""
         host = (urlparse(endpoint or "").hostname or "").lower()
@@ -289,19 +289,19 @@ class MCPUserConnection(BaseModel):
 
     # Status
     status: MCPConnectionStatus = MCPConnectionStatus.PENDING_AUTH
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
     # Credential reference (points to Key Vault, NOT the actual token)
-    secret_ref: Optional[str] = Field(
+    secret_ref: str | None = Field(
         default=None,
         description="Key Vault secret URI, e.g. 'https://kv.vault.azure.net/secrets/mcp-user-github-abc123'",
     )
-    scopes_granted: List[str] = Field(default_factory=list)
+    scopes_granted: list[str] = Field(default_factory=list)
 
     # Timestamps
-    connected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    last_used_at: Optional[datetime] = None
-    token_expires_at: Optional[datetime] = None
+    connected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_used_at: datetime | None = None
+    token_expires_at: datetime | None = None
 
     # TTL (Cosmos auto-delete expired connections after 30 days of inactivity)
     ttl: int = Field(
@@ -339,21 +339,21 @@ class MCPServerUpdateRequest(BaseModel):
     accepted from the client.
     """
 
-    server_name: Optional[str] = None
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    icon_url: Optional[str] = None
-    endpoint: Optional[str] = None
-    transport: Optional[MCPTransportType] = None
-    auth_type: Optional[MCPAuthType] = None
-    credential_source: Optional[MCPCredentialSource] = None
-    audience: Optional[str] = None
-    auth_fields: Optional[List[str]] = None
-    oauth_scopes: Optional[List[str]] = None
-    oauth_authorize_url: Optional[str] = None
-    oauth_token_url: Optional[str] = None
-    oauth_client_id_env: Optional[str] = None
-    oauth_client_secret_env: Optional[str] = None
-    allowed_agents: Optional[List[str]] = None
-    enabled: Optional[bool] = None
-    tenant_id: Optional[str] = None
+    server_name: str | None = None
+    display_name: str | None = None
+    description: str | None = None
+    icon_url: str | None = None
+    endpoint: str | None = None
+    transport: MCPTransportType | None = None
+    auth_type: MCPAuthType | None = None
+    credential_source: MCPCredentialSource | None = None
+    audience: str | None = None
+    auth_fields: list[str] | None = None
+    oauth_scopes: list[str] | None = None
+    oauth_authorize_url: str | None = None
+    oauth_token_url: str | None = None
+    oauth_client_id_env: str | None = None
+    oauth_client_secret_env: str | None = None
+    allowed_agents: list[str] | None = None
+    enabled: bool | None = None
+    tenant_id: str | None = None

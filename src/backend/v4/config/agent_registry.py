@@ -4,7 +4,7 @@
 import asyncio
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 from weakref import WeakSet
 
 
@@ -15,9 +15,9 @@ class AgentRegistry:
         self.logger = logging.getLogger(__name__)
         self._lock = threading.Lock()
         self._all_agents: WeakSet = WeakSet()
-        self._agent_metadata: Dict[int, Dict[str, Any]] = {}
+        self._agent_metadata: dict[int, dict[str, Any]] = {}
 
-    def register_agent(self, agent: Any, user_id: Optional[str] = None) -> None:
+    def register_agent(self, agent: Any, user_id: str | None = None) -> None:
         """Register an agent instance for tracking and lifecycle management."""
         with self._lock:
             try:
@@ -50,7 +50,7 @@ class AgentRegistry:
             except Exception as e:
                 self.logger.error(f"Failed to unregister agent: {e}")
 
-    def get_all_agents(self) -> List[Any]:
+    def get_all_agents(self) -> list[Any]:
         """Get all currently registered agents."""
         with self._lock:
             return list(self._all_agents)
@@ -140,10 +140,10 @@ class AgentRegistry:
             )
             self.logger.error(f"Failed to close agent {agent_name}: {e}")
 
-    def get_registry_status(self) -> Dict[str, Any]:
+    def get_registry_status(self) -> dict[str, Any]:
         """Get current status of the agent registry for debugging and monitoring."""
         with self._lock:
-            status: Dict[str, Any] = {
+            status: dict[str, Any] = {
                 "total_agents": len(self._all_agents),
                 "agent_types": {},
             }

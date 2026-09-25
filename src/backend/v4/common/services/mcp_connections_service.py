@@ -11,8 +11,8 @@ Does NOT store tokens — delegates to CredentialResolver (Key Vault).
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any, Optional
 
 from azure.cosmos.aio import CosmosClient
 
@@ -63,7 +63,7 @@ class MCPConnectionsService:
     _instance: Optional["MCPConnectionsService"] = None
 
     def __init__(self):
-        self._client: Optional[CosmosClient] = None
+        self._client: CosmosClient | None = None
         self._container = None
         self._initialized = False
 
@@ -119,7 +119,7 @@ class MCPConnectionsService:
 
     async def list_servers(
         self, enabled_only: bool = True, tenant_id: str = ""
-    ) -> List[MCPServerEntry]:
+    ) -> list[MCPServerEntry]:
         """List all servers in the catalog for a tenant (or global shared catalog)."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -140,7 +140,7 @@ class MCPConnectionsService:
 
     async def get_server(
         self, server_id: str, tenant_id: str = ""
-    ) -> Optional[MCPServerEntry]:
+    ) -> MCPServerEntry | None:
         """Get a server entry by ID."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -154,7 +154,7 @@ class MCPConnectionsService:
 
     async def get_server_by_name(
         self, server_name: str, tenant_id: str = ""
-    ) -> Optional[MCPServerEntry]:
+    ) -> MCPServerEntry | None:
         """Find a server by its unique server_name within a tenant catalog."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -162,7 +162,7 @@ class MCPConnectionsService:
         query = (
             "SELECT * FROM c WHERE c.doc_type = 'mcp_server' AND c.server_name = @name"
         )
-        params: List[Dict[str, Any]] = [{"name": "@name", "value": server_name}]
+        params: list[dict[str, Any]] = [{"name": "@name", "value": server_name}]
 
         async for item in self._container.query_items(
             query=query,
@@ -182,7 +182,7 @@ class MCPConnectionsService:
 
         entry.pk = _catalog_pk(entry.tenant_id or "")
         entry.doc_type = "mcp_server"
-        entry.updated_at = datetime.now(timezone.utc)
+        entry.updated_at = datetime.now(UTC)
 
         doc = entry.model_dump(mode="json")
         # Ensure datetimes are ISO strings
@@ -210,7 +210,7 @@ class MCPConnectionsService:
 
     async def find_servers_for_agent(
         self, agent_type: str, tenant_id: str = ""
-    ) -> List[MCPServerEntry]:
+    ) -> list[MCPServerEntry]:
         """Find enabled servers that a specific agent type is allowed to use."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -221,7 +221,7 @@ class MCPConnectionsService:
             "AND c.enabled = true "
             "AND (ARRAY_LENGTH(c.allowed_agents) = 0 OR ARRAY_CONTAINS(c.allowed_agents, @agent))"
         )
-        params: List[Dict[str, Any]] = [{"name": "@agent", "value": agent_type}]
+        params: list[dict[str, Any]] = [{"name": "@agent", "value": agent_type}]
 
         items = []
         async for item in self._container.query_items(
@@ -241,7 +241,7 @@ class MCPConnectionsService:
 
     async def get_user_connections(
         self, user_id: str, active_only: bool = True, tenant_id: str = ""
-    ) -> List[MCPUserConnection]:
+    ) -> list[MCPUserConnection]:
         """Get all MCP server connections for a user (optionally tenant-scoped)."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -262,7 +262,7 @@ class MCPConnectionsService:
 
     async def get_user_connection(
         self, user_id: str, server_name: str, tenant_id: str = ""
-    ) -> Optional[MCPUserConnection]:
+    ) -> MCPUserConnection | None:
         """Get a specific user connection by server name."""
         await self._ensure_initialized()
         assert self._container is not None
@@ -271,7 +271,7 @@ class MCPConnectionsService:
             "SELECT * FROM c WHERE c.doc_type = 'mcp_user_connection' "
             "AND c.server_name = @server_name"
         )
-        params: List[Dict[str, Any]] = [{"name": "@server_name", "value": server_name}]
+        params: list[dict[str, Any]] = [{"name": "@server_name", "value": server_name}]
 
         async for item in self._container.query_items(
             query=query,
@@ -315,7 +315,7 @@ class MCPConnectionsService:
         self,
         user_id: str,
         server_name: str,
-        secret_ref: Optional[str] = None,
+        secret_ref: str | None = None,
         tenant_id: str = "",
     ) -> MCPUserConnection:
         """Mark a user connection as active (after successful auth)."""
@@ -326,7 +326,7 @@ class MCPConnectionsService:
             )
 
         conn.status = MCPConnectionStatus.ACTIVE
-        conn.last_used_at = datetime.now(timezone.utc)
+        conn.last_used_at = datetime.now(UTC)
         if secret_ref:
             conn.secret_ref = secret_ref
         return await self.upsert_user_connection(conn)
@@ -337,7 +337,7 @@ class MCPConnectionsService:
         """Update last_used_at to keep TTL alive."""
         conn = await self.get_user_connection(user_id, server_name, tenant_id=tenant_id)
         if conn:
-            conn.last_used_at = datetime.now(timezone.utc)
+            conn.last_used_at = datetime.now(UTC)
             await self.upsert_user_connection(conn)
 
     async def disconnect_user(
@@ -367,7 +367,7 @@ class MCPConnectionsService:
 
     async def get_available_servers_for_user(
         self, user_id: str, agent_type: str = "", tenant_id: str = ""
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get all available servers with user's connection status.
 

@@ -6,7 +6,7 @@ import logging
 import re
 import time as _time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -48,7 +48,7 @@ from v4.models.messages import WebsocketMessageType
 from v4.orchestration.human_approval_manager import HumanApprovalMagenticManager
 
 
-async def _team_capabilities(memory_store: Any, team_id: Optional[str]) -> dict:
+async def _team_capabilities(memory_store: Any, team_id: str | None) -> dict:
     """Capacidades reales del equipo, leídas de su configuración.
 
     Sin agentes con MCP no hay tools de workspace en toda la corrida: el equipo
@@ -76,7 +76,7 @@ async def _materialize_hosted_file_to_workspace(
     user_id: str,
     workspace_id: str,
     file_id: str,
-    container_id: Optional[str],
+    container_id: str | None,
     filename: str,
 ) -> None:
     """Download a hosted file from a Foundry container and write it to the workspace.
@@ -190,7 +190,7 @@ class OrchestrationManager:
     _initialization_locks: dict[str, asyncio.Lock] = {}
 
     def __init__(self):
-        self.user_id: Optional[str] = None
+        self.user_id: str | None = None
         self.logger = self.__class__.logger
 
     @classmethod
@@ -253,7 +253,7 @@ class OrchestrationManager:
     @classmethod
     async def init_orchestration(
         cls,
-        agents: List,
+        agents: list,
         team_config: TeamConfiguration,
         memory_store: DatabaseBase,
         user_id: str | None = None,
@@ -328,7 +328,7 @@ class OrchestrationManager:
             raise
 
         # Build participant map: use each agent's name as key
-        participants: Dict[str, Any] = {}
+        participants: dict[str, Any] = {}
         for ag in agents:
             name = getattr(ag, "agent_name", None) or getattr(ag, "name", None)
             if not name:
@@ -380,8 +380,8 @@ class OrchestrationManager:
 
     @classmethod
     def build_pattern_workflow(
-        cls, pattern: str, agents: List
-    ) -> tuple[Any, List[Any]]:
+        cls, pattern: str, agents: list
+    ) -> tuple[Any, list[Any]]:
         """Build the framework workflow of a composed chat-turn orchestration.
 
         ``magentic`` is not built here: it is the formal Plan
@@ -457,10 +457,10 @@ class OrchestrationManager:
         user_id: str,
         team_config: TeamConfiguration,
         team_switched: bool,
-        team_service: Optional[TeamService] = None,
+        team_service: TeamService | None = None,
         force_rebuild: bool = False,
-        user_access_token: Optional[str] = None,
-        workspace_id: Optional[str] = None,
+        user_access_token: str | None = None,
+        workspace_id: str | None = None,
     ):
         """
         Return an existing workflow for the user or create a new one if:
@@ -576,7 +576,7 @@ class OrchestrationManager:
     async def _persist_agent_message(
         self,
         *,
-        plan_id: Optional[str],
+        plan_id: str | None,
         user_id: str,
         agent_name: str,
         content: str,
@@ -619,7 +619,7 @@ class OrchestrationManager:
         plan_id: str,
         request_id: str,
         response: Any,
-        workspace_id: Optional[str] = None,
+        workspace_id: str | None = None,
     ) -> None:
         """Deliver the human response to the pending ``request_info`` and continue.
 
@@ -723,8 +723,8 @@ class OrchestrationManager:
         event: Any,
         user_id: str,
         session_id: str,
-        plan_id: Optional[str],
-        workspace_id: Optional[str],
+        plan_id: str | None,
+        workspace_id: str | None,
     ) -> None:
         """The workflow went idle on a ``request_info``: the pending request lives
         in the checkpoint that closed the superstep. Nothing waits in-process:
@@ -749,7 +749,7 @@ class OrchestrationManager:
             if is_plan_review
             else type(data).__name__
         )
-        waiting_for: Dict[str, Any] = {
+        waiting_for: dict[str, Any] = {
             "kind": kind,
             "request_id": event.request_id,
             "checkpoint_id": latest.checkpoint_id,
@@ -856,10 +856,10 @@ class OrchestrationManager:
         user_id,
         session_id: str,
         input_task,
-        plan_id: Optional[str] = None,
-        history: Optional[list] = None,
-        workspace_id: Optional[str] = None,
-        _resume: Optional[Dict[str, Any]] = None,
+        plan_id: str | None = None,
+        history: list | None = None,
+        workspace_id: str | None = None,
+        _resume: dict[str, Any] | None = None,
     ) -> None:
         """
         Execute the Magentic workflow for the provided user and task description.
@@ -895,7 +895,7 @@ class OrchestrationManager:
                 if exec_key == "magentic_orchestrator":
                     # Orchestrator path
                     if hasattr(executor, "_conversation"):
-                        conv = getattr(executor, "_conversation")
+                        conv = executor._conversation
                         # Support list-like or custom container with clear()
                         if hasattr(conv, "clear") and callable(conv.clear):
                             conv.clear()
@@ -920,7 +920,7 @@ class OrchestrationManager:
                 else:
                     # Agent path
                     if hasattr(executor, "_chat_history"):
-                        hist = getattr(executor, "_chat_history")
+                        hist = executor._chat_history
                         if hasattr(hist, "clear") and callable(hist.clear):
                             hist.clear()
                             self.logger.debug(

@@ -6,7 +6,7 @@ not a Python while-loop in the API container.
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
 import azure.functions as func
 import httpx
@@ -21,7 +21,7 @@ def _build_url() -> str:
     return f"{base}/api/strategic/analyze"
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     token = os.getenv("ACCELERATOR_API_BEARER_TOKEN", "").strip()
     if not token:
         return {}
@@ -38,7 +38,7 @@ async def strategic_autonomy_timer(timer: func.TimerRequest) -> None:
     """Invoke strategic analysis endpoint on schedule."""
     try:
         url = _build_url()
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "force_publish": "false",
         }
         project_id = os.getenv("STRATEGIC_PROJECT_ID", "").strip()

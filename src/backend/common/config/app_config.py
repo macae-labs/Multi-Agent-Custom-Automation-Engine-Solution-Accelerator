@@ -1,7 +1,6 @@
 # app_config.py
 import logging
 import os
-from typing import Optional
 
 from azure.ai.projects.aio import AIProjectClient
 from azure.cosmos import CosmosClient
@@ -403,7 +402,7 @@ class AppConfig:
             self.logger.error(f"Failed to get access token: {e}")
             raise
 
-    def _get_required(self, name: str, default: Optional[str] = None) -> str:
+    def _get_required(self, name: str, default: str | None = None) -> str:
         """Get a required configuration value from environment variables.
 
         Args:
@@ -550,7 +549,7 @@ class AppConfig:
                 )
         return StaticTokenCredential(user_assertion)
 
-    def get_ai_project_client(self, user_access_token: Optional[str] = None):
+    def get_ai_project_client(self, user_access_token: str | None = None):
         """Create and return an AIProjectClient for Azure AI Foundry (management plane).
 
         Always authenticates with Managed Identity. Management-plane operations

@@ -6,7 +6,6 @@ Agent Framework version of orchestration models.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -50,8 +49,8 @@ class PlannerResponsePlan(BaseModel):
     """
 
     request: str
-    team: List[AgentDefinition]
+    team: list[AgentDefinition]
     facts: str
-    steps: List[PlannerResponseStep]
+    steps: list[PlannerResponseStep]
     summary_plan_and_steps: str
-    human_clarification_request: Optional[str] = None
+    human_clarification_request: str | None = None

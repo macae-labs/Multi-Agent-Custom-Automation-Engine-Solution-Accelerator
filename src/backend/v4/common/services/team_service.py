@@ -1,7 +1,7 @@
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 from azure.core.exceptions import (
     ClientAuthenticationError,
@@ -24,7 +24,7 @@ from v4.common.services.foundry_service import FoundryService
 class TeamService:
     """Service for handling JSON team configuration operations."""
 
-    def __init__(self, memory_context: Optional[DatabaseBase] = None):
+    def __init__(self, memory_context: DatabaseBase | None = None):
         """Initialize with optional memory context."""
         self.memory_context = memory_context
         self.logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class TeamService:
         self.search_credential = config.get_azure_credentials()
 
     async def validate_and_parse_team_config(
-        self, json_data: Dict[str, Any], user_id: str
+        self, json_data: dict[str, Any], user_id: str
     ) -> TeamConfiguration:
         """
         Validate and parse team configuration JSON.
@@ -63,7 +63,7 @@ class TeamService:
             # Generate unique IDs and timestamps
             unique_team_id = str(uuid.uuid4())
             session_id = str(uuid.uuid4())
-            current_timestamp = datetime.now(timezone.utc).isoformat()
+            current_timestamp = datetime.now(UTC).isoformat()
 
             # Validate agents array exists and is not empty
             if "agents" not in json_data or not isinstance(json_data["agents"], list):
@@ -126,7 +126,7 @@ class TeamService:
             self.logger.error("Error validating team configuration: %s", str(e))
             raise ValueError(f"Invalid team configuration: {str(e)}") from e
 
-    def _validate_and_parse_agent(self, agent_data: Dict[str, Any]) -> TeamAgent:
+    def _validate_and_parse_agent(self, agent_data: dict[str, Any]) -> TeamAgent:
         """Validate and parse a single agent."""
         required_fields = ["input_key", "type", "name", "icon"]
         for field in required_fields:
@@ -150,7 +150,7 @@ class TeamService:
             use_image_generation=agent_data.get("use_image_generation", False),
         )
 
-    def _validate_and_parse_task(self, task_data: Dict[str, Any]) -> StartingTask:
+    def _validate_and_parse_task(self, task_data: dict[str, Any]) -> StartingTask:
         """Validate and parse a single starting task."""
         required_fields = ["id", "name", "prompt", "created", "creator", "logo"]
         for field in required_fields:
@@ -207,7 +207,7 @@ class TeamService:
 
     async def get_team_configuration(
         self, team_id: str, user_id: str
-    ) -> Optional[TeamConfiguration]:
+    ) -> TeamConfiguration | None:
         """
         Retrieve a team configuration by ID.
 
@@ -258,7 +258,7 @@ class TeamService:
 
     async def handle_team_selection(
         self, user_id: str, team_id: str
-    ) -> Optional[UserCurrentTeam]:
+    ) -> UserCurrentTeam | None:
         """
         Set a default team for a user.
 
@@ -286,7 +286,7 @@ class TeamService:
             self.logger.error("Error setting default team: %s", str(e))
             return None
 
-    async def get_all_team_configurations(self) -> List[TeamConfiguration]:
+    async def get_all_team_configurations(self) -> list[TeamConfiguration]:
         """
         Retrieve all team configurations for a user.
 
@@ -334,7 +334,7 @@ class TeamService:
             self.logger.error("Error deleting team configuration: %s", str(e))
             return False
 
-    def extract_models_from_agent(self, agent: Dict[str, Any]) -> set:
+    def extract_models_from_agent(self, agent: dict[str, Any]) -> set:
         """
         Extract all possible model references from a single agent configuration.
          Skip proxy agents as they don't require deployment models.
@@ -394,8 +394,8 @@ class TeamService:
         return models
 
     async def validate_team_models(
-        self, team_config: Dict[str, Any]
-    ) -> Tuple[bool, List[str]]:
+        self, team_config: dict[str, Any]
+    ) -> tuple[bool, list[str]]:
         """Validate that all models required by agents in the team config are deployed."""
         try:
             foundry_service = FoundryService()
@@ -419,7 +419,7 @@ class TeamService:
                 default_model = config.AZURE_OPENAI_DEPLOYMENT_NAME
                 required_models.add(default_model.lower())
 
-            missing_models: List[str] = []
+            missing_models: list[str] = []
             for model in required_models:
                 # Temporary bypass for known deployed models
                 if model.lower() in ["gpt-4o", "o3", "gpt-4", "gpt-35-turbo"]:
@@ -436,12 +436,12 @@ class TeamService:
             self.logger.error(f"Error validating team models: {e}")
             return True, []
 
-    async def get_deployment_status_summary(self) -> Dict[str, Any]:
+    async def get_deployment_status_summary(self) -> dict[str, Any]:
         """Get a summary of deployment status for debugging/monitoring."""
         try:
             foundry_service = FoundryService()
             deployments = await foundry_service.list_model_deployments()
-            summary: Dict[str, Any] = {
+            summary: dict[str, Any] = {
                 "total_deployments": len(deployments),
                 "successful_deployments": [],
                 "failed_deployments": [],
@@ -461,7 +461,7 @@ class TeamService:
             self.logger.error(f"Error getting deployment summary: {e}")
             return {"error": str(e)}
 
-    def extract_team_level_models(self, team_config: Dict[str, Any]) -> set:
+    def extract_team_level_models(self, team_config: dict[str, Any]) -> set:
         """Extract model references from team-level configuration."""
         models = set()
         for field in ["default_model", "model", "llm_model"]:
@@ -484,8 +484,8 @@ class TeamService:
     # -----------------------
 
     async def validate_team_search_indexes(
-        self, team_config: Dict[str, Any]
-    ) -> Tuple[bool, List[str]]:
+        self, team_config: dict[str, Any]
+    ) -> tuple[bool, list[str]]:
         """
         Validate that all search indexes referenced in the team config exist.
         Only validates if there are actually search indexes/RAG agents in the config.
@@ -512,7 +512,7 @@ class TeamService:
                 )
                 return True, []
 
-            validation_errors: List[str] = []
+            validation_errors: list[str] = []
             unique_indexes = set(index_names)
             self.logger.info(
                 f"Validating {len(unique_indexes)} search indexes: {list(unique_indexes)}"
@@ -526,9 +526,9 @@ class TeamService:
             self.logger.error(f"Error validating search indexes: {str(e)}")
             return False, [f"Search index validation error: {str(e)}"]
 
-    def extract_index_names(self, team_config: Dict[str, Any]) -> List[str]:
+    def extract_index_names(self, team_config: dict[str, Any]) -> list[str]:
         """Extract all index names from RAG agents in the team configuration."""
-        index_names: List[str] = []
+        index_names: list[str] = []
         agents = team_config.get("agents", [])
         for agent in agents:
             if isinstance(agent, dict):
@@ -539,7 +539,7 @@ class TeamService:
                         index_names.append(str(index_name).strip())
         return list(set(index_names))
 
-    def has_rag_or_search_agents(self, team_config: Dict[str, Any]) -> bool:
+    def has_rag_or_search_agents(self, team_config: dict[str, Any]) -> bool:
         """Check if the team configuration contains RAG agents."""
         agents = team_config.get("agents", [])
         for agent in agents:
@@ -549,7 +549,7 @@ class TeamService:
                     return True
         return False
 
-    async def validate_single_index(self, index_name: str) -> Tuple[bool, str]:
+    async def validate_single_index(self, index_name: str) -> tuple[bool, str]:
         """Validate that a single search index exists and is accessible."""
         try:
             index_client = SearchIndexClient(
@@ -584,7 +584,7 @@ class TeamService:
             self.logger.error(error_msg)
             return False, error_msg
 
-    async def get_search_index_summary(self) -> Dict[str, Any]:
+    async def get_search_index_summary(self) -> dict[str, Any]:
         """Get a summary of available search indexes for debugging/monitoring."""
         try:
             if not self.search_endpoint:

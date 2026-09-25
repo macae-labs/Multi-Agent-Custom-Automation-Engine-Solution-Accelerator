@@ -5,7 +5,7 @@ Extends StandardMagenticManager (agent_framework version) to add approval gates 
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from agent_framework import AgentResponse, Message
 from agent_framework_orchestrations._magentic import (
@@ -31,7 +31,7 @@ class HumanApprovalMagenticManager(StandardMagenticManager):
     """
 
     approval_enabled: bool = True
-    magentic_plan: Optional[MPlan] = None
+    magentic_plan: MPlan | None = None
     current_user_id: str  # populated in __init__
 
     def __init__(self, user_id: str, agent, *args, **kwargs):
@@ -237,7 +237,7 @@ Never present invented figures, statistics or research as findings.
         return plan_message
 
     async def replan(
-        self, magentic_context: MagenticContext, feedback: Optional[str] = None
+        self, magentic_context: MagenticContext, feedback: str | None = None
     ) -> Any:
         """Replan (native plan review ``revise`` or stall) and refresh ``magentic_plan``."""
         logger.info("\nHuman-in-the-Loop Magentic Manager replanned:")
