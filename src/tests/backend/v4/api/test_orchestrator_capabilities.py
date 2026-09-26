@@ -14,6 +14,7 @@ manda la rama que ya existe en el manejador SSE (evento ``generated_file``, la
 imagen dentro del mensaje, descriptor persistido). Sin carril nuevo y sin shims.
 """
 
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -39,7 +40,12 @@ class _Stream:
         return self._events.pop(0)
 
 
-def _fake_openai(stream):
+def _fake_openai(*replies):
+    """Un turno hace varias llamadas (ejecución, síntesis, veredicto). Las
+    respuestas se consumen en orden y la última se repite si el turno pide
+    más. ``calls`` guarda todas; ``create_kwargs`` la PRIMERA (la oferta)."""
+    queue = list(replies)
+
     class _Fake:
         instances: list = []
 
@@ -47,11 +53,14 @@ def _fake_openai(stream):
             self.kwargs = kwargs
             self.closed = False
             self.create_kwargs = None
+            self.calls: list = []
             _Fake.instances.append(self)
 
             async def create(**kw):
-                self.create_kwargs = kw
-                return stream
+                self.calls.append(kw)
+                if self.create_kwargs is None:
+                    self.create_kwargs = kw
+                return queue.pop(0) if len(queue) > 1 else queue[0]
 
             self.responses = SimpleNamespace(create=create)
 
@@ -74,6 +83,12 @@ def _client(toolboxes=None, image_deployment="gpt-image-2"):
     c._user_id = "u1"
     c._user_access_token = None
     c._workspace_id = None
+    # Tools del workspace: sin workspace montado no se conectan (None).
+    c._ws_tool = None
+    c._ws_tool_lock = asyncio.Lock()
+    c._ws_specs = None
+    c._ws_names = set()
+    c._ws_identity = {}
     c._user_cred = None
     c._bearer = AsyncMock(return_value="tok")
     return c
@@ -83,6 +98,10 @@ def _image_item(result, output_format=None):
     return SimpleNamespace(
         type="image_generation_call", result=result, output_format=output_format
     )
+
+
+def _text(chunk):
+    return SimpleNamespace(type="response.output_text.delta", delta=chunk)
 
 
 def _done(item):
@@ -97,19 +116,161 @@ async def _collect(client, prompt="hola"):
 
 
 @pytest.mark.asyncio
-async def test_the_orchestrator_offers_its_own_capabilities_next_to_compose():
+async def test_the_orchestrator_offers_its_own_capabilities_and_never_compose():
     fake = _fake_openai(_Stream([]))
     with patch("openai.AsyncOpenAI", fake):
         await _collect(_client())
 
     tools = fake.instances[-1].create_kwargs["tools"]
-    assert tools[0]["name"] == "compose", "compose sigue siendo la primera tool"
-    assert [t["type"] for t in tools[1:]] == [
+    # Sin workspace montado, la web sí se ofrece. ``compose`` nunca: el turno
+    # no escala por su cuenta (medido: Plan con aprobación para una pregunta).
+    assert [t["type"] for t in tools] == [
         "image_generation",
         "web_search",
         "code_interpreter",
     ]
-    assert tools[3]["container"] == {"type": "auto"}
+    assert tools[2]["container"] == {"type": "auto"}
+    assert not any(t.get("name") == "compose" for t in tools)
+
+
+# ── el libro de evidencia es del TURNO ───────────────────────────────────────
+
+
+def _verdict(goal_met, reason=""):
+    return SimpleNamespace(
+        output_text=json.dumps({"goal_met": goal_met, "reason": reason})
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_evaluator_sees_the_tools_of_earlier_passes():
+    # Medido: 20 tools en 16 pasadas y el evaluador vio sólo la última (la
+    # síntesis, 0 tools) → "sin respaldo de herramientas" sobre un informe
+    # con 20 respaldos → reentrada inútil → "no pude cumplirlo" pegado a un
+    # informe cumplido. La evidencia se acumula por turno.
+    tool_call = SimpleNamespace(
+        type="function_call", name="workspace_exec", call_id="c1", arguments="{}"
+    )
+    fake = _fake_openai(
+        _Stream([_done(tool_call)]),  # pasada 1: sólo ejecuta
+        _Stream([_text("dictamen")]),  # pasada 2: sólo redacta
+        _verdict(True),  # el evaluador acepta
+    )
+    c = _client()
+    c._ws_names = {"workspace_exec"}
+    c._call_workspace_tool = AsyncMock(return_value='{"status": "success"}')
+    with patch("openai.AsyncOpenAI", fake):
+        updates = await _collect(c)
+
+    assert "".join((x.text or "") for u in updates for x in u.contents) == "dictamen"
+    calls = fake.instances[-1].calls
+    assert len(calls) == 3, "ejecución, síntesis, veredicto"
+    # La salida de la tool volvió por el protocolo, con su call_id…
+    assert {
+        "type": "function_call_output",
+        "call_id": "c1",
+        "output": '{"status": "success"}',
+    } in [i for i in calls[1]["input"] if isinstance(i, dict)]
+    # …y el evaluador juzgó la síntesis CON la evidencia de la pasada anterior.
+    assert "workspace_exec" in calls[2]["input"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_tool_discovery_strips_identity_and_caches_metadata():
+    class _Fn:
+        name = "workspace_read_file"
+        description = "read a file"
+
+        def parameters(self):
+            return {
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "workspace_id": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": ["user_id", "workspace_id", "path"],
+            }
+
+    class _Tool:
+        enters = 0
+
+        def __init__(self, **_kwargs):
+            self.functions = [_Fn()]
+
+        async def __aenter__(self):
+            type(self).enters += 1
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    c = _client()
+    c._workspace_id = "my-repo"
+    cfg = SimpleNamespace(name="ws", description="workspace", url="https://mcp.invalid")
+    with (
+        patch("v4.api.router.MCPStreamableHTTPTool", _Tool),
+        patch("v4.magentic_agents.models.agent_models.MCPConfig.from_env", return_value=cfg),
+    ):
+        first = await c._workspace_tools()
+        second = await c._workspace_tools()
+
+    assert _Tool.enters == 1
+    assert first == second
+    assert first == [
+        {
+            "type": "function",
+            "name": "workspace_read_file",
+            "description": "read a file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    assert c._ws_identity == {"workspace_read_file": ("user_id", "workspace_id")}
+    assert c._ws_names == {"workspace_read_file"}
+
+
+@pytest.mark.asyncio
+async def test_workspace_tool_results_are_serialized_when_not_text_chunks():
+    class _Tool:
+        async def call_tool(self, name, **kwargs):
+            assert name == "workspace_read_file"
+            assert kwargs == {"path": "README.md", "user_id": "u1", "workspace_id": "repo"}
+            return {"status": "ok", "path": "README.md"}
+
+    c = _client()
+    c._workspace_id = "repo"
+    c._ws_tool = _Tool()
+    c._ws_identity = {"workspace_read_file": ("user_id", "workspace_id")}
+
+    out = await c._call_workspace_tool("workspace_read_file", '{"path":"README.md"}')
+
+    assert json.loads(out) == {"status": "ok", "path": "README.md"}
+
+
+@pytest.mark.asyncio
+async def test_a_capability_only_success_emits_a_brief_final_text():
+    class _Store:
+        async def save(self, file_id, filename, data):
+            return True
+
+    fake = _fake_openai(
+        _Stream([_done(_image_item(base64.b64encode(PNG).decode()))]),
+        _verdict(True),
+    )
+    with (
+        patch("openai.AsyncOpenAI", fake),
+        patch(
+            "v4.common.services.generated_file_store.GeneratedFileStore.get_instance",
+            return_value=_Store(),
+        ),
+    ):
+        updates = await _collect(_client())
+
+    assert "".join((x.text or "") for u in updates for x in u.contents) == "Listo."
 
 
 @pytest.mark.asyncio

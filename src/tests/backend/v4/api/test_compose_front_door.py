@@ -8,6 +8,7 @@ cree el Plan, cualquier otro patrón corre dentro del turno (``_run_pattern``)
 y sus ``WorkflowEvent`` salen tal cual.
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -52,10 +53,16 @@ def _fake_openai(reply):
             self.kwargs = kwargs
             self.closed = False
             self.create_kwargs = None
+            # Un turno hace más de una llamada (compositor + evaluador).
+            # calls guarda todas; create_kwargs se queda con la PRIMERA,
+            # la del compositor, que es la oferta del turno.
+            self.calls: list = []
             _Fake.instances.append(self)
 
             async def create(**kw):
-                self.create_kwargs = kw
+                self.calls.append(kw)
+                if self.create_kwargs is None:
+                    self.create_kwargs = kw
                 return reply
 
             self.responses = SimpleNamespace(create=create)
@@ -87,6 +94,12 @@ def _client(memory_store=None, toolboxes=None):
     c._user_id = "u1"
     c._user_access_token = None
     c._workspace_id = None
+    # Tools del workspace: sin workspace montado no se conectan (None).
+    c._ws_tool = None
+    c._ws_tool_lock = asyncio.Lock()
+    c._ws_specs = None
+    c._ws_names = set()
+    c._ws_identity = {}
     c._user_cred = None
     c._bearer = AsyncMock(return_value="tok")
     return c
@@ -175,8 +188,13 @@ async def test_chat_position_answer_is_a_framework_update():
     call = fake.instances[-1].create_kwargs
     assert call["tool_choice"] == "auto"
     assert call["stream"] is True and call["store"] is False
-    enum = call["tools"][0]["parameters"]["properties"]["pattern"]["enum"]
-    assert enum == list(router._PATTERNS)
+    # El turno ofrece las capacidades PROPIAS del orquestador y nunca
+    # ``compose``: componer publicaba agentes en Foundry y devolvía el mismo
+    # informe tres veces (medido); el Plan se entra desde su carril.
+    assert not any(t.get("name") == "compose" for t in call["tools"])
+    assert {"image_generation", "web_search", "code_interpreter"} <= {
+        t["type"] for t in call["tools"]
+    }
 
 
 @pytest.mark.asyncio
@@ -202,15 +220,19 @@ async def test_chat_position_magentic_leaves_the_composition_for_the_handler():
 
 
 @pytest.mark.asyncio
-async def test_in_plan_turn_never_offers_magentic():
+@pytest.mark.parametrize("allow_plan", [True, False])
+async def test_the_turn_never_offers_compose_so_it_cannot_create_a_plan(allow_plan):
+    # Ni con allow_plan ni sin él: el turno no puede escalar por su cuenta.
+    # Medido: escaló una pregunta de lectura a un Plan con compuerta de
+    # aprobación, y otra vez a ``sequential`` con tres participantes.
     fake = _fake_openai(_Stream([]))
     with patch("openai.AsyncOpenAI", fake):
-        await _collect(_client(), allow_plan=False)
-    enum = fake.instances[-1].create_kwargs["tools"][0]["parameters"]["properties"][
-        "pattern"
-    ]["enum"]
-    assert "magentic" not in enum
-    assert set(enum) == set(router._PATTERNS) - {"magentic"}
+        await _collect(_client(), allow_plan=allow_plan)
+    tools = fake.instances[-1].create_kwargs["tools"]
+    assert not any(t.get("name") == "compose" for t in tools)
+    assert not any(
+        "pattern" in (t.get("parameters") or {}).get("properties", {}) for t in tools
+    )
 
 
 @pytest.mark.asyncio
@@ -263,8 +285,19 @@ async def test_a_mounted_workspace_is_a_fact_the_composer_receives():
 
     with_ws = _client()
     with_ws._workspace_id = "my-repo"
+    # Con workspace montado el turno conecta al ca-mcp del entorno para
+    # declarar sus tools; acá se sustituye (no hay red en el test).
+    with_ws._workspace_tools = AsyncMock(return_value=[])
     with patch("openai.AsyncOpenAI", fake):
         await _collect(with_ws)
-    instructions = fake.instances[-1].create_kwargs["instructions"]
+    call = fake.instances[-1].create_kwargs
+    instructions = call["instructions"]
     assert instructions.startswith(router._COMPOSER_INSTRUCTIONS)
-    assert "'my-repo'" in instructions and "use_mcp=true" in instructions
+    assert "'my-repo'" in instructions
+    # Las tools del workspace son SUYAS y el prompt lo dice; la frase vieja
+    # "you have no tools yourself" hacía que narrara sin ejecutar (medido).
+    assert "workspace_read_file" in instructions
+    assert "no tools yourself" not in instructions
+    # Y con el repo en disco, buscar en la web no es alternativa a leerlo.
+    assert "web_search" not in {t["type"] for t in call["tools"]}
+    assert "web_search" in {t["type"] for t in fake.instances[0].create_kwargs["tools"]}

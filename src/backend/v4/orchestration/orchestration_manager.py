@@ -380,7 +380,7 @@ class OrchestrationManager:
 
     @classmethod
     def build_pattern_workflow(
-        cls, pattern: str, agents: list
+        cls, pattern: str, agents: list, *, durable: bool = False
     ) -> tuple[Any, list[Any]]:
         """Build the framework workflow of a composed chat-turn orchestration.
 
@@ -400,6 +400,16 @@ class OrchestrationManager:
           hand off to every other; without autonomous mode the framework hands
           control back to the user after a response without handoff.
 
+        ``durable=True`` wires the SAME Cosmos checkpoint storage as magentic
+        (the four builders accept ``checkpoint_storage``, verified against
+        1.0.0b260311) so a ``request_info`` closes its superstep on a durable
+        checkpoint that ``_park_on_request_info`` can reference. Without a
+        durable identity (a real plan) those checkpoints would be orphans by
+        construction — no ``waiting_for`` references them and
+        ``_purge_checkpoint_lineage`` walks ``plan.workflow_names`` — so an
+        ephemeral chat turn builds with NO storage: durability follows the
+        identity that can come back for it, never precedes it.
+
         Returns:
             A tuple of (workflow, closables) where closables is a list of
             resources that must be closed when the workflow ends (e.g. the
@@ -411,13 +421,18 @@ class OrchestrationManager:
         ]
         if not participants:
             raise ValueError("a composed orchestration needs at least one participant")
+        storage = get_checkpoint_storage() if durable else None
         if pattern == "sequential":
             return SequentialBuilder(
-                participants=participants, intermediate_outputs=True
+                participants=participants,
+                intermediate_outputs=True,
+                checkpoint_storage=storage,
             ).build(), []
         if pattern == "concurrent":
             return ConcurrentBuilder(
-                participants=participants, intermediate_outputs=True
+                participants=participants,
+                intermediate_outputs=True,
+                checkpoint_storage=storage,
             ).build(), []
         if pattern == "group_chat":
             orchestrator = Agent(
@@ -433,20 +448,101 @@ class OrchestrationManager:
                 orchestrator_agent=orchestrator,
                 max_rounds=orchestration_config.max_rounds,
                 intermediate_outputs=True,
+                checkpoint_storage=storage,
             ).build()
             # The orchestrator's client owns an aiohttp session; return it for
             # the caller to close when the workflow ends.
             return workflow, [orchestrator]
         if pattern == "handoff":
-            builder = HandoffBuilder(participants=participants).with_start_agent(
-                participants[0]
-            )
+            builder = HandoffBuilder(
+                participants=participants, checkpoint_storage=storage
+            ).with_start_agent(participants[0])
             for source in participants:
                 targets = [p for p in participants if p is not source]
                 if targets:
                     builder.add_handoff(source, targets)
             return builder.build(), []
         raise ValueError(f"unknown orchestration pattern '{pattern}'")
+
+    async def run_pattern(
+        self,
+        pattern: str,
+        agents: list,
+        messages: Any,
+        *,
+        user_id: str,
+        session_id: str,
+        plan_id: str | None = None,
+        workspace_id: str | None = None,
+    ):
+        """Run a composed (non-magentic) pattern owning its full lifecycle.
+
+        This is the single authority for what happens to a composed run —
+        the front door decides *what* (pattern, participants, task) and this
+        method decides *how it lives and dies*:
+
+        * events are yielded as the framework emits them (the caller renders);
+        * on ``request_info`` the durability contract applies: with a
+          ``plan_id`` the run parks exactly like magentic
+          (``_park_on_request_info``: checkpoint verified, ``waiting_for``
+          persisted, UI notified) and resumes via ``resume_orchestration``;
+          without one there is no durable identity to hang the resume on, so
+          the turn ends there — stated, not implied;
+        * closables (e.g. the group_chat orchestrator's aiohttp session) and
+          the turn's agents are closed here, deterministically, in a finally.
+
+        Durability follows the identity: with a ``plan_id`` the workflow
+        builds WITH checkpoint storage (parkable, purgeable via
+        ``plan.workflow_names``); without one it builds with none — an
+        ephemeral turn must not shed durable checkpoints no identity
+        references and no purge will ever collect.
+        """
+        workflow, closables = self.build_pattern_workflow(
+            pattern, agents, durable=bool(plan_id)
+        )
+        try:
+            async for event in workflow.run(messages, stream=True):
+                if getattr(event, "type", None) == "request_info":
+                    if plan_id:
+                        await self._park_on_request_info(
+                            workflow=workflow,
+                            event=event,
+                            user_id=user_id,
+                            session_id=session_id,
+                            plan_id=plan_id,
+                            workspace_id=workspace_id,
+                        )
+                    else:
+                        self.logger.info(
+                            "Composed %s asked the user without a plan identity; "
+                            "the turn ends here",
+                            pattern,
+                        )
+                    return
+                yield event
+        finally:
+            for resource in closables:
+                try:
+                    close_method = getattr(resource, "close", None)
+                    if callable(close_method):
+                        result = close_method()
+                        if inspect.isawaitable(result):
+                            await result
+                except Exception as e:
+                    self.logger.warning(
+                        "Closing workflow resource %s failed: %s",
+                        getattr(resource, "name", resource),
+                        e,
+                    )
+            for ag in agents:
+                try:
+                    await ag.close()
+                except Exception as e:  # teardown of the turn's agents
+                    self.logger.warning(
+                        "Closing composed agent %s failed: %s",
+                        getattr(ag, "agent_name", ag),
+                        e,
+                    )
 
     # ---------------------------
     # Orchestration retrieval

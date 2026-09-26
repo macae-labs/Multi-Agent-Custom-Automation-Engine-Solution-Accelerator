@@ -43,6 +43,8 @@ export interface StreamCallbacks {
     tool: string;
     server?: string;
     success?: boolean;
+    /** Progreso del turno: qué quedó hecho y qué sigue. */
+    detail?: string;
   }) => void;
   /** Called when code_interpreter generates a downloadable file. */
   onGeneratedFile?: (data: {
@@ -283,6 +285,11 @@ export class ChatService {
                 push(
                   `\n_🔧 Calling **${data.tool}**${data.server ? ` on \`${data.server}\`` : ''}…_\n`
                 );
+              // Canal de PROGRESO: qué quedó hecho y qué sigue, mientras el
+              // turno avanza. No es la respuesta — el turno cierra con una
+              // sola síntesis — pero el usuario tiene que verlo pasar.
+              else if (data.activity === 'thinking' && data.detail)
+                push(`\n_↳ ${data.detail}_\n\n`);
             },
             onPlanCreated: (newPlanId) => {
               onPlanCreated?.(newPlanId);
