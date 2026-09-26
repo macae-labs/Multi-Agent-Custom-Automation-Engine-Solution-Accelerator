@@ -2491,9 +2491,7 @@ class _RouterChatClient:
                             # (medido: list_connected_servers → "workspace_id
                             # Unexpected keyword argument").
                             ws_identity[name] = tuple(
-                                k
-                                for k in ("user_id", "workspace_id")
-                                if k in declared
+                                k for k in ("user_id", "workspace_id") if k in declared
                             )
                             props = {
                                 k: v
@@ -2504,7 +2502,8 @@ class _RouterChatClient:
                                 {
                                     "type": "function",
                                     "name": name,
-                                    "description": getattr(fn, "description", "") or name,
+                                    "description": getattr(fn, "description", "")
+                                    or name,
                                     "parameters": {
                                         "type": "object",
                                         "properties": props,
