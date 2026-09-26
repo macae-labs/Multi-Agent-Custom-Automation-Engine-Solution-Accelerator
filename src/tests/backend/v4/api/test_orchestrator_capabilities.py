@@ -176,6 +176,104 @@ async def test_the_evaluator_sees_the_tools_of_earlier_passes():
 
 
 @pytest.mark.asyncio
+async def test_workspace_tool_discovery_strips_identity_and_caches_metadata():
+    class _Fn:
+        name = "workspace_read_file"
+        description = "read a file"
+
+        def parameters(self):
+            return {
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "workspace_id": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": ["user_id", "workspace_id", "path"],
+            }
+
+    class _Tool:
+        enters = 0
+
+        def __init__(self, **_kwargs):
+            self.functions = [_Fn()]
+
+        async def __aenter__(self):
+            type(self).enters += 1
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    c = _client()
+    c._workspace_id = "my-repo"
+    cfg = SimpleNamespace(name="ws", description="workspace", url="https://mcp.invalid")
+    with (
+        patch("v4.api.router.MCPStreamableHTTPTool", _Tool),
+        patch("v4.magentic_agents.models.agent_models.MCPConfig.from_env", return_value=cfg),
+    ):
+        first = await c._workspace_tools()
+        second = await c._workspace_tools()
+
+    assert _Tool.enters == 1
+    assert first == second
+    assert first == [
+        {
+            "type": "function",
+            "name": "workspace_read_file",
+            "description": "read a file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    assert c._ws_identity == {"workspace_read_file": ("user_id", "workspace_id")}
+    assert c._ws_names == {"workspace_read_file"}
+
+
+@pytest.mark.asyncio
+async def test_workspace_tool_results_are_serialized_when_not_text_chunks():
+    class _Tool:
+        async def call_tool(self, name, **kwargs):
+            assert name == "workspace_read_file"
+            assert kwargs == {"path": "README.md", "user_id": "u1", "workspace_id": "repo"}
+            return {"status": "ok", "path": "README.md"}
+
+    c = _client()
+    c._workspace_id = "repo"
+    c._ws_tool = _Tool()
+    c._ws_identity = {"workspace_read_file": ("user_id", "workspace_id")}
+
+    out = await c._call_workspace_tool("workspace_read_file", '{"path":"README.md"}')
+
+    assert json.loads(out) == {"status": "ok", "path": "README.md"}
+
+
+@pytest.mark.asyncio
+async def test_a_capability_only_success_emits_a_brief_final_text():
+    class _Store:
+        async def save(self, file_id, filename, data):
+            return True
+
+    fake = _fake_openai(
+        _Stream([_done(_image_item(base64.b64encode(PNG).decode()))]),
+        _verdict(True),
+    )
+    with (
+        patch("openai.AsyncOpenAI", fake),
+        patch(
+            "v4.common.services.generated_file_store.GeneratedFileStore.get_instance",
+            return_value=_Store(),
+        ),
+    ):
+        updates = await _collect(_client())
+
+    assert "".join((x.text or "") for u in updates for x in u.contents) == "Listo."
+
+
+@pytest.mark.asyncio
 async def test_every_declared_toolbox_is_attached_with_the_preview_gate():
     fake = _fake_openai(_Stream([]))
     boxes = [("Toolbox", "https://p.invalid/toolboxes/Toolbox/mcp?api-version=v1")]

@@ -2464,56 +2464,64 @@ class _RouterChatClient:
                 if self._ws_tool is None or self._ws_specs is None:
                     from v4.magentic_agents.models.agent_models import MCPConfig
 
-                    if self._ws_tool is None:
+                    tool = self._ws_tool
+                    created = False
+                    if tool is None:
                         cfg = MCPConfig.from_env()
                         tool = MCPStreamableHTTPTool(
                             name=cfg.name, description=cfg.description, url=cfg.url
                         )
                         await tool.__aenter__()
-                        self._ws_tool = tool
+                        created = True
                     specs: list[dict[str, Any]] = []
                     ws_identity: dict[str, tuple[str, ...]] = {}
-                    for fn in self._ws_tool.functions:
-                        name = getattr(fn, "name", "")
-                        if not name:
-                            continue
-                        params: dict[str, Any] = {}
-                        try:
-                            params = fn.parameters() or {}
-                        except Exception:  # sin esquema no se ofrece a medias
-                            continue
-                        declared = params.get("properties") or {}
-                        # Sólo las tools que DECLARAN la identidad la reciben:
-                        # inyectarla a todas rompe las que no la tienen
-                        # (medido: list_connected_servers → "workspace_id
-                        # Unexpected keyword argument").
-                        ws_identity[name] = tuple(
-                            k
-                            for k in ("user_id", "workspace_id")
-                            if k in declared
-                        )
-                        props = {
-                            k: v
-                            for k, v in declared.items()
-                            if k not in ("user_id", "workspace_id")
-                        }
-                        specs.append(
-                            {
-                                "type": "function",
-                                "name": name,
-                                "description": getattr(fn, "description", "") or name,
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": props,
-                                    "required": [
-                                        r
-                                        for r in (params.get("required") or [])
-                                        if r in props
-                                    ],
-                                    "additionalProperties": False,
-                                },
+                    try:
+                        for fn in tool.functions:
+                            name = getattr(fn, "name", "")
+                            if not name:
+                                continue
+                            params: dict[str, Any] = {}
+                            try:
+                                params = fn.parameters() or {}
+                            except Exception:  # sin esquema no se ofrece a medias
+                                continue
+                            declared = params.get("properties") or {}
+                            # Sólo las tools que DECLARAN la identidad la reciben:
+                            # inyectarla a todas rompe las que no la tienen
+                            # (medido: list_connected_servers → "workspace_id
+                            # Unexpected keyword argument").
+                            ws_identity[name] = tuple(
+                                k
+                                for k in ("user_id", "workspace_id")
+                                if k in declared
+                            )
+                            props = {
+                                k: v
+                                for k, v in declared.items()
+                                if k not in ("user_id", "workspace_id")
                             }
-                        )
+                            specs.append(
+                                {
+                                    "type": "function",
+                                    "name": name,
+                                    "description": getattr(fn, "description", "") or name,
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": props,
+                                        "required": [
+                                            r
+                                            for r in (params.get("required") or [])
+                                            if r in props
+                                        ],
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            )
+                    except Exception:
+                        if created:
+                            await tool.__aexit__(None, None, None)
+                        raise
+                    self._ws_tool = tool
                     self._ws_specs = specs
                     self._ws_identity = ws_identity
                     self._ws_names = {spec["name"] for spec in specs}
@@ -2540,18 +2548,34 @@ class _RouterChatClient:
         except Exception as ex:
             logger.warning("tool %s FALLÓ: %s: %s", name, type(ex).__name__, ex)
             return f"ERROR {type(ex).__name__}: {ex}"
-        text = (
-            raw
-            if isinstance(raw, str)
-            else "".join(getattr(c, "text", "") or "" for c in raw)
-        )
+        if isinstance(raw, str):
+            text = raw
+        else:
+            text_parts: list[str] = []
+            try:
+                text_parts = [
+                    str(chunk_text)
+                    for chunk in raw
+                    if (chunk_text := getattr(chunk, "text", None))
+                ]
+            except TypeError:
+                text_parts = []
+            if text_parts:
+                text = "".join(text_parts)
+            else:
+                safe = _to_safe_dict(raw)
+                text = (
+                    json.dumps(safe, ensure_ascii=False)
+                    if isinstance(safe, (dict, list))
+                    else str(safe)
+                )
         logger.info("tool %s -> %s", name, " ".join(text[:200].split()))
         return text
 
     async def _evaluate(
         self, client: Any, objective: str, answer: str, evidence: list[str]
     ) -> tuple[str, str] | None:
-        """¿Se cumplió el objetivo? ``None`` si sí; el motivo si no.
+        """¿Se cumplió el objetivo? ``None`` sólo si el evaluador no decide.
 
         Es la vuelta que faltaba: hasta acá el turno ejecutaba y respondía sin
         volver a mirar. Acá el modelo juzga su propia ejecución contra la
@@ -2630,7 +2654,7 @@ class _RouterChatClient:
             logger.warning("Veredicto sin el contrato esperado: %s", ex)
             return None
         if met is True:
-            return None
+            return ("done", reason[:300])
         return (
             "blocked" if blocked else "retry",
             reason[:300] or "objetivo no cumplido",
@@ -2733,6 +2757,8 @@ class _RouterChatClient:
                                 yield self._progress(answer.strip())
                                 answer = ""
                         if itype == "image_generation_call":
+                            evidence.append(_describe_execution(item))
+                            since_eval.append(str(itype))
                             async for _img in self._image_as_generated_file(item):
                                 yield _img
                         elif (
@@ -2826,6 +2852,13 @@ class _RouterChatClient:
                         yield self._text_update(answer)
                     break
                 kind, why = verdict
+                if kind == "done":
+                    final_answer = answer
+                    if not final_answer.strip() and evidence:
+                        final_answer = "Listo."
+                    if final_answer:
+                        yield self._text_update(final_answer)
+                    break
                 if kind == "blocked":
                     # Limitación concreta: la respuesta ya la nombra.
                     logger.info("Limitación concreta (%s); el turno termina", why)
