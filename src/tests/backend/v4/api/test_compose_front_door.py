@@ -8,6 +8,7 @@ cree el Plan, cualquier otro patrón corre dentro del turno (``_run_pattern``)
 y sus ``WorkflowEvent`` salen tal cual.
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -95,6 +96,7 @@ def _client(memory_store=None, toolboxes=None):
     c._workspace_id = None
     # Tools del workspace: sin workspace montado no se conectan (None).
     c._ws_tool = None
+    c._ws_tool_lock = asyncio.Lock()
     c._ws_names = set()
     c._ws_identity = {}
     c._user_cred = None

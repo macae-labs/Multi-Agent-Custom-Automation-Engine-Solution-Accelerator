@@ -2189,6 +2189,7 @@ class _RouterChatClient:
         # ESTE proceso. Un attach hosted lo conectaría el servicio del modelo,
         # que no alcanza ni el ca-mcp local ni el disco donde vive el workspace.
         self._ws_tool: Any = None
+        self._ws_tool_lock = asyncio.Lock()
         self._ws_names: set[str] = set()
         self._ws_identity: dict[str, tuple[str, ...]] = {}
         # AZURE_AI_PROJECT_ENDPOINT is {account}/api/projects/{project}. The
@@ -2453,15 +2454,21 @@ class _RouterChatClient:
         cuáles son ni para qué sirven. ``user_id``/``workspace_id`` se quitan
         del esquema porque son identidad del request, no decisión del modelo.
         """
+        lock = getattr(self, "_ws_tool_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ws_tool_lock = lock
         if self._ws_tool is None:
-            from v4.magentic_agents.models.agent_models import MCPConfig
+            async with lock:
+                if self._ws_tool is None:
+                    from v4.magentic_agents.models.agent_models import MCPConfig
 
-            cfg = MCPConfig.from_env()
-            tool = MCPStreamableHTTPTool(
-                name=cfg.name, description=cfg.description, url=cfg.url
-            )
-            await tool.__aenter__()
-            self._ws_tool = tool
+                    cfg = MCPConfig.from_env()
+                    tool = MCPStreamableHTTPTool(
+                        name=cfg.name, description=cfg.description, url=cfg.url
+                    )
+                    await tool.__aenter__()
+                    self._ws_tool = tool
         specs: list[dict[str, Any]] = []
         for fn in self._ws_tool.functions:
             name = getattr(fn, "name", "")

@@ -14,6 +14,7 @@ manda la rama que ya existe en el manejador SSE (evento ``generated_file``, la
 imagen dentro del mensaje, descriptor persistido). Sin carril nuevo y sin shims.
 """
 
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -84,6 +85,7 @@ def _client(toolboxes=None, image_deployment="gpt-image-2"):
     c._workspace_id = None
     # Tools del workspace: sin workspace montado no se conectan (None).
     c._ws_tool = None
+    c._ws_tool_lock = asyncio.Lock()
     c._ws_names = set()
     c._ws_identity = {}
     c._user_cred = None
