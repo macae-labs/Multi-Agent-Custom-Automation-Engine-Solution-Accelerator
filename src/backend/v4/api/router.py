@@ -2190,6 +2190,7 @@ class _RouterChatClient:
         # que no alcanza ni el ca-mcp local ni el disco donde vive el workspace.
         self._ws_tool: Any = None
         self._ws_tool_lock = asyncio.Lock()
+        self._ws_specs: list[dict[str, Any]] | None = None
         self._ws_names: set[str] = set()
         self._ws_identity: dict[str, tuple[str, ...]] = {}
         # AZURE_AI_PROJECT_ENDPOINT is {account}/api/projects/{project}. The
@@ -2458,56 +2459,65 @@ class _RouterChatClient:
         if lock is None:
             lock = asyncio.Lock()
             self._ws_tool_lock = lock
-        if self._ws_tool is None:
+        if self._ws_tool is None or self._ws_specs is None:
             async with lock:
-                if self._ws_tool is None:
+                if self._ws_tool is None or self._ws_specs is None:
                     from v4.magentic_agents.models.agent_models import MCPConfig
 
-                    cfg = MCPConfig.from_env()
-                    tool = MCPStreamableHTTPTool(
-                        name=cfg.name, description=cfg.description, url=cfg.url
-                    )
-                    await tool.__aenter__()
-                    self._ws_tool = tool
-        specs: list[dict[str, Any]] = []
-        for fn in self._ws_tool.functions:
-            name = getattr(fn, "name", "")
-            if not name:
-                continue
-            params: dict[str, Any] = {}
-            try:
-                params = fn.parameters() or {}
-            except Exception:  # sin esquema no se ofrece a medias
-                continue
-            declared = params.get("properties") or {}
-            # Sólo las tools que DECLARAN la identidad la reciben: inyectarla a
-            # todas rompe las que no la tienen (medido: list_connected_servers
-            # → "workspace_id Unexpected keyword argument").
-            self._ws_identity[name] = tuple(
-                k for k in ("user_id", "workspace_id") if k in declared
-            )
-            props = {
-                k: v
-                for k, v in declared.items()
-                if k not in ("user_id", "workspace_id")
-            }
-            specs.append(
-                {
-                    "type": "function",
-                    "name": name,
-                    "description": getattr(fn, "description", "") or name,
-                    "parameters": {
-                        "type": "object",
-                        "properties": props,
-                        "required": [
-                            r for r in (params.get("required") or []) if r in props
-                        ],
-                        "additionalProperties": False,
-                    },
-                }
-            )
-        self._ws_names = {spec["name"] for spec in specs}
-        return specs
+                    if self._ws_tool is None:
+                        cfg = MCPConfig.from_env()
+                        tool = MCPStreamableHTTPTool(
+                            name=cfg.name, description=cfg.description, url=cfg.url
+                        )
+                        await tool.__aenter__()
+                        self._ws_tool = tool
+                    specs: list[dict[str, Any]] = []
+                    ws_identity: dict[str, tuple[str, ...]] = {}
+                    for fn in self._ws_tool.functions:
+                        name = getattr(fn, "name", "")
+                        if not name:
+                            continue
+                        params: dict[str, Any] = {}
+                        try:
+                            params = fn.parameters() or {}
+                        except Exception:  # sin esquema no se ofrece a medias
+                            continue
+                        declared = params.get("properties") or {}
+                        # Sólo las tools que DECLARAN la identidad la reciben:
+                        # inyectarla a todas rompe las que no la tienen
+                        # (medido: list_connected_servers → "workspace_id
+                        # Unexpected keyword argument").
+                        ws_identity[name] = tuple(
+                            k
+                            for k in ("user_id", "workspace_id")
+                            if k in declared
+                        )
+                        props = {
+                            k: v
+                            for k, v in declared.items()
+                            if k not in ("user_id", "workspace_id")
+                        }
+                        specs.append(
+                            {
+                                "type": "function",
+                                "name": name,
+                                "description": getattr(fn, "description", "") or name,
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": props,
+                                    "required": [
+                                        r
+                                        for r in (params.get("required") or [])
+                                        if r in props
+                                    ],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        )
+                    self._ws_specs = specs
+                    self._ws_identity = ws_identity
+                    self._ws_names = {spec["name"] for spec in specs}
+        return list(self._ws_specs or [])
 
     async def _call_workspace_tool(self, name: str, arguments: str | None) -> str:
         """Ejecuta una tool del workspace; devuelve su salida verbatim."""
