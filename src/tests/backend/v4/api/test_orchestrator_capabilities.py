@@ -159,7 +159,7 @@ async def test_the_evaluator_sees_the_tools_of_earlier_passes():
     with patch("openai.AsyncOpenAI", fake):
         updates = await _collect(c)
 
-    assert "".join(x.text for u in updates for x in u.contents) == "dictamen"
+    assert "".join((x.text or "") for u in updates for x in u.contents) == "dictamen"
     calls = fake.instances[-1].calls
     assert len(calls) == 3, "ejecución, síntesis, veredicto"
     # La salida de la tool volvió por el protocolo, con su call_id…

@@ -2360,13 +2360,16 @@ class _RouterChatClient:
 
     def _instructions(self) -> str:
         """The composer's instructions plus the facts of this conversation it
-        cannot infer: a mounted workspace is readable only through specialists
-        with ``use_mcp`` (the composer itself has no tools)."""
+        cannot infer: when a workspace is mounted this turn gets its workspace
+        tools attached directly and must use them instead of narrating."""
         if not self._workspace_id:
             return _COMPOSER_INSTRUCTIONS
         return (
             f"{_COMPOSER_INSTRUCTIONS}\n\nWORKSPACE: the user's project workspace "
-            f"'{self._workspace_id}' is mounted for this conversation."
+            f"'{self._workspace_id}' is mounted for this conversation. Use the "
+            "attached workspace tools directly to inspect it: "
+            "workspace_list_entries, workspace_read_file, "
+            "workspace_search_content and workspace_exec."
         )
 
     @staticmethod
