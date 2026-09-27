@@ -56,6 +56,7 @@ REGISTRY_WORKSPACE_ID = (
 
 # Leading alphanumeric forbids dotfiles, "." and ".." outright; no separators.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
+_SAFE_GIT_DIR = re.compile(r"^[A-Za-z0-9_./@-]+$")
 # Git refs for restore: leading alphanumeric forbids "-option" injection.
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./~^-]{0,63}$")
 # Clone sources: https only (no ssh/file/git schemes, no leading dash, no spaces).
@@ -65,6 +66,16 @@ LINK_ROOT = Path(os.getenv("MACAE_LINK_ROOT", "/workspaces")).resolve()
 
 _GIT_IDENTITY = ("MACAE Workspace", "workspace@macae.local")
 _init_lock = threading.Lock()
+
+
+def _safe_directory_config(ws: Path) -> str:
+    resolved = ws.resolve()
+    if not str(resolved).startswith(str(WORKSPACE_ROOT) + os.sep):
+        raise HTTPException(status_code=400, detail="Path outside workspace.")
+    value = str(resolved)
+    if not _SAFE_GIT_DIR.fullmatch(value):
+        raise HTTPException(status_code=400, detail="Invalid workspace path.")
+    return f"safe.directory={value}"
 
 
 # ── core primitives ──────────────────────────────────────────────────────────
@@ -79,7 +90,7 @@ def _git(ws: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     # no como manejo del error, y sin config global ni comodín.
     try:
         return subprocess.run(
-            ["git", "-c", f"safe.directory={ws}", *args],
+            ["git", "-c", _safe_directory_config(ws), *args],
             cwd=ws,
             capture_output=True,
             timeout=15,

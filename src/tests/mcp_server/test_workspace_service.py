@@ -216,3 +216,12 @@ class TestDubiousOwnership:
         assert env["GIT_CONFIG_VALUE_0"] == str(workspace)
         # Sin árbol declarado el entorno queda como estaba.
         assert "GIT_CONFIG_COUNT" not in workspace_service._child_env()
+
+    def test_exec_trust_rejects_paths_outside_workspace_root(self, workspace_root):
+        with pytest.raises(workspace_service.WorkspaceAccessError, match="Path outside workspace"):
+            workspace_service._child_env(workspace_root.parent / "outside")
+
+    def test_exec_trust_rejects_unsafe_workspace_path(self, workspace_root):
+        unsafe = workspace_root / "user" / "bad\npath"
+        with pytest.raises(workspace_service.WorkspaceAccessError, match="Invalid workspace path"):
+            workspace_service._child_env(unsafe)

@@ -12,6 +12,7 @@ import json
 import subprocess
 
 import pytest
+from fastapi import HTTPException
 
 import v4.common.services.workspace_service as ws_mod
 import v4.control.workspace_capability as wc
@@ -131,6 +132,18 @@ def test_discover_returns_nothing_when_no_workspace_holds_a_registry(
     monkeypatch.setattr(wc, "WORKSPACE_ROOT", empty)
 
     assert discover() is None
+
+
+def test_safe_directory_config_uses_a_resolved_workspace_path(clone):
+    cfg = ws_mod._safe_directory_config(clone)
+    assert cfg == f"safe.directory={clone.resolve()}"
+
+
+def test_safe_directory_config_rejects_paths_outside_the_workspace_root(
+    clone, tmp_path
+):
+    with pytest.raises(HTTPException, match="Path outside workspace"):
+        ws_mod._safe_directory_config(tmp_path / "outside")
 
 
 def test_discover_refuses_to_guess_between_two_registries(clone, caplog):

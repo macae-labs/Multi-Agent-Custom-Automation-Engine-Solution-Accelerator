@@ -37,6 +37,7 @@ MAX_FILE_BYTES = 1 * 1024 * 1024  # 1 MB — same read cap as the backend
 MAX_ENTRIES = 200
 _META_FILE = ".macae_workspace_meta.json"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
+_SAFE_GIT_DIR = re.compile(r"^[A-Za-z0-9_./@-]+$")
 _GIT_IDENTITY = ("MACAE Workspace", "workspace@macae.local")
 
 # ── terminal (workspace_exec) ────────────────────────────────────────────────
@@ -112,7 +113,7 @@ def _git(ws: Path, *args: str) -> "subprocess.CompletedProcess[bytes]":
     # /data/workspaces). Pre-flight, no manejo del error.
     try:
         return subprocess.run(
-            ["git", "-c", f"safe.directory={ws}", *args],
+            ["git", "-c", _safe_directory_config(ws), *args],
             cwd=ws,
             capture_output=True,
             timeout=15,
@@ -139,6 +140,20 @@ def _git_commit_all(ws: Path, message: str) -> None:
         )
 
 
+def _safe_directory_path(ws: Path) -> str:
+    resolved = ws.resolve()
+    value = str(resolved)
+    if not value.startswith(str(WORKSPACE_ROOT) + os.sep):
+        raise WorkspaceAccessError("Path outside workspace.")
+    if not _SAFE_GIT_DIR.fullmatch(value):
+        raise WorkspaceAccessError("Invalid workspace path.")
+    return value
+
+
+def _safe_directory_config(ws: Path) -> str:
+    return f"safe.directory={_safe_directory_path(ws)}"
+
+
 def _child_env(trust: Path | None = None) -> dict:
     """Environment for spawned commands: the server's env minus anything whose
     name looks like a credential.
@@ -153,7 +168,7 @@ def _child_env(trust: Path | None = None) -> dict:
         env |= {
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": "safe.directory",
-            "GIT_CONFIG_VALUE_0": str(trust),
+            "GIT_CONFIG_VALUE_0": _safe_directory_path(trust),
         }
     return env
 

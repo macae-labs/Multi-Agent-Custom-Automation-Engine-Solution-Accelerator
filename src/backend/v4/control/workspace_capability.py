@@ -34,6 +34,7 @@ from v4.common.services.workspace_service import (
     REGISTRY_WORKSPACE_ID,
     WORKSPACE_ROOT,
     _resolve,
+    _safe_directory_config,
     workspace_for,
 )
 from v4.control.incident_revalidation import Evidence, Executor, Registry
@@ -98,7 +99,7 @@ class WorkspaceCapability:
             # que ``source`` quedaba vacío y la evidencia no decía de qué árbol
             # salió el veredicto.
             done = subprocess.run(
-                ["git", "-c", f"safe.directory={ws}", "rev-parse", "HEAD"],
+                ["git", "-c", _safe_directory_config(ws), "rev-parse", "HEAD"],
                 cwd=ws,
                 capture_output=True,
                 timeout=15,
