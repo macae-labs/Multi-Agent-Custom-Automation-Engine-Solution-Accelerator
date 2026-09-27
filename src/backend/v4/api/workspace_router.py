@@ -784,7 +784,8 @@ def delete_workspace(request: Request, workspace_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid user id.")
     if not _SAFE_ID.match(workspace_id):
         raise HTTPException(status_code=400, detail="Invalid workspace id.")
-    ws = _contained(WORKSPACE_ROOT, user_id, workspace_id)
+    safe_workspace_id = workspace_id
+    ws = _contained(WORKSPACE_ROOT, user_id, safe_workspace_id)
     if ws.is_symlink():
         ws.unlink()  # detach the link; the target project stays intact
         return None
@@ -799,7 +800,9 @@ def delete_workspace(request: Request, workspace_id: str) -> None:
     # borrado lento ya no puede dejar basura donde el usuario la vuelva a pisar.
     # El prefijo con punto no es un workspace_id válido (``_SAFE_ID`` exige
     # empezar con alfanumérico), así que un resto no se confunde con uno real.
-    doomed = ws.parent / f".deleting-{workspace_id}-{uuid4().hex[:8]}"
+    doomed = ws.parent / f".deleting-{safe_workspace_id}-{uuid4().hex[:8]}"
+    if doomed.parent != ws.parent:
+        raise HTTPException(status_code=400, detail="Invalid workspace path.")
     ws.rename(doomed)
     for _ in range(_RMTREE_ATTEMPTS):
         shutil.rmtree(doomed, ignore_errors=True)
