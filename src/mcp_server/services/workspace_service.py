@@ -143,7 +143,9 @@ def _git_commit_all(ws: Path, message: str) -> None:
 def _safe_directory_path(ws: Path) -> str:
     resolved = ws.resolve()
     value = str(resolved)
-    if not value.startswith(str(WORKSPACE_ROOT) + os.sep):
+    try:
+        resolved.relative_to(WORKSPACE_ROOT)
+    except ValueError:
         raise WorkspaceAccessError("Path outside workspace.")
     if not _SAFE_GIT_DIR.fullmatch(value):
         raise WorkspaceAccessError("Invalid workspace path.")

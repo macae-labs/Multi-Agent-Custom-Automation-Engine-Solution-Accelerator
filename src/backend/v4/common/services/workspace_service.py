@@ -70,7 +70,9 @@ _init_lock = threading.Lock()
 
 def _safe_directory_config(ws: Path) -> str:
     resolved = ws.resolve()
-    if not str(resolved).startswith(str(WORKSPACE_ROOT) + os.sep):
+    try:
+        resolved.relative_to(WORKSPACE_ROOT)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Path outside workspace.")
     value = str(resolved)
     if not _SAFE_GIT_DIR.fullmatch(value):
