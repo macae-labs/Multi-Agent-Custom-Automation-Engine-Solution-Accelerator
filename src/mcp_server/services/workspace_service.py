@@ -37,7 +37,6 @@ MAX_FILE_BYTES = 1 * 1024 * 1024  # 1 MB — same read cap as the backend
 MAX_ENTRIES = 200
 _META_FILE = ".macae_workspace_meta.json"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
-_SAFE_GIT_DIR = re.compile(r"^[A-Za-z0-9_./@-]+$")
 _GIT_IDENTITY = ("MACAE Workspace", "workspace@macae.local")
 
 # ── terminal (workspace_exec) ────────────────────────────────────────────────
@@ -148,7 +147,7 @@ def _safe_directory_path(ws: Path) -> str:
         resolved.relative_to(root)
     except ValueError:
         raise WorkspaceAccessError("Path outside workspace.")
-    if not _SAFE_GIT_DIR.fullmatch(value):
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise WorkspaceAccessError("Invalid workspace path.")
     return value
 

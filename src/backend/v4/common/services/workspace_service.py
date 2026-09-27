@@ -56,7 +56,6 @@ REGISTRY_WORKSPACE_ID = (
 
 # Leading alphanumeric forbids dotfiles, "." and ".." outright; no separators.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
-_SAFE_GIT_DIR = re.compile(r"^[A-Za-z0-9_./@-]+$")
 # Git refs for restore: leading alphanumeric forbids "-option" injection.
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./~^-]{0,63}$")
 # Clone sources: https only (no ssh/file/git schemes, no leading dash, no spaces).
@@ -76,7 +75,7 @@ def _safe_directory_config(ws: Path) -> str:
     except ValueError:
         raise HTTPException(status_code=400, detail="Path outside workspace.")
     value = str(resolved)
-    if not _SAFE_GIT_DIR.fullmatch(value):
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise HTTPException(status_code=400, detail="Invalid workspace path.")
     return f"safe.directory={value}"
 
