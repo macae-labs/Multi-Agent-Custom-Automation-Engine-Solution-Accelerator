@@ -146,6 +146,12 @@ def test_safe_directory_config_rejects_paths_outside_the_workspace_root(
         ws_mod._safe_directory_config(tmp_path / "outside")
 
 
+def test_safe_directory_config_rejects_control_characters_in_path(clone):
+    unsafe = ws_mod.WORKSPACE_ROOT / "reg-user" / "bad\nname"
+    with pytest.raises(HTTPException, match="Invalid workspace path"):
+        ws_mod._safe_directory_config(unsafe)
+
+
 def test_discover_refuses_to_guess_between_two_registries(clone, caplog):
     root = clone.parent.parent
     second = root / "otro-user" / "otro-clon"
