@@ -316,7 +316,9 @@ def test_the_canonical_name_wins_before_the_declared_identity(clone, monkeypatch
     root = clone.parent.parent
     canonico = root / "otro-user" / REGISTRY_WORKSPACE_ID
     (canonico / "docs" / "incidents").mkdir(parents=True)
-    (canonico / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+    (canonico / "docs" / "incidents" / "INC-2026-004.x.json").write_text(
+        json.dumps(INC)
+    )
     monkeypatch.setenv("INCIDENT_REGISTRY_USER_ID", "reg-user")
 
     cap = discover()
