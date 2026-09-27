@@ -804,8 +804,14 @@ def delete_workspace(request: Request, workspace_id: str) -> None:
     if doomed.parent != ws.parent:
         raise HTTPException(status_code=400, detail="Invalid workspace path.")
     ws.rename(doomed)
+    base_parent = ws.parent.resolve()
+    resolved_doomed = doomed.resolve()
+    try:
+        resolved_doomed.relative_to(base_parent)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid workspace path.")
     for _ in range(_RMTREE_ATTEMPTS):
-        shutil.rmtree(doomed, ignore_errors=True)
+        shutil.rmtree(resolved_doomed, ignore_errors=True)
         if not doomed.exists():
             return None
     # El nombre del usuario ya está libre, así que el borrado ES efectivo para
