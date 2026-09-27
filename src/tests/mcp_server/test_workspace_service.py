@@ -164,3 +164,55 @@ class TestWorkspaceToolService:
         assert (workspace / "notes.txt").read_text(encoding="utf-8") == "hello"
         assert status.stdout.strip() == ""
         assert commit_message.stdout.strip() == "agent: write notes.txt"
+
+
+# ── dueño ajeno en el share ──────────────────────────────────────────────────
+# Sobre Azure Files/SMB el árbol no pertenece al uid del proceso y git rechaza
+# TODA operación con "detected dubious ownership" (medido en prod:
+# workspace_git_status del clon de /data/workspaces). La condición se reproduce
+# de verdad con GIT_TEST_ASSUME_DIFFERENT_OWNER, no con un mock del fallo.
+
+
+class TestDubiousOwnership:
+    def test_the_condition_is_real_without_the_declared_trust(
+        self, workspace_root, monkeypatch
+    ):
+        workspace, _, _ = _make_workspace(workspace_root)
+        _init_git_repo(workspace)
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        bare = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+
+        assert bare.returncode != 0
+        assert "dubious ownership" in bare.stderr
+
+    def test_git_tools_work_on_a_tree_owned_by_someone_else(
+        self, workspace_tools, workspace_root, monkeypatch
+    ):
+        tools, _ = workspace_tools
+        workspace, user_id, workspace_id = _make_workspace(workspace_root)
+        _init_git_repo(workspace)
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        result = tools["workspace_git_status"](user_id, workspace_id)
+
+        assert "dubious ownership" not in result
+        assert "❌" not in result
+
+    def test_exec_carries_the_trust_so_the_agent_can_run_git_itself(
+        self, workspace_root
+    ):
+        workspace, _, _ = _make_workspace(workspace_root)
+
+        env = workspace_service._child_env(workspace)
+
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "safe.directory"
+        assert env["GIT_CONFIG_VALUE_0"] == str(workspace)
+        # Sin árbol declarado el entorno queda como estaba.
+        assert "GIT_CONFIG_COUNT" not in workspace_service._child_env()

@@ -43,7 +43,6 @@ from v4.common.services.workspace_service import (
     _SAFE_REF,
     MAX_FILE_BYTES,
     MAX_LIST_ENTRIES,
-    REGISTRY_WORKSPACE_ID,
     WORKSPACE_ROOT,
     _clone_into,
     _contained,
@@ -632,6 +631,19 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
     results: list[WorkspaceSummary] = []
     if not user_root.exists():
         return WorkspaceListResponse(workspaces=[])
+    # Quién se adelanta solo lo decide el descubrimiento por contenido, no el
+    # nombre del workspace: comparar contra ``incident-registry`` decía "no" en
+    # el registro que el reconciliador SÍ mantiene, porque un usuario crea el
+    # workspace con un nombre y una URL y nunca lo bautiza así. Se compara la
+    # ruta física para que un alias del mismo clon no cuente como otro.
+    from v4.control.workspace_capability import discover
+
+    registry = discover()
+    kept_current = (
+        workspace_for(registry.user_id, registry.workspace_id).resolve()
+        if registry is not None
+        else None
+    )
     for entry in sorted(user_root.iterdir()):
         if not entry.is_dir() or not (entry / ".git").is_dir():
             continue
@@ -652,7 +664,8 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
                     else ""
                 ),
                 is_incident_registry=any((entry / "docs/incidents").glob("*.json")),
-                reconciler_owned=entry.name == REGISTRY_WORKSPACE_ID,
+                reconciler_owned=kept_current is not None
+                and entry.resolve() == kept_current,
                 created_at=meta.get(
                     "created_at",
                     datetime.fromtimestamp(entry.stat().st_ctime, tz=UTC).isoformat(),

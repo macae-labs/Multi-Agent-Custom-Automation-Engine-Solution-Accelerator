@@ -226,3 +226,89 @@ async def test_the_registry_is_not_rescanned_on_every_beat(events):
         await rec.run_once()
 
     assert scans == 1
+
+
+# ── vinculación en caliente ──────────────────────────────────────────────────
+# El registro es un clon en el share: existe cuando alguien lo crea desde la UI,
+# que puede ser mucho después del arranque. Medido en prod: la revisión viva
+# arrancó con "ningún workspace contiene docs/incidents" y quedó sin registro ni
+# ejecutor, con los 22 archivos del registro versionados en el repo.
+
+
+def late_provider(pair, appears_on_call: int):
+    """Devuelve ``None`` hasta la llamada ``appears_on_call``; después el par."""
+    calls = {"n": 0}
+
+    def provider():
+        calls["n"] += 1
+        return pair if calls["n"] >= appears_on_call else None
+
+    provider.calls = calls  # type: ignore[attr-defined]
+    return provider
+
+
+@pytest.mark.asyncio
+async def test_a_registry_that_appears_after_startup_is_bound_and_originates_work(
+    events, tmp_path
+):
+    inc = incident()
+
+    async def registry():
+        return [inc]
+
+    provider = late_provider((registry, local_shell(tmp_path)), appears_on_call=3)
+    rec = Reconciler(
+        store=events, provider=provider, now=lambda: NOW, scan_interval=0.0
+    )
+
+    # Mientras el registro no existe no se origina trabajo y no se rompe nada.
+    assert await rec.run_once() == 0
+    assert await rec.run_once() == 0
+    assert await events.pending() == []
+
+    # Aparece: el barrido lo vincula, apila el vencimiento y lo aplica con el
+    # ejecutor que vino en el mismo par.
+    assert await rec.run_once() == 1
+    reconciled = await _event(events, ir.KIND_RECONCILED, inc)
+    assert reconciled["payload"]["operational"] is True
+    assert (await _event(events, ir.KIND_EXPIRY, inc))["status"] == STATUS_APPLIED
+
+
+@pytest.mark.asyncio
+async def test_the_provider_stops_being_called_once_the_registry_is_bound(
+    events, tmp_path
+):
+    async def registry():
+        return []
+
+    provider = late_provider((registry, local_shell(tmp_path)), appears_on_call=1)
+    rec = Reconciler(
+        store=events, provider=provider, now=lambda: NOW, scan_interval=0.0
+    )
+    for _ in range(4):
+        await rec.run_once()
+
+    assert provider.calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_injected_registry_wins_over_the_provider(events, tmp_path):
+    """Quien arma el loop ya vinculado no paga descubrimiento: el provider del
+    arranque no debe pisar una inyección explícita (tests y harnesses)."""
+    inc = incident()
+
+    async def registry():
+        return [inc]
+
+    provider = late_provider((registry, local_shell(tmp_path)), appears_on_call=1)
+    rec = Reconciler(
+        store=events,
+        registry=registry,
+        execute=local_shell(tmp_path),
+        provider=provider,
+        now=lambda: NOW,
+        scan_interval=0.0,
+    )
+    await rec.run_once()
+
+    assert provider.calls["n"] == 0

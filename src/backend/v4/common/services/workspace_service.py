@@ -45,10 +45,14 @@ WORKSPACE_ROOT = Path(
 MAX_FILE_BYTES = 1 * 1024 * 1024  # 1 MB
 MAX_LIST_ENTRIES = 1000
 _META_FILE = ".macae_workspace_meta.json"
-#: Workspace propio del reconciliador (registro de incidentes). Convención, no
-#: configuración: si existe con este id, él lo mantiene al día; cualquier otro
-#: workspace se lee tal cual porque es del usuario o de los agentes.
-REGISTRY_WORKSPACE_ID = "incident-registry"
+#: Workspace propio del reconciliador (registro de incidentes). Configurable
+#: vía INCIDENT_REGISTRY_WORKSPACE_ID (p.ej. en prod apunta al workspace del
+#: repo); si no está definida, cae al id por convención. Si existe con este
+#: id, él lo mantiene al día; cualquier otro workspace se lee tal cual porque
+#: es del usuario o de los agentes.
+REGISTRY_WORKSPACE_ID = (
+    os.getenv("INCIDENT_REGISTRY_WORKSPACE_ID") or "incident-registry"
+)
 
 # Leading alphanumeric forbids dotfiles, "." and ".." outright; no separators.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
@@ -67,8 +71,19 @@ _init_lock = threading.Lock()
 
 
 def _git(ws: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    # ``safe.directory`` declarado por invocación y acotado a ESTE workspace: el
+    # share (Azure Files/SMB) reporta un dueño distinto al uid del proceso y git
+    # rechaza el árbol con "detected dubious ownership", de modo que TODA
+    # operación de git falla sobre el montaje (medido en prod: git status del
+    # clon de /data/workspaces). Va como pre-flight contra el contrato conocido,
+    # no como manejo del error, y sin config global ni comodín.
     try:
-        return subprocess.run(["git", *args], cwd=ws, capture_output=True, timeout=15)
+        return subprocess.run(
+            ["git", "-c", f"safe.directory={ws}", *args],
+            cwd=ws,
+            capture_output=True,
+            timeout=15,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=503,

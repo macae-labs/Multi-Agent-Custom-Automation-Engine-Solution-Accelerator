@@ -12,6 +12,7 @@ import pytest
 
 import v4.api.workspace_router as wr
 import v4.common.services.workspace_service as ws_mod
+import v4.control.workspace_capability as wc
 
 USER = "listing-user"
 
@@ -44,6 +45,11 @@ def make(root: Path, workspace_id: str, *, branch: str, registry: bool) -> Path:
 def root(tmp_path, monkeypatch):
     base = tmp_path / "workspaces"
     monkeypatch.setattr(ws_mod, "WORKSPACE_ROOT", base)
+    # El listado pregunta por el registro DESCUBIERTO, así que el
+    # descubrimiento tiene que mirar esta misma raíz; sin esto los asertos de
+    # ``reconciler_owned`` pasaban por accidente (discover miraba la raíz real y
+    # no encontraba nada, así que todo daba False).
+    monkeypatch.setattr(wc, "WORKSPACE_ROOT", base)
     monkeypatch.setattr(wr, "_auth_user", lambda request: USER)
     return base
 
@@ -58,14 +64,29 @@ def test_listing_shows_the_branch_of_each_workspace(root):
     assert by_id(wr.list_workspaces(Req()))["mi-ws"].branch == "stable/v4-baseline"
 
 
-def test_the_users_workspace_with_the_registry_is_marked_but_not_owned(root):
-    """Tiene docs/incidents, así que se lee; pero nadie le hace merge por debajo."""
+def test_the_users_workspace_with_the_registry_is_the_one_kept_current(root):
+    """El usuario crea el workspace con un nombre suyo y una URL: no conoce el
+    concepto de workspace_id y nunca lo llama ``incident-registry``. Si es el
+    registro descubierto, el reconciliador lo mantiene al día y el listado lo
+    dice. Con la regla vieja (por nombre) la UI decía que no en el único
+    registro que había, y el adelanto no corría nunca."""
     make(root, "mi-repo", branch="main", registry=True)
 
     summary = by_id(wr.list_workspaces(Req()))["mi-repo"]
 
     assert summary.is_incident_registry is True
-    assert summary.reconciler_owned is False
+    assert summary.reconciler_owned is True
+
+
+def test_with_two_registries_nothing_is_marked_as_kept_current(root):
+    """Ante dos registros ``discover`` no adivina, así que nadie recibe merge."""
+    make(root, "repo-a", branch="main", registry=True)
+    make(root, "repo-b", branch="main", registry=True)
+
+    summaries = by_id(wr.list_workspaces(Req()))
+
+    assert [s.is_incident_registry for s in summaries.values()] == [True, True]
+    assert not any(s.reconciler_owned for s in summaries.values())
 
 
 def test_the_reconcilers_own_workspace_is_marked_as_owned(root):

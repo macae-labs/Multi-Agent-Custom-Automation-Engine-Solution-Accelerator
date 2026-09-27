@@ -147,8 +147,9 @@ def test_discover_refuses_to_guess_between_two_registries(clone, caplog):
 
 
 @pytest.mark.asyncio
-async def test_a_foreign_workspace_is_read_as_is_never_fast_forwarded(cap, caplog):
-    """El workspace del usuario en Monaco no recibe merge por debajo."""
+async def test_a_workspace_that_is_not_the_registry_is_read_as_is(cap, caplog):
+    """Sólo el registro que ``discover()`` eligió se adelanta; cualquier otro
+    workspace se lee tal cual, sin merge por debajo."""
     assert cap.owned is False
 
     with caplog.at_level("INFO"):
@@ -162,11 +163,9 @@ async def test_a_foreign_workspace_is_read_as_is_never_fast_forwarded(cap, caplo
 
 
 @pytest.mark.asyncio
-async def test_the_reconcilers_own_workspace_is_fast_forwarded_before_reading(clone):
-    own = clone.parent / REGISTRY_WORKSPACE_ID
-    clone.rename(own)
+async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
     cap = WorkspaceCapability(
-        user_id="reg-user", workspace_id=REGISTRY_WORKSPACE_ID, tool=FakeTool()
+        user_id="reg-user", workspace_id=clone.name, tool=FakeTool(), owned=True
     )
 
     assert cap.owned is True
@@ -243,3 +242,39 @@ def test_two_different_registries_are_still_ambiguous(clone, monkeypatch, caplog
 
     assert discover() is None
     assert "ambiguo" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_source_commit_survives_a_tree_owned_by_someone_else(
+    cap, clone, monkeypatch
+):
+    """Sobre el share (SMB) el árbol no es del uid del proceso y git aborta por
+    "dubious ownership": ``source`` quedaba vacío y la evidencia no decía contra
+    qué commit corrió la sonda. La condición se fuerza de verdad, no se simula."""
+    for args in (
+        ["config", "user.email", "reg@local"],
+        ["config", "user.name", "reg"],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "registro"],
+    ):
+        subprocess.run(["git", *args], cwd=clone, check=True, capture_output=True)
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+    await cap.registry()
+
+    assert len(cap.source) == 40
+
+
+def test_a_workspace_the_user_named_is_the_registry_and_gets_advanced(clone):
+    """Un usuario crea el workspace con un nombre y una URL: no conoce el
+    concepto de workspace_id, así que nunca lo bautiza ``incident-registry``.
+    Que el reconciliador lo adelante no puede depender de ese nombre — con la
+    regla vieja el clon de prod quedó congelado en un commit anterior a
+    ``docs/incidents`` y el adelanto no corrió NUNCA."""
+    assert clone.name != REGISTRY_WORKSPACE_ID
+
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("reg-user", clone.name)
+    assert cap.owned is True

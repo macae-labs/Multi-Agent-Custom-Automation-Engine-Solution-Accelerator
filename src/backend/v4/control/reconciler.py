@@ -19,6 +19,13 @@ transición ya ocurrió: el evento es la causa, no la entrega).
   ``reconciled`` son hechos que esa transición consume por identidad.
 El loop además origina trabajo: con un ``registry`` de INC, cada iteración
 apila ``incident_expiry`` por vencimiento (``rearm_due``).
+
+El registro puede no existir al arrancar (el clon llega al share cuando
+alguien lo crea desde la UI), así que el loop lo vincula EN CALIENTE: mientras
+no tenga registro, cada barrido reintenta el ``provider``. Descubrir una sola
+vez en el arranque era un pestillo: el proceso quedaba sin origen de trabajo y
+sin ejecutor hasta el próximo reinicio, con los ``incident_expiry`` pendientes
+diferidos indefinidamente.
 """
 
 import asyncio
@@ -49,6 +56,7 @@ from v4.control.incident_revalidation import (
     KIND_EXPIRY,
     KIND_RECONCILED,
     Executor,
+    Provider,
     Registry,
     apply_incident_expiry,
     rearm_due,
@@ -154,7 +162,9 @@ class Reconciler:
         *,
         registry: Registry | None = None,
         execute: Executor | None = None,
+        provider: Provider | None = None,
         now: Callable[[], datetime] = utcnow,
+        scan_interval: float = REGISTRY_SCAN_INTERVAL_SECONDS,
     ) -> None:
         self._store = store
         # Incremento 4: el registro de INC y la capacidad de ejecución los inyecta
@@ -162,7 +172,11 @@ class Reconciler:
         # ``incident_expiry`` pendiente se difiere con su motivo en el log.
         self._registry = registry
         self._execute = execute
+        # Si llegan ya vinculados el provider no se usa; si no, se reintenta en
+        # cada barrido hasta que el registro exista.
+        self._provider = provider
         self._now = now
+        self._scan_interval = scan_interval
         self._next_scan = 0.0
         self.holder = new_holder_id()
         self._wake = asyncio.Event()
@@ -197,9 +211,14 @@ class Reconciler:
         if self._last_seen_holder != self.holder:
             logger.info("Lease acquired by %s", self.holder)
             self._last_seen_holder = self.holder
-        if self._registry is not None and monotonic() >= self._next_scan:
-            self._next_scan = monotonic() + REGISTRY_SCAN_INTERVAL_SECONDS
-            await rearm_due(await self._registry(), self.store, self._now())
+        if monotonic() >= self._next_scan:
+            self._next_scan = monotonic() + self._scan_interval
+            if self._registry is None and self._provider is not None:
+                bound = self._provider()
+                if bound is not None:
+                    self._registry, self._execute = bound
+            if self._registry is not None:
+                await rearm_due(await self._registry(), self.store, self._now())
         applied = 0
         for event in await self.store.pending():
             try:
