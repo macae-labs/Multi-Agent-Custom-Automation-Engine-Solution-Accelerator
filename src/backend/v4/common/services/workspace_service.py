@@ -104,12 +104,22 @@ def _contained(base: Path, *parts: str) -> Path:
     return Path(joined)
 
 
-def workspace_for(user_id: str, workspace_id: str) -> Path:
+def workspace_for(user_id: str, workspace_id: str, *, create: bool = True) -> Path:
     """Resolve (and lazily create) a user's workspace directory.
 
     Identity is INJECTED: the HTTP layer passes the EasyAuth principal, agent
     lanes pass the user_id they carry from the chat request. Single entry
-    point to the physical workspace for every consumer."""
+    point to the physical workspace for every consumer.
+
+    ``create=False`` resuelve sin crear y da 404 si no existe. Es lo que usan
+    las LECTURAS HTTP: crear desde un GET resucitaba un workspace recién
+    borrado —el frontend sigue consultando el que quedó seleccionado— y dejaba
+    un ``.git`` vacío; el ``create_workspace`` siguiente veía ese ``.git``, se
+    salteaba el nacimiento, NO clonaba y devolvía 201 con el árbol vacío
+    (medido en prod 2026-09-27: reflog con una sola entrada
+    ``commit (initial): init workspace`` y ``config`` sin ``remote``). La
+    creación diferida sigue viva para los carriles de agente, que la necesitan
+    para el workspace por sesión."""
     if not _SAFE_ID.match(user_id):
         raise HTTPException(status_code=400, detail="Invalid user id.")
     if not _SAFE_ID.match(workspace_id):
@@ -120,6 +130,8 @@ def workspace_for(user_id: str, workspace_id: str) -> Path:
         # containment in _resolve then guards against escapes from THAT base.
         return ws.resolve()
     if not (ws / ".git").is_dir():
+        if not create:
+            raise HTTPException(status_code=404, detail="Workspace not found.")
         with _init_lock:
             if not (ws / ".git").is_dir():  # re-check under the lock
                 ws.mkdir(parents=True, exist_ok=True)

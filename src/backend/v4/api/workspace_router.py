@@ -26,11 +26,13 @@ GET/POST/DELETE /workspaces           → named-workspace management
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -58,6 +60,12 @@ from v4.common.services.workspace_service import (
     workspace_for,
 )
 
+logger = logging.getLogger(__name__)
+
+#: Intentos de borrado tras apartar el árbol. El ENOTEMPTY de SMB es un listado
+#: rancio, no un directorio realmente ocupado: un segundo barrido lo limpia.
+_RMTREE_ATTEMPTS = 3
+
 # Router for per-workspace file operations  (/workspace/{workspace_id}/…)
 workspace_router = APIRouter(prefix="/workspace/{workspace_id}", tags=["workspace"])
 # Router for workspace management  (/workspaces  and  /workspaces/{workspace_id})
@@ -79,8 +87,14 @@ def _auth_user(request: Request) -> str:
 
 
 def _workspace_for(request: Request, workspace_id: str) -> Path:
-    """HTTP wrapper: extract the EasyAuth principal, delegate to the service."""
-    return workspace_for(_auth_user(request), workspace_id)
+    """HTTP wrapper: extract the EasyAuth principal, delegate to the service.
+
+    ``create=False``: una petición HTTP nunca hace nacer un workspace. Crearlo
+    desde una lectura resucitaba el que el usuario acababa de borrar (el
+    frontend sigue consultando el seleccionado) y el ``create`` siguiente
+    tomaba ese ``.git`` como prueba de existencia, así que no clonaba nada.
+    Nacer es asunto de ``POST /workspaces`` y del carril de agente."""
+    return workspace_for(_auth_user(request), workspace_id, create=False)
 
 
 def _user_root(request: Request) -> Path:
@@ -770,11 +784,42 @@ def delete_workspace(request: Request, workspace_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid user id.")
     if not _SAFE_ID.match(workspace_id):
         raise HTTPException(status_code=400, detail="Invalid workspace id.")
-    ws = _contained(WORKSPACE_ROOT, user_id, workspace_id)
+    safe_workspace_id = workspace_id
+    ws = _contained(WORKSPACE_ROOT, user_id, safe_workspace_id)
     if ws.is_symlink():
         ws.unlink()  # detach the link; the target project stays intact
         return None
     if not ws.exists():
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    shutil.rmtree(ws)
+    # Azure Files (SMB) hace fallar ``rmtree`` a mitad con
+    # ``OSError: [Errno 39] Directory not empty`` porque el directorio sigue
+    # listando entradas ya desvinculadas (medido en prod sobre un árbol con
+    # node_modules). Si eso pasa bajo el NOMBRE REAL queda un cadáver con
+    # ``.git``, y el ``create`` siguiente lo re-abre en vez de clonar. Apartarlo
+    # con un rename sí es atómico: el nombre queda libre en un solo paso y el
+    # borrado lento ya no puede dejar basura donde el usuario la vuelva a pisar.
+    # El prefijo con punto no es un workspace_id válido (``_SAFE_ID`` exige
+    # empezar con alfanumérico), así que un resto no se confunde con uno real.
+    doomed = ws.parent / f".deleting-{safe_workspace_id}-{uuid4().hex[:8]}"
+    if doomed.parent != ws.parent:
+        raise HTTPException(status_code=400, detail="Invalid workspace path.")
+    ws.rename(doomed)
+    base_parent = ws.parent.resolve()
+    resolved_doomed = doomed.resolve()
+    try:
+        doomed_rel = resolved_doomed.relative_to(base_parent)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail="Invalid workspace path.") from err
+    safe_delete_target = (base_parent / doomed_rel).resolve()
+    for _ in range(_RMTREE_ATTEMPTS):
+        shutil.rmtree(safe_delete_target, ignore_errors=True)
+        if not doomed.exists():
+            return None
+    # El nombre del usuario ya está libre, así que el borrado ES efectivo para
+    # él; lo que queda es basura que hay que poder ver, no tapar.
+    logger.warning(
+        "Workspace %s apartado como %s pero no se pudo borrar del todo",
+        workspace_id,
+        doomed.name,
+    )
     return None
