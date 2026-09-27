@@ -70,8 +70,9 @@ _init_lock = threading.Lock()
 
 def _safe_directory_config(ws: Path) -> str:
     resolved = ws.resolve()
+    root = WORKSPACE_ROOT.resolve()
     try:
-        resolved.relative_to(WORKSPACE_ROOT)
+        resolved.relative_to(root)
     except ValueError:
         raise HTTPException(status_code=400, detail="Path outside workspace.")
     value = str(resolved)
