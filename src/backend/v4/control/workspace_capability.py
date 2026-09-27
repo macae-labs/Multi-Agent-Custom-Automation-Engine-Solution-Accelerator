@@ -31,6 +31,7 @@ from typing import Any
 from agent_framework import MCPStreamableHTTPTool
 
 from v4.common.services.workspace_service import (
+    _SAFE_ID,
     REGISTRY_WORKSPACE_ID,
     WORKSPACE_ROOT,
     _resolve,
@@ -229,8 +230,17 @@ def discover() -> WorkspaceCapability | None:
     # nombres lo contaba como ambigüedad y el reconciliador no originaba
     # trabajo nunca (medido 2026-09-24: tres alias del mismo directorio).
     by_path: dict[str, list[tuple[str, str]]] = {}
-    for user_dir in sorted(p for p in WORKSPACE_ROOT.iterdir() if p.is_dir()):
+    for user_dir in sorted(
+        p for p in WORKSPACE_ROOT.iterdir() if p.is_dir() and _SAFE_ID.match(p.name)
+    ):
         for ws in sorted(user_dir.iterdir()):
+            # Sólo identidades y workspaces con nombre VÁLIDO. Un borrado que no
+            # pudo terminar deja un resto ``.deleting-<id>-<hex>`` con el árbol
+            # entero dentro; sin esta cerca contaba como un segundo registro,
+            # ``discover`` se declaraba ambiguo y el reconciliador dejaba de
+            # originar trabajo por basura que el usuario ya no ve.
+            if not _SAFE_ID.match(ws.name):
+                continue
             if (ws.is_dir() or ws.is_symlink()) and any(
                 (ws / INCIDENTS_DIR).glob("*.json")
             ):
