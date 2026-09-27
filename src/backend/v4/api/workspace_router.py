@@ -808,8 +808,8 @@ def delete_workspace(request: Request, workspace_id: str) -> None:
     resolved_doomed = doomed.resolve()
     try:
         resolved_doomed.relative_to(base_parent)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid workspace path.")
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail="Invalid workspace path.") from err
     for _ in range(_RMTREE_ATTEMPTS):
         shutil.rmtree(resolved_doomed, ignore_errors=True)
         if not doomed.exists():
