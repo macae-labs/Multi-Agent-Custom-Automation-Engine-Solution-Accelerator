@@ -58,6 +58,12 @@ class Evidence:
 
 Executor = Callable[[str, str], Awaitable[Evidence]]
 Registry = Callable[[], Awaitable[list[dict[str, Any]]]]
+#: Vinculación diferida: devuelve ``(registry, execute)`` cuando el registro ya
+#: es alcanzable, o ``None`` si todavía no existe. Que el registro esté o no
+#: NO es un hecho del arranque —el clon llega al share cuando alguien lo crea
+#: desde la UI—, así que el intento se repite; uno solo dejaba el loop sin
+#: origen de trabajo para toda la vida del proceso.
+Provider = Callable[[], tuple[Registry, Executor] | None]
 
 
 def utcnow() -> datetime:

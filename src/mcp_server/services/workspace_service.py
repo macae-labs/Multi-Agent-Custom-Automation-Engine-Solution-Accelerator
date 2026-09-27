@@ -105,8 +105,18 @@ def _resolve_in(ws: Path, raw: str) -> Path:
 
 
 def _git(ws: Path, *args: str) -> "subprocess.CompletedProcess[bytes]":
+    # ``safe.directory`` acotado a ESTE workspace: sobre el share (Azure
+    # Files/SMB) el dueño del árbol no es el uid del proceso y git lo rechaza
+    # con "detected dubious ownership", tumbando toda operación de git en el
+    # montaje (medido en prod: workspace_git_status del clon de
+    # /data/workspaces). Pre-flight, no manejo del error.
     try:
-        return subprocess.run(["git", *args], cwd=ws, capture_output=True, timeout=15)
+        return subprocess.run(
+            ["git", "-c", f"safe.directory={ws}", *args],
+            cwd=ws,
+            capture_output=True,
+            timeout=15,
+        )
     except FileNotFoundError as exc:
         raise WorkspaceAccessError("git is not available in this environment.") from exc
     except subprocess.TimeoutExpired as exc:
@@ -129,10 +139,23 @@ def _git_commit_all(ws: Path, message: str) -> None:
         )
 
 
-def _child_env() -> dict:
+def _child_env(trust: Path | None = None) -> dict:
     """Environment for spawned commands: the server's env minus anything whose
-    name looks like a credential."""
-    return {k: v for k, v in os.environ.items() if not _SECRET_ENV_HINT.search(k)}
+    name looks like a credential.
+
+    ``trust`` declara un árbol de confianza para git en el hijo
+    (``GIT_CONFIG_*``): un ``git`` corrido por ``workspace_exec`` no pasa por
+    ``_git``, así que sin esto el agente vuelve a chocar con "detected dubious
+    ownership" sobre el share aunque las tools de git funcionen.
+    """
+    env = {k: v for k, v in os.environ.items() if not _SECRET_ENV_HINT.search(k)}
+    if trust is not None:
+        env |= {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": str(trust),
+        }
+    return env
 
 
 def _clip(text: str) -> tuple[str, bool]:
@@ -589,7 +612,7 @@ class WorkspaceToolService(MCPToolBase):
                         cwd=str(cwd),
                         capture_output=True,
                         timeout=secs,
-                        env=_child_env(),
+                        env=_child_env(ws),
                     )
                 except FileNotFoundError as exc:
                     raise WorkspaceAccessError("bash is not available in this environment.") from exc

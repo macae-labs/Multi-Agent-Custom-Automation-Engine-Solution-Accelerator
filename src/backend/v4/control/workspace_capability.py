@@ -52,14 +52,23 @@ class WorkspaceCapability:
         user_id: str,
         workspace_id: str,
         tool: MCPStreamableHTTPTool | None = None,
+        owned: bool = False,
     ) -> None:
         self.user_id = user_id
         self.workspace_id = workspace_id
         self._tool = tool
         #: Commit del registro leído en el último ``registry()``.
         self.source = ""
-        #: Sólo el workspace propio del reconciliador se adelanta.
-        self.owned = workspace_id == REGISTRY_WORKSPACE_ID
+        #: Se adelanta el registro que ``discover()`` ELIGIÓ, y sólo ése.
+        #: Antes esto se decidía por el NOMBRE del workspace
+        #: (``incident-registry``): como nadie lo bautiza así —un usuario crea
+        #: el workspace con un nombre y una URL, no conoce el concepto de
+        #: workspace_id— el adelanto no corría nunca y el clon se podría
+        #: (medido en prod: clon en un commit anterior a ``docs/incidents``).
+        #: El nombre sigue sirviendo, pero sólo como desempate en ``discover``.
+        #: Adelantar es ``--ff-only``: no reescribe ni descarta nada; ante
+        #: divergencia falla, se registra y el registro se lee como está.
+        self.owned = owned
         #: Una condición estable se registra al cambiar, no en cada vuelta.
         self._said_foreign = False
 
@@ -84,8 +93,15 @@ class WorkspaceCapability:
     def _head(self, ws: Any) -> str:
         """Commit del clon. El backend monta el mismo share, así que es git local."""
         try:
+            # Mismo pre-flight que ``_git``: sobre el share el dueño del árbol no
+            # es el uid del proceso y git aborta por "dubious ownership", con lo
+            # que ``source`` quedaba vacío y la evidencia no decía de qué árbol
+            # salió el veredicto.
             done = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=ws, capture_output=True, timeout=15
+                ["git", "-c", f"safe.directory={ws}", "rev-parse", "HEAD"],
+                cwd=ws,
+                capture_output=True,
+                timeout=15,
             )
         except (OSError, subprocess.SubprocessError) as ex:
             logger.warning("HEAD del registro ilegible: %s", ex)
@@ -96,11 +112,11 @@ class WorkspaceCapability:
         """Adelanta el registro antes de leerlo: un clon que nadie sincroniza es
         una foto que se pudre y cada merge lo deja más atrás.
 
-        Sólo en el workspace propio (``incident-registry``): el del usuario en
-        Monaco y el de los agentes se leen tal cual, nunca se les hace merge por
-        debajo. Si el árbol divergió, git falla, se registra el motivo y se sigue
-        con lo que hay; el commit queda en la evidencia, así que un registro
-        viejo se delata en vez de mentir en silencio."""
+        Sólo en el registro que ``discover()`` eligió; cualquier otro workspace
+        se lee tal cual. ``--ff-only`` es la garantía: no reescribe historia ni
+        descarta commits, y si el árbol divergió git falla, se registra el motivo
+        y se sigue con lo que hay; el commit queda en la evidencia, así que un
+        registro viejo se delata en vez de mentir en silencio."""
         if not self.owned:
             if not self._said_foreign:
                 self._said_foreign = True
@@ -222,13 +238,16 @@ def discover() -> WorkspaceCapability | None:
                     (user_dir.name, ws.name)
                 )
     found: list[tuple[str, str]] = [_pick_identity(a) for a in by_path.values()]
-    # El workspace propio gana sin ambigüedad: es el único que el reconciliador
-    # posee y adelanta. Los demás sólo cuentan si no existe.
-    owned = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
-    if len(owned) == 1:
-        user_id, workspace_id = owned[0]
+    # El workspace con el nombre canónico gana el DESEMPATE entre varios
+    # registros; no es lo que define que el reconciliador lo adelante (eso lo
+    # define haber sido elegido acá). Los demás sólo cuentan si no existe.
+    canonical = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
+    if len(canonical) == 1:
+        user_id, workspace_id = canonical[0]
         logger.info("Registro de INC (propio): %s/%s", user_id, workspace_id)
-        return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id)
+        return WorkspaceCapability(
+            user_id=user_id, workspace_id=workspace_id, owned=True
+        )
     if not found:
         logger.info("Registro de INC: ningún workspace contiene %s", INCIDENTS_DIR)
         return None
@@ -242,8 +261,37 @@ def discover() -> WorkspaceCapability | None:
         return None
     user_id, workspace_id = found[0]
     logger.info("Registro de INC: %s/%s", user_id, workspace_id)
-    return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id)
+    return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id, owned=True)
 
 
 def bind(capability: WorkspaceCapability) -> tuple[Registry, Executor]:
     return capability.registry, capability.execute
+
+
+class RegistryProvider:
+    """``discover`` + ``bind`` reintentables, dueños de la capacidad que crean.
+
+    El registro es un clon en el share: existe cuando alguien lo crea desde la
+    UI, que puede ser mucho después de este arranque. Descubrirlo una sola vez
+    dejaba al reconciliador sin registro NI ejecutor hasta el próximo reinicio
+    (medido en prod: la revisión viva arrancó con "ningún workspace contiene
+    docs/incidents" y quedó así). Devuelve el par la primera vez que vincula y
+    ``None`` mientras no haya registro o cuando ya está vinculado.
+    """
+
+    def __init__(self) -> None:
+        self._capability: WorkspaceCapability | None = None
+
+    def __call__(self) -> tuple[Registry, Executor] | None:
+        if self._capability is not None:
+            return None
+        capability = discover()
+        if capability is None:
+            return None
+        self._capability = capability
+        return bind(capability)
+
+    async def aclose(self) -> None:
+        if self._capability is not None:
+            await self._capability.aclose()
+            self._capability = None
