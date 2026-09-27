@@ -278,3 +278,80 @@ def test_a_workspace_the_user_named_is_the_registry_and_gets_advanced(clone):
     assert cap is not None
     assert (cap.user_id, cap.workspace_id) == ("reg-user", clone.name)
     assert cap.owned is True
+
+
+# ── desempate global entre registros DISTINTOS ───────────────────────────────
+# Medido en local 2026-09-27: dos clones DISTINTOS del repo (el sample_user de
+# dev y el oid real, cada uno con su docs/incidents) dejaban el descubrimiento
+# ambiguo AUNQUE la identidad de trabajo estuviera declarada, que es la función
+# que su propio docstring promete. No se colapsan por ``origin``: pueden estar
+# en ramas o commits distintos y eso escondería una divergencia real.
+
+
+def _second_registry(root, user="otro-user", name="otro-clon"):
+    other = root / user / name
+    (other / "docs" / "incidents").mkdir(parents=True)
+    (other / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    return other
+
+
+def test_the_declared_identity_breaks_a_tie_between_different_registries(
+    clone, monkeypatch, caplog
+):
+    root = clone.parent.parent
+    _second_registry(root)
+    monkeypatch.setenv("INCIDENT_REGISTRY_USER_ID", "reg-user")
+
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("reg-user", clone.name)
+    assert "ambiguo" not in caplog.text
+
+
+def test_the_canonical_name_wins_before_the_declared_identity(clone, monkeypatch):
+    """El nombre canónico es el PRIMER criterio: la identidad declarada sólo
+    desempata lo que queda después de aplicarlo."""
+    root = clone.parent.parent
+    canonico = root / "otro-user" / REGISTRY_WORKSPACE_ID
+    (canonico / "docs" / "incidents").mkdir(parents=True)
+    (canonico / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+    monkeypatch.setenv("INCIDENT_REGISTRY_USER_ID", "reg-user")
+
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("otro-user", REGISTRY_WORKSPACE_ID)
+
+
+def test_the_declared_identity_also_breaks_a_tie_between_canonical_clones(
+    clone, monkeypatch
+):
+    root = clone.parent.parent
+    for user in ("aaa-user", "reg-user"):
+        ws = root / user / REGISTRY_WORKSPACE_ID
+        (ws / "docs" / "incidents").mkdir(parents=True)
+        (ws / "docs" / "incidents" / "INC-2026-004.x.json").write_text(json.dumps(INC))
+    monkeypatch.setenv("INCIDENT_REGISTRY_USER_ID", "reg-user")
+
+    cap = discover()
+
+    assert cap is not None
+    assert (cap.user_id, cap.workspace_id) == ("reg-user", REGISTRY_WORKSPACE_ID)
+
+
+def test_a_declared_identity_that_matches_nothing_leaves_it_ambiguous(
+    clone, monkeypatch, caplog
+):
+    """No se cae al primero por tener la variable puesta: si no coincide con
+    ningún candidato sigue siendo ambiguo, y se dice por qué."""
+    root = clone.parent.parent
+    _second_registry(root)
+    monkeypatch.setenv("INCIDENT_REGISTRY_USER_ID", "nadie")
+
+    with caplog.at_level("INFO"):
+        assert discover() is None
+
+    assert "no está entre los candidatos" in caplog.text
+    assert "ambiguo" in caplog.text

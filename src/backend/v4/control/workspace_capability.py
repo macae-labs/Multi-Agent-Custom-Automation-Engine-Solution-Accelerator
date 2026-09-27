@@ -16,10 +16,16 @@ el reconciliador lo encuentra.
 
 Un mismo registro puede ser alcanzable bajo VARIAS identidades (el mismo clon
 enlazado desde varios ``user_id``). Eso sigue siendo UN registro: los
-candidatos se agrupan por la ruta física que resuelven, y entre los alias de
-uno se elige la identidad de trabajo — ``INCIDENT_REGISTRY_USER_ID`` desempata
-si está declarada. La ambigüedad que detiene al reconciliador es la de verdad:
-dos registros DISTINTOS.
+candidatos se agrupan por la ruta física que resuelven.
+
+Entre registros DISTINTOS se desempata en dos pasos, con lo ya declarado y sin
+adivinar: el ``workspace_id`` canónico (``INCIDENT_REGISTRY_WORKSPACE_ID``, por
+defecto ``incident-registry``) primero, y después la identidad de trabajo
+(``INCIDENT_REGISTRY_USER_ID``), que desempata globalmente y no sólo entre
+alias de una misma ruta. Dos clones del mismo repo NO se colapsan por su
+``origin``: pueden estar en ramas o commits distintos y darlos por equivalentes
+taparía una divergencia real. Si tras los dos pasos queda más de uno, el
+reconciliador se detiene y los nombra en el log.
 """
 
 import json
@@ -194,6 +200,11 @@ class WorkspaceCapability:
         )
 
 
+def _declared_user() -> str:
+    """``INCIDENT_REGISTRY_USER_ID``: la identidad de trabajo del reconciliador."""
+    return (os.environ.get("INCIDENT_REGISTRY_USER_ID") or "").strip()
+
+
 def _pick_identity(aliases: list[tuple[str, str]]) -> tuple[str, str]:
     """De varios alias del MISMO registro, la identidad con la que se trabaja.
 
@@ -203,7 +214,7 @@ def _pick_identity(aliases: list[tuple[str, str]]) -> tuple[str, str]:
     ``INCIDENT_REGISTRY_USER_ID`` desempata cuando está declarado; si no, el
     primero en orden, que es estable entre arranques.
     """
-    declared = (os.environ.get("INCIDENT_REGISTRY_USER_ID") or "").strip()
+    declared = _declared_user()
     if declared:
         for alias in aliases:
             if alias[0] == declared:
@@ -248,29 +259,50 @@ def discover() -> WorkspaceCapability | None:
                     (user_dir.name, ws.name)
                 )
     found: list[tuple[str, str]] = [_pick_identity(a) for a in by_path.values()]
-    # El workspace con el nombre canónico gana el DESEMPATE entre varios
-    # registros; no es lo que define que el reconciliador lo adelante (eso lo
-    # define haber sido elegido acá). Los demás sólo cuentan si no existe.
-    canonical = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
-    if len(canonical) == 1:
-        user_id, workspace_id = canonical[0]
-        logger.info("Registro de INC (propio): %s/%s", user_id, workspace_id)
-        return WorkspaceCapability(
-            user_id=user_id, workspace_id=workspace_id, owned=True
-        )
     if not found:
         logger.info("Registro de INC: ningún workspace contiene %s", INCIDENTS_DIR)
         return None
-    if len(found) > 1:
+
+    # Desempate entre registros DISTINTOS, en dos pasos y sin adivinar. No se
+    # colapsan por ``origin``: dos clones del mismo repo pueden estar en ramas o
+    # commits distintos, y darlos por equivalentes taparía una divergencia real
+    # (el commit del registro es parte de la evidencia).
+    # 1) el nombre canónico del workspace es el primer criterio.
+    canonical = [f for f in found if f[1] == REGISTRY_WORKSPACE_ID]
+    candidates = canonical or found
+    # 2) la identidad declarada desempata GLOBALMENTE lo que quedó, no sólo
+    #    entre alias de una misma ruta física: con dos clones distintos (el
+    #    ``sample_user`` de dev y el oid real, cada uno con el suyo) el
+    #    descubrimiento se declaraba ambiguo aunque la identidad de trabajo
+    #    estuviera declarada, que es justo la función que promete.
+    declared = _declared_user()
+    if len(candidates) > 1 and declared:
+        narrowed = [c for c in candidates if c[0] == declared]
+        if narrowed:
+            candidates = narrowed
+        else:
+            logger.info(
+                "INCIDENT_REGISTRY_USER_ID=%s no está entre los candidatos (%s)",
+                declared,
+                ", ".join(f"{u}/{w}" for u, w in candidates),
+            )
+
+    if len(candidates) > 1:
         logger.warning(
             "Registro de INC ambiguo (%d): %s. El reconciliador no origina "
             "trabajo hasta que quede uno.",
-            len(found),
-            ", ".join(f"{u}/{w}" for u, w in found),
+            len(candidates),
+            ", ".join(f"{u}/{w}" for u, w in candidates),
         )
         return None
-    user_id, workspace_id = found[0]
-    logger.info("Registro de INC: %s/%s", user_id, workspace_id)
+
+    user_id, workspace_id = candidates[0]
+    logger.info(
+        "Registro de INC%s: %s/%s",
+        " (propio)" if workspace_id == REGISTRY_WORKSPACE_ID else "",
+        user_id,
+        workspace_id,
+    )
     return WorkspaceCapability(user_id=user_id, workspace_id=workspace_id, owned=True)
 
 
