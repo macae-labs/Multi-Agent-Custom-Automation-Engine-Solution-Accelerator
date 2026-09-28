@@ -53,7 +53,7 @@ def test_user_language_model():
     """Test UserLanguage model creation."""
     test_lang = UserLanguage(language="en-US")
     assert test_lang.language == "en-US"
-    
+
     test_lang2 = UserLanguage(language="es-ES")
     assert test_lang2.language == "es-ES"
 
@@ -70,9 +70,9 @@ async def test_user_browser_language_endpoint_function():
     """Test the user_browser_language_endpoint function directly."""
     user_lang = UserLanguage(language="fr-FR")
     request = Mock()
-    
+
     result = await user_browser_language_endpoint(user_lang, request)
-    
+
     assert result == {"status": "Language received successfully"}
     assert isinstance(result, dict)
 
@@ -81,7 +81,7 @@ async def test_user_browser_language_endpoint_function():
 async def test_user_browser_language_endpoint_multiple_calls():
     """Test the endpoint with multiple different languages."""
     request = Mock()
-    
+
     for lang_code in ["en-US", "es-ES", "fr-FR"]:
         user_lang = UserLanguage(language=lang_code)
         result = await user_browser_language_endpoint(user_lang, request)
@@ -109,13 +109,14 @@ async def test_lifespan_cleanup_exception_handling():
     # Patch at the location where agent_registry is used (app module)
     import app as app_module
     original_registry = app_module.agent_registry
-    
+
     try:
         # Create a mock registry that raises a general Exception
         mock_registry = Mock()
-        mock_registry.cleanup_all_agents = AsyncMock(side_effect=Exception("Test cleanup error"))
+        mock_registry.cleanup_all_agents = AsyncMock(
+            side_effect=Exception("Test cleanup error"))
         app_module.agent_registry = mock_registry
-        
+
         # Should not raise, exception should be caught and logged
         async with lifespan(app):
             pass
@@ -128,7 +129,7 @@ async def test_lifespan_cleanup_exception_handling():
 def test_app_logging_configured():
     """Test that logging is configured."""
     import logging
-    
+
     logger = logging.getLogger("backend")
     assert logger is not None
 
@@ -148,13 +149,14 @@ async def test_lifespan_cleanup_import_error_handling():
     # Patch at the location where agent_registry is used (app module)
     import app as app_module
     original_registry = app_module.agent_registry
-    
+
     try:
         # Create a mock registry that raises ImportError
         mock_registry = Mock()
-        mock_registry.cleanup_all_agents = AsyncMock(side_effect=ImportError("Test import error"))
+        mock_registry.cleanup_all_agents = AsyncMock(
+            side_effect=ImportError("Test import error"))
         app_module.agent_registry = mock_registry
-        
+
         # Should not raise, exception should be caught and logged
         async with lifespan(app):
             pass
@@ -164,17 +166,17 @@ async def test_lifespan_cleanup_import_error_handling():
         app_module.agent_registry = original_registry
 
 
-@pytest.mark.asyncio  
+@pytest.mark.asyncio
 async def test_lifespan_cleanup_success():
     """Test lifespan context manager with successful cleanup."""
     # Create a mock registry
     mock_cleanup = AsyncMock(return_value=None)
-    
+
     # Patch at the module level where it's imported
-    with patch.object(sys.modules.get('v4.config.agent_registry', sys.modules.get('v4.config.agent_registry')), 
+    with patch.object(sys.modules.get('v4.config.agent_registry', sys.modules.get('v4.config.agent_registry')),
                       'agent_registry') as mock_registry:
         mock_registry.cleanup_all_agents = mock_cleanup
-        
+
         async with lifespan(app):
             # Startup phase
             pass
@@ -198,7 +200,7 @@ async def test_user_browser_language_sets_config():
     """Test that user_browser_language endpoint calls config method."""
     user_lang = UserLanguage(language="de-DE")
     request = Mock()
-    
+
     # Just test that it completes successfully and returns expected result
     result = await user_browser_language_endpoint(user_lang, request)
     assert result == {"status": "Language received successfully"}
@@ -213,16 +215,16 @@ def test_app_configured_with_lifespan():
 
 class TestAppConfiguration:
     """Test class for app configuration tests."""
-    
+
     def test_app_title_is_default(self):
         """Test app has default title."""
         # FastAPI default title is "FastAPI"
         assert app.title == "FastAPI"
-    
+
     def test_app_middleware_stack_not_empty(self):
         """Test that middleware stack is configured."""
         assert len(app.user_middleware) > 0
-    
+
     def test_cors_middleware_allows_all_origins(self):
         """Test CORS middleware is configured to allow all origins."""
         from starlette.middleware.cors import CORSMiddleware
@@ -231,11 +233,11 @@ class TestAppConfiguration:
             if hasattr(m, 'cls') and m.cls == CORSMiddleware:
                 cors_middleware = m
                 break
-        
+
         assert cors_middleware is not None
         # Check that allow_origins includes "*" - using kwargs attribute
         assert "*" in cors_middleware.kwargs.get('allow_origins', [])
-    
+
     def test_cors_middleware_allows_credentials(self):
         """Test CORS middleware allows credentials."""
         from starlette.middleware.cors import CORSMiddleware
@@ -247,17 +249,17 @@ class TestAppConfiguration:
 
 class TestUserLanguageModel:
     """Test class for UserLanguage model validation."""
-    
+
     def test_user_language_empty_string(self):
         """Test UserLanguage with empty string."""
         lang = UserLanguage(language="")
         assert lang.language == ""
-    
+
     def test_user_language_with_underscore_format(self):
         """Test UserLanguage with underscore format (e.g. en_US)."""
         lang = UserLanguage(language="en_US")
         assert lang.language == "en_US"
-    
+
     def test_user_language_lowercase(self):
         """Test UserLanguage with lowercase language code."""
         lang = UserLanguage(language="en")
@@ -268,22 +270,22 @@ class TestUserLanguageModel:
 async def test_user_browser_language_endpoint_logs_info(caplog):
     """Test that user_browser_language endpoint logs the received language."""
     import logging
-    
+
     user_lang = UserLanguage(language="pt-BR")
     request = Mock()
-    
+
     with caplog.at_level(logging.INFO):
         await user_browser_language_endpoint(user_lang, request)
-    
+
     # Check that log contains the language info
-    assert any("pt-BR" in record.message or "Received browser language" in record.message 
+    assert any("pt-BR" in record.message or "Received browser language" in record.message
                for record in caplog.records)
 
 
 def test_logging_configured_correctly():
     """Test that logging is configured at module level."""
     import logging
-    
+
     # opentelemetry.sdk should be set to ERROR level
     otel_logger = logging.getLogger("opentelemetry.sdk")
     assert otel_logger.level == logging.ERROR
@@ -332,6 +334,37 @@ def test_telemetry_pipeline_exports_requests_to_local_stub(telemetry_stub):
     assert any("/config" in _json.dumps(e) for e in requests)
 
 
+def test_asgi_send_receive_spans_are_not_exported_as_dependencies(telemetry_stub):
+    """Los hijos ``receive``/``send`` del ASGI no son dependencias: son eventos
+    internos del protocolo (``asgi.event.type``). Se exportaban como
+    RemoteDependency y duplicaban CADA petición con Target "<ruta> http send".
+    Medido en prod (24 h): 74.946 filas ``InProc`` contra 67.894 ``HTTP``
+    reales. Se cortan en el origen con ``exclude_spans``; filtrarlos en la
+    consulta de una alerta sería esconder el defecto del modelo de telemetría.
+    """
+    import json as _json
+
+    from fastapi.testclient import TestClient
+    from opentelemetry import trace
+
+    client = TestClient(app)  # sin context manager: no dispara el lifespan
+    try:
+        assert client.get("/config").status_code == 200
+    finally:
+        client.close()
+    _flush_all_span_processors(trace.get_tracer_provider())
+
+    envelopes = telemetry_stub.envelopes()
+    assert any(str(e.get("name", "")).endswith(".Request") for e in envelopes)
+    internos = [
+        e
+        for e in envelopes
+        if str(e.get("name", "")).endswith(".RemoteDependency")
+        and ("http send" in _json.dumps(e) or "http receive" in _json.dumps(e))
+    ]
+    assert internos == [], internos
+
+
 def test_telemetry_shutdown_completes_and_flushes_to_local_stub(telemetry_stub):
     """Cierre comprobable: el shutdown de los proveedores OTel TERMINA sin
     esperar a ningún servicio remoto y lo pendiente llega al stub. Es el
@@ -357,3 +390,40 @@ def test_telemetry_shutdown_completes_and_flushes_to_local_stub(telemetry_stub):
     ]
     assert lingering == [], lingering
 
+
+# ── el borde traduce la falta de principal ───────────────────────────────────
+
+
+def test_missing_easyauth_principal_is_401_not_500(monkeypatch):
+    """Sin principal de EasyAuth en prod la app responde 401, no 500.
+
+    ``get_authenticated_user_details`` lanza ``PermissionError`` pelado y sólo
+    UNA ruta lo atrapaba: la misma causa daba 401 en las rutas de workspace y
+    500 en las de chat. El cliente sólo reintenta con refresco ante 401
+    (``apiClient.tsx``), así que el 500 dejaba la ruta muerta hasta recargar.
+    Medido en prod: 7 de estos en 24 h, el error más frecuente de la app.
+    """
+    from fastapi import APIRouter, Request
+    from fastapi.testclient import TestClient
+
+    from auth.auth_utils import get_authenticated_user_details
+
+    probe = APIRouter()
+
+    @probe.get("/__probe_auth")
+    def _probe(request: Request):  # pragma: no cover - lo ejecuta el cliente
+        get_authenticated_user_details(request_headers=request.headers)
+        return {"ok": True}
+
+    app.include_router(probe)
+    monkeypatch.setenv("APP_ENV", "prod")
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/__probe_auth")
+    finally:
+        app.router.routes = [
+            r for r in app.router.routes if getattr(r, "path", "") != "/__probe_auth"
+        ]
+
+    assert response.status_code == 401
+    assert "EasyAuth" in response.json()["detail"]
