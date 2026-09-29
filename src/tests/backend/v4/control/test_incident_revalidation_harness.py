@@ -312,3 +312,156 @@ async def test_an_injected_registry_wins_over_the_provider(events, tmp_path):
     await rec.run_once()
 
     assert provider.calls["n"] == 0
+
+
+# ── carril reactivo: señal viva → candidato → confirmación por sonda ─────────
+# El carril proactivo entra por el reloj. Éste entra por una alerta ya
+# disparada. `alert_match` SELECCIONA candidatos; la sonda CONFIRMA, porque
+# structural_match es semántico y el código no puede evaluarlo.
+
+
+def con_binding(rule="macae-api-5xx", dims=None, **kw):
+    inc = incident(**kw)
+    inc["signature"]["alert_match"] = [
+        {"rule": rule, "dimensions": dims or {"Name": "GET /x", "ResultCode": "500"}}
+    ]
+    return inc
+
+
+def alerta(aid="alerta-1", rule="macae-api-5xx", **dims):
+    return {"id": aid, "rule": rule, "dimensions": dims or {}}
+
+
+def test_a_binding_matches_when_its_dimensions_are_a_subset_of_the_alert():
+    inc = con_binding(dims={"ResultCode": "500"})
+    hit = ir.candidates(
+        "macae-api-5xx", {"Name": "GET /x", "ResultCode": "500"}, [inc]
+    )
+    assert [i["incident_id"] for i in hit] == [inc["incident_id"]]
+
+
+def test_a_different_rule_or_value_is_not_a_candidate():
+    inc = con_binding()
+    assert ir.candidates("macae-excepciones", {"Name": "GET /x", "ResultCode": "500"}, [inc]) == []
+    assert ir.candidates("macae-api-5xx", {"Name": "GET /x", "ResultCode": "504"}, [inc]) == []
+    assert ir.candidates("macae-api-5xx", {}, [inc]) == []
+
+
+def test_an_incident_without_alert_match_is_never_a_candidate():
+    assert ir.candidates("macae-api-5xx", {"ResultCode": "500"}, [incident()]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_matching_alert_produces_one_durable_fact_per_candidate(events):
+    inc = con_binding()
+    a = alerta(Name="GET /x", ResultCode="500")
+
+    assert await ir.match_alerts([a], [inc], events) == 1
+    assert await ir.match_alerts([a], [inc], events) == 0  # segunda lectura: 409
+
+    doc = await events.find(
+        ir.KIND_DETECTED, ir.detection_identity(inc["incident_id"], "alerta-1")
+    )
+    assert doc["payload"]["rule"] == "macae-api-5xx"
+    assert doc["payload"]["dimensions"] == {"Name": "GET /x", "ResultCode": "500"}
+    assert doc["payload"]["ambiguous_with"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_identity_carries_the_alert_instance_so_recurrences_are_new_facts(
+    events,
+):
+    """El mismo incidente reaparece: cada aparición es un hecho propio. Con la
+    identidad puesta sólo en incident_id, la segunda alerta chocaría con 409 y
+    la recurrencia se perdería."""
+    inc = con_binding()
+    dims = {"Name": "GET /x", "ResultCode": "500"}
+
+    assert await ir.match_alerts([alerta("a1", **dims)], [inc], events) == 1
+    assert await ir.match_alerts([alerta("a2", **dims)], [inc], events) == 1
+
+    pendientes = [e["id"] for e in await events.pending()]
+    assert sorted(pendientes) == [
+        f"{ir.KIND_DETECTED}:{inc['incident_id']}:a1",
+        f"{ir.KIND_DETECTED}:{inc['incident_id']}:a2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ambiguity_is_recorded_not_resolved(events):
+    """Con dos firmas candidatas no se adivina: se registran las dos y cada
+    hecho dice con quién quedó ambiguo."""
+    a = con_binding(dims={"ResultCode": "500"})
+    b = con_binding(dims={"Name": "GET /x"})
+    b["incident_id"] = "INC-2026-999"
+
+    assert await ir.match_alerts([alerta(Name="GET /x", ResultCode="500")], [a, b], events) == 2
+
+    doc = await events.find(
+        ir.KIND_DETECTED, ir.detection_identity(a["incident_id"], "alerta-1")
+    )
+    assert doc["payload"]["ambiguous_with"] == ["INC-2026-999"]
+
+
+@pytest.mark.asyncio
+async def test_a_red_probe_confirms_that_the_signature_reproduces(events, tmp_path):
+    # Vencimiento futuro: así el único trabajo del barrido es el reactivo.
+    inc = con_binding(command="exit 3", expires="2027-06-01T00:00:00Z")
+    await ir.match_alerts([alerta(Name="GET /x", ResultCode="500")], [inc], events)
+    rec = reconciler(events, [inc], local_shell(tmp_path))
+
+    assert await rec.run_once() == 1
+
+    ident = ir.detection_identity(inc["incident_id"], "alerta-1")
+    doc = await events.find(ir.KIND_RECONCILED, ident)
+    assert doc["payload"]["status"] == "reproduced"
+    assert doc["payload"]["operational"] is False
+    assert doc["payload"]["evidence"]["exit_code"] == 3
+    assert (await events.find(ir.KIND_DETECTED, ident))["status"] == STATUS_APPLIED
+
+
+@pytest.mark.asyncio
+async def test_a_green_probe_refuses_to_attribute_the_alert(events, tmp_path):
+    """El invariante se sostiene: esa alerta tiene otra causa. Se deja el hecho
+    y NO se le cuelga a este incidente."""
+    inc = con_binding(command="true", expires="2027-06-01T00:00:00Z")
+    await ir.match_alerts([alerta(Name="GET /x", ResultCode="500")], [inc], events)
+
+    assert await reconciler(events, [inc], local_shell(tmp_path)).run_once() == 1
+
+    doc = await events.find(
+        ir.KIND_RECONCILED, ir.detection_identity(inc["incident_id"], "alerta-1")
+    )
+    assert doc["payload"]["status"] == "not_reproduced"
+    assert doc["payload"]["operational"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_loop_originates_and_confirms_in_one_sweep(events, tmp_path):
+    """Extremo a extremo por el reconciliador: fuente de alertas inyectada,
+    emparejamiento, evento durable y confirmación por sonda, sin reloj."""
+    inc = con_binding(command="exit 1", expires="2027-06-01T00:00:00Z")
+
+    async def registry():
+        return [inc]
+
+    async def alerts():
+        return [alerta("live-1", Name="GET /x", ResultCode="500")]
+
+    rec = Reconciler(
+        store=events,
+        registry=registry,
+        execute=local_shell(tmp_path),
+        alerts=alerts,
+        now=lambda: NOW,
+        scan_interval=0.0,
+    )
+
+    assert await rec.run_once() == 1
+
+    doc = await events.find(
+        ir.KIND_RECONCILED, ir.detection_identity(inc["incident_id"], "live-1")
+    )
+    assert doc["payload"]["status"] == "reproduced"
+    # El vencimiento es futuro: no se originó nada por reloj.
+    assert await events.find(ir.KIND_EXPIRY, ir.expiry_identity(inc)) is None

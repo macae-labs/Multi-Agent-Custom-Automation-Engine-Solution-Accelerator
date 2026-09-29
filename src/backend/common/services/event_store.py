@@ -36,6 +36,10 @@ EVENT_KINDS = frozenset(
         # Incremento 4 (v4/control/incident_revalidation.py): la ocurrencia del
         # vencimiento de un INC, la decisión humana por techo y la evidencia.
         "incident_expiry",
+        # Carril reactivo: una alerta viva compatible con una firma conocida.
+        # NO se reutiliza incident_expiry: ése significa "llegó el momento
+        # contractual de re-probar algo conocido", y su identidad es la fecha.
+        "incident_detected",
         "human_authority",
         "reconciled",
     }

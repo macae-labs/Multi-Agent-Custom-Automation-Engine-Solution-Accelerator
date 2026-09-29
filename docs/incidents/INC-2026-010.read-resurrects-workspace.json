@@ -1,0 +1,259 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-010",
+  "domain": "runtime",
+  "status": "closed",
+  "invariant": {
+    "id": "INV-READS-NEVER-CREATE-A-WORKSPACE",
+    "statement": "Una petición HTTP de LECTURA no puede hacer nacer un workspace. Nacer es acto de POST /api/v4/workspaces y del carril de agente. Si una lectura crea, resucita lo que el usuario acaba de borrar, y entonces el create siguiente encuentra un .git y lo toma por prueba de existencia: no clona y devuelve 201 sobre un árbol vacío."
+  },
+  "signature": {
+    "family": "stale_state",
+    "id": "SIG-read-resurrects-workspace-then-create-reopens-corpse",
+    "structural_match": {
+      "sequence": "DELETE /api/v4/workspaces/{id} 204 -> GET /api/v4/workspace/{id}/entries 200 -> POST /api/v4/workspaces 201",
+      "read_returns_200_on_deleted_workspace": true,
+      "create_returns_201_without_cloning": true,
+      "tree_after_create": "sólo .git y .macae_workspace_meta.json; sin .gitignore",
+      "git_reflog_entries": "exactamente una: 'commit (initial): init workspace'",
+      "git_config_has_remote_origin": false,
+      "git_head": "ref: refs/heads/master",
+      "workspace_meta_has_created_at": false,
+      "where_observed": "prod, Container App ca-pslc25991vme66zmins; árbol inspeccionado en el share Azure Files stpslc25991vme66zmins/macae-workspaces"
+    },
+    "alert_match": [
+      {
+        "rule": "macae-api-5xx",
+        "dimensions": {
+          "Name": "DELETE /api/v4/workspaces/{workspace_id}",
+          "ResultCode": "500"
+        }
+      },
+      {
+        "rule": "macae-excepciones",
+        "dimensions": {
+          "ExceptionType": "OSError"
+        }
+      }
+    ]
+  },
+  "env_fingerprint": {
+    "where": "prod",
+    "env_names_present": [
+      "MACAE_WORKSPACE_ROOT",
+      "CONTAINER_APP_REVISION"
+    ],
+    "credential_mode": "easyauth_token",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed"
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "read-only",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion",
+      "destructive"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T19:13:30Z",
+      "description": "El usuario borra el workspace del repo desde la UI y lo vuelve a agregar con la URL; el explorador queda vacío. Log de prod: DELETE 204 a las 19:11:58, GET entries 200 a las 19:12:47 y 19:13:12, POST /workspaces 201 a las 19:13:26."
+    },
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T19:11:28Z",
+      "description": "Un DELETE anterior había fallado a mitad con OSError [Errno 39] Directory not empty: 'platform' sobre el share (SMB), en shutil.rmtree desde workspace_router.py."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T19:40:30Z",
+      "description": "Inspección del árbol en el share por API de Azure Files: raíz con .git (dir) y .macae_workspace_meta.json (73 bytes) y NADA más; .gitignore inexistente (lectura directa, no listado); .git/config sin [remote \"origin\"]; HEAD -> refs/heads/master; .git/logs/HEAD con UNA entrada 'commit (initial): init workspace'; metadato {\"name\": ...} sin created_at."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T19:45:00Z",
+      "description": "Lectura de código: workspace_for() crea en diferido (mkdir + git init + config + commit --allow-empty -m 'init workspace') y NO escribe .gitignore; create_workspace() decide existencia con 'if not (ws / \".git\").is_dir()' y en la rama de re-apertura escribe el metadato sin created_at. Las dos huellas del árbol coinciden con esa rama y no con la del init vacío del propio create."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T20:10:00Z",
+      "description": "workspace_for(..., create=False) para las lecturas HTTP; delete_workspace aparta el árbol con rename a .deleting-<id>-<hex> y borra con reintentos; discover() ignora nombres que no son workspace_id válido."
+    },
+    {
+      "stage": "validate",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T22:08:47Z",
+      "description": "Camino real en prod tras el despliegue (revisión 0000144): DELETE 204 a las 22:06:56, GET entries 404 a las 22:07:14 y 22:07:36 (la lectura ya no resucita), POST 201 a las 22:08:17 tras ~40 s de clon real, 'Registro de INC: d1f2b268-.../multi-agent-...' a las 22:08:29 y lectura de docs/incidents/INC-2026-001....json 200 a las 22:08:47."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 2,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Tras borrar y volver a agregar el workspace del repo desde la App, el POST devuelve 201 pero el explorador queda vacío y el reconciliador sigue diciendo 'ningún workspace contiene docs/incidents'. Desde localhost el mismo flujo clona ~749 archivos.",
+    "candidate_causes": [
+      "El clon quedó a medias por una carrera del share (Azure Files) al borrar y recrear",
+      "El repo_url no llegó al backend y se hizo un init vacío",
+      "Una lectura recreó el workspace antes del create y éste lo re-abrió sin clonar"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "Leer .git/logs/HEAD y .git/config del workspace en el share: el reflog distingue clon de init en un paso ('clone: from <url>' contra 'commit (initial)'), y config distingue por la presencia de [remote \"origin\"].",
+      "expected_signal_when_failing": "reflog con una sola entrada 'commit (initial): init workspace' y config sin remote: no hubo clon",
+      "expected_signal_when_healthy": "reflog con 'clone: from <url>' y config con [remote \"origin\"]"
+    },
+    "confirmed_cause": {
+      "statement": "workspace_for() creaba el workspace al RESOLVERLO, así que un GET del frontend sobre el workspace todavía seleccionado lo resucitaba con git init justo después del DELETE. create_workspace() usa la existencia de .git como prueba de que el workspace ya existe, así que entró por la rama de re-apertura: no llamó a _clone_into, escribió el metadato y devolvió 201 con el árbol vacío. El Errno 39 del rmtree sobre SMB es un defecto real y agrava el caso dejando un cadáver bajo el nombre real, pero NO es la causa de este síntoma.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "reflog con una entrada 'commit (initial): init workspace'; .git/config sin remote; metadato sin created_at (sólo la rama de re-apertura lo omite); ausencia de .gitignore (sólo la rama de init de create_workspace lo escribe)"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "El clon quedó parcial por una carrera del share",
+        "discarded_by": "El reflog tiene una sola entrada de init y config no tiene remote: no hubo clon parcial, no hubo clon en absoluto.",
+        "side_effect_kept": "El Errno 39 del rmtree se corrigió igual (rename + reintentos), porque deja cadáveres con .git que el create re-abre."
+      },
+      {
+        "hypothesis": "El repo_url no llegó desde el frontend",
+        "discarded_by": "WorkspaceSelector.tsx envía repo_url cuando el campo está lleno, y _clone_into levanta HTTPException ante un clon fallido: un 201 no puede venir de un clon roto. La rama tomada fue la de re-apertura, que no mira repo_url.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "2bc7d7f5",
+      "commit_or_pr": "árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/v4/common/services/workspace_service.py",
+      "src/backend/v4/api/workspace_router.py",
+      "src/backend/v4/control/workspace_capability.py",
+      "src/tests/backend/v4/api/test_workspace_lifecycle.py"
+    ],
+    "new_functions_introduced": [],
+    "justification_if_new_functions": null
+  },
+  "validate": {
+    "closing_layer": "L6",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "ruff check, ruff format --check y mypy limpios en src/backend."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "test_workspace_lifecycle.py: 4 passed sobre los manejadores reales; sólo el clon se sustituye porque _SAFE_REPO_URL exige https y no hay red."
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Suite canónica completa verde tras el cambio."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "Control negativo en test: con rmtree neutralizado, el nombre del usuario queda libre igual y el create siguiente clona; el test que cubre el resto .deleting-* falló hasta agregar el filtro por _SAFE_ID en discover()."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L6": {
+        "result": "pass",
+        "observed": "Prod, revisión 0000144: GET entries devuelve 404 en vez de resucitar y el POST siguiente clona de verdad (~40 s), con el registro descubierto y los INC legibles."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Antes del parche, en prod, la misma secuencia (DELETE, lectura, create con URL) dejó un árbol con sólo .git y metadato y el reconciliador siguió sin registro. Después del parche, la misma secuencia en prod dio 404 en la lectura y un clon real. En el harness, neutralizar rmtree deja el nombre libre igual, y quitar el filtro por _SAFE_ID hace que un resto .deleting-* vuelva ambiguo al descubrimiento."
+    }
+  },
+  "lanes_not_covered": [
+    "El camino del rename en delete_workspace no se ejercitó en prod: el borrado de las 22:06 terminó sin ENOTEMPTY, así que sólo los tests cubren el resto .deleting-*.",
+    "El carril de agente conserva la creación diferida (workspace por sesión): una herramienta que resuelva un workspace inexistente sigue creándolo, y eso es deliberado."
+  ],
+  "residual_risk": [
+    "Un resto .deleting-* que no se pueda borrar queda ocupando el share; se registra en el log pero nada lo recoge después.",
+    "Una lectura HTTP sobre un workspace de sesión que aún no nació ahora da 404 en vez de crearlo: si alguna vista del frontend dependía de ese efecto, verá 404."
+  ],
+  "monitor": {
+    "new_revision_at_zero_traffic": false,
+    "health_logs_latency_errors_checked": true,
+    "direct_probe_by_fqdn": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "Tras un DELETE, GET /api/v4/workspace/{id}/entries por FQDN de la revisión",
+      "expected_signal_when_failing": "200 con árbol vacío: la lectura creó el workspace",
+      "expected_signal_when_healthy": "404 Not Found"
+    },
+    "traffic_promoted_by_human_at": null
+  },
+  "learn": {
+    "retrieval_keys": [
+      "workspace vacío tras borrar y volver a agregar",
+      "201 Created sin clonar",
+      "reflog commit (initial) init workspace",
+      "git config sin remote origin",
+      "metadato sin created_at",
+      "Errno 39 Directory not empty rmtree Azure Files",
+      "lectura que crea workspace"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "uv run --project src/backend pytest src/tests/backend/v4/api/test_workspace_lifecycle.py -q",
+      "expected_signal_when_failing": "exit != 0: una lectura hace nacer el workspace o el create re-abre en vez de clonar",
+      "expected_signal_when_healthy": "exit 0: 4 passed"
+    },
+    "last_verified": "2026-09-27T22:08:47Z",
+    "expires_if_not_reverified_by": "2026-12-27T22:08:47Z",
+    "operational": true
+  }
+}

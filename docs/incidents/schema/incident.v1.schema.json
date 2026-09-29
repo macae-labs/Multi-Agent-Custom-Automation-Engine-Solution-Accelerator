@@ -104,6 +104,43 @@
         "clock_trigger": {
           "type": "string",
           "description": "Instrumento de captura (p.ej. 'timeout -s ABRT 300'); NO es criterio de identidad ni de corrección."
+        },
+        "alert_match": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Frontera EXTERNA de la firma: cómo se ve en una alerta de Azure Monitor. Es SELECTOR DE CANDIDATO, no prueba de identidad: un mismo código en una misma ruta puede venir de otra causa. La identidad la prueba structural_match, que una alerta de Log Analytics no puede observar (claves como router_decision_current_turn no viven en telemetría). Las claves de dimensions son el alfabeto que emiten las reglas del proyecto; están enumeradas acá a propósito, para que una dimensión mal escrita no valide. El binding tiene que ser único entre entradas: dos INC con la misma regla y las mismas dimensiones hacen la detección ambigua aunque sus incident_id sean distintos.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rule",
+              "dimensions"
+            ],
+            "properties": {
+              "rule": {
+                "type": "string",
+                "description": "Nombre de la regla de alerta que emite la señal."
+              },
+              "dimensions": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {
+                  "enum": [
+                    "Name",
+                    "ResultCode",
+                    "ExceptionType",
+                    "ProblemId",
+                    "Target",
+                    "DependencyType",
+                    "SeverityLevel"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

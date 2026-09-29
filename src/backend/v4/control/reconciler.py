@@ -53,12 +53,16 @@ from v4.common.services.team_service import TeamService
 from v4.config.settings import orchestration_config
 from v4.control.incident_revalidation import (
     KIND_AUTHORITY,
+    KIND_DETECTED,
     KIND_EXPIRY,
     KIND_RECONCILED,
+    AlertSource,
     Executor,
     Provider,
     Registry,
+    apply_incident_detected,
     apply_incident_expiry,
+    match_alerts,
     rearm_due,
     utcnow,
 )
@@ -107,6 +111,13 @@ async def apply_event(
     kind, request_id, payload = event["kind"], event["identity"], event["payload"]
     if kind == KIND_EXPIRY:
         await apply_incident_expiry(
+            event, store=store or get_event_store(), execute=execute
+        )
+        return
+    if kind == KIND_DETECTED:
+        # Rama PROPIA: el camino genérico de abajo busca un plan aparcado y
+        # empieza por payload["user_id"], que un hecho de detección no tiene.
+        await apply_incident_detected(
             event, store=store or get_event_store(), execute=execute
         )
         return
@@ -163,6 +174,7 @@ class Reconciler:
         registry: Registry | None = None,
         execute: Executor | None = None,
         provider: Provider | None = None,
+        alerts: AlertSource | None = None,
         now: Callable[[], datetime] = utcnow,
         scan_interval: float = REGISTRY_SCAN_INTERVAL_SECONDS,
     ) -> None:
@@ -175,6 +187,9 @@ class Reconciler:
         # Si llegan ya vinculados el provider no se usa; si no, se reintenta en
         # cada barrido hasta que el registro exista.
         self._provider = provider
+        # Fuente de señales vivas (alertas ya disparadas). Sin ella el loop sólo
+        # origina trabajo por vencimiento; con ella, también por detección.
+        self._alerts = alerts
         self._now = now
         self._scan_interval = scan_interval
         self._next_scan = 0.0
@@ -218,7 +233,10 @@ class Reconciler:
                 if bound is not None:
                     self._registry, self._execute = bound
             if self._registry is not None:
-                await rearm_due(await self._registry(), self.store, self._now())
+                incidents = await self._registry()
+                await rearm_due(incidents, self.store, self._now())
+                if self._alerts is not None:
+                    await match_alerts(await self._alerts(), incidents, self.store)
         applied = 0
         for event in await self.store.pending():
             try:
