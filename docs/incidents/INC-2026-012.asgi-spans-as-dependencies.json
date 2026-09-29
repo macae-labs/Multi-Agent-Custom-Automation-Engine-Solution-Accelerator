@@ -1,0 +1,229 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-012",
+  "domain": "runtime",
+  "status": "open",
+  "invariant": {
+    "id": "INV-ONLY-REAL-OUTBOUND-CALLS-ARE-DEPENDENCIES",
+    "statement": "En AppDependencies sólo hay llamadas salientes reales. Un evento interno del protocolo ASGI no es una dependencia: registrarlo como tal hace que la telemetría afirme una llamada que nunca existió, y cualquier regla o consulta que cuente dependencias fallidas cuenta ficción."
+  },
+  "signature": {
+    "family": "semantic_contradiction",
+    "id": "SIG-asgi-send-receive-spans-recorded-as-dependencies",
+    "structural_match": {
+      "row_name_suffix": "http send",
+      "dependency_type": "InProc",
+      "target_equals_name": true,
+      "span_attribute": "asgi.event.type = http.response.start",
+      "spurious_spans_per_request": 2,
+      "counts_24h": "InProc 74946 contra HTTP 67894",
+      "duplicates_every_request": true,
+      "where_observed": "prod, workspace administrado managed-appi-pslc25991vme66zmins-ws"
+    }
+  },
+  "env_fingerprint": {
+    "where": "local",
+    "env_names_present": [
+      "APPLICATIONINSIGHTS_CONNECTION_STRING"
+    ],
+    "credential_mode": "none",
+    "dotenv_present": true,
+    "network_scope": "loopback_only"
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "read-only",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T09:40:00Z",
+      "description": "Al proponer una regla de alerta sobre dependencias fallidas, las filas top de AppDependencies en 24 h eran 'GET /api/v4/... http send' con ResultCode 0, una por cada 5xx de AppRequests: duplicaban exactamente las peticiones."
+    },
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T09:50:00Z",
+      "description": "Reparto por tipo en 24 h: InProc 74946, HTTP 67894, Microsoft.CognitiveServices 2, Azure blob 1. Más de la mitad de la telemetría de dependencias es InProc. Volumen total por tabla: AppDependencies 141713 contra AppRequests 333."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T09:55:00Z",
+      "description": "Una fila en detalle: DependencyType InProc, Target igual al Name, Data vacío, DurationMs 0 y Properties con asgi.event.type = http.response.start. Son los spans hijos que emite opentelemetry-instrumentation-asgi por cada evento receive/send del protocolo, exportados como RemoteDependency."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T10:30:00Z",
+      "description": "Sonda discriminante: instrumentar una app FastAPI mínima con un exportador en memoria. Por defecto una sola petición produce ['GET /x http send', 'GET /x http send', 'GET /x']; con exclude_spans=['receive','send'] produce ['GET /x']."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T10:35:00Z",
+      "description": "FastAPIInstrumentor.instrument_app(app, exclude_spans=['receive', 'send']) en app.py. Se corta en el origen; la instrumentación 0.60b0 acepta el parámetro."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "AppDependencies duplica cada petición con filas 'ruta http send' que no corresponden a ninguna llamada saliente, y en 24 h son más de la mitad de la tabla.",
+    "candidate_causes": [
+      "El backend llama de verdad a su propia API y eso genera dependencias legítimas",
+      "El exportador de Azure Monitor clasifica mal un span de servidor",
+      "La instrumentación ASGI emite spans hijos por cada evento del protocolo y se exportan como dependencias"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "Instrumentar una app FastAPI mínima con un InMemorySpanExporter y listar los nombres de span de UNA petición, con y sin exclude_spans",
+      "expected_signal_when_failing": "aparecen dos spans 'GET /x http send' además del span de la petición",
+      "expected_signal_when_healthy": "sólo el span de la petición"
+    },
+    "confirmed_cause": {
+      "statement": "opentelemetry-instrumentation-asgi crea un span hijo por cada evento receive/send del ciclo ASGI. Esos spans no tienen semántica de cliente pero el exportador de Azure Monitor los emite como RemoteDependency de tipo InProc, con Target igual al nombre de la ruta. Medido: dos por petición. No es un fallo del exportador ni tráfico real, es instrumentación de más.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "fila con asgi.event.type=http.response.start y DependencyType=InProc; conteo InProc 74946 contra HTTP 67894 en 24 h; listas de spans con y sin exclude_spans"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "El backend se llama a sí mismo y son dependencias legítimas",
+        "discarded_by": "DurationMs 0, Data vacío, Target idéntico al Name y el atributo asgi.event.type: no hay petición saliente, es un evento del protocolo.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "Alcanza con filtrar esas filas en la consulta de la alerta",
+        "discarded_by": "Filtrar en la consulta esconde el defecto del modelo de telemetría y lo deja ingiriendo y facturando 75 mil filas diarias que no son dependencias. La corrección va en el origen.",
+        "side_effect_kept": "La regla de dependencias quedó sin filtro, porque ya no hace falta."
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "2bc7d7f5",
+      "commit_or_pr": "árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/app.py",
+      "src/tests/backend/test_app.py"
+    ],
+    "new_functions_introduced": [],
+    "justification_if_new_functions": null
+  },
+  "validate": {
+    "closing_layer": "L2",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "ruff check, ruff format --check y mypy limpios en src/backend."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "test_asgi_send_receive_spans_are_not_exported_as_dependencies: una petición a la app real, exportada por el pipeline real de Azure Monitor contra el stub HTTP local, no produce ningún RemoteDependency con 'http send' ni 'http receive', y sí produce el envelope Request."
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Suite canónica completa verde tras el cambio."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "Control negativo medido: por defecto los spans son ['GET /x http send', 'GET /x http send', 'GET /x']; con exclude_spans queda ['GET /x']."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "Sin desplegar: la caída del volumen de InProc en prod queda pendiente del despliegue."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Sin exclude_spans, una petición emite dos spans 'http send' además del de la petición; con exclude_spans emite sólo el de la petición. Medido en la misma huella local con un exportador en memoria, y confirmado por el pipeline real contra el stub."
+    }
+  },
+  "lanes_not_covered": [
+    "Prod: no se ha medido la caída del volumen de InProc en el workspace administrado, porque el parche no está desplegado.",
+    "ca-mcp: su propio servidor no pasa por FastAPIInstrumentor, así que esta firma no lo cubre."
+  ],
+  "residual_risk": [
+    "Se pierde la traza de los eventos receive/send del ASGI. No aportaban ninguna medición propia (DurationMs 0) pero eran el único registro de la frontera del protocolo.",
+    "El volumen histórico de InProc ya ingerido queda en el workspace y sesga cualquier consulta de dependencias sobre ventanas anteriores al despliegue."
+  ],
+  "monitor": {
+    "new_revision_at_zero_traffic": false,
+    "health_logs_latency_errors_checked": false,
+    "direct_probe_by_fqdn": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "Tras el despliegue, contar en el workspace administrado AppDependencies con DependencyType == 'InProc' en una ventana posterior",
+      "expected_signal_when_failing": "sigue habiendo filas InProc con Name terminado en 'http send'",
+      "expected_signal_when_healthy": "cero filas InProc de ese tipo y AppDependencies con sólo llamadas salientes reales"
+    },
+    "traffic_promoted_by_human_at": null
+  },
+  "learn": {
+    "retrieval_keys": [
+      "AppDependencies duplica cada petición",
+      "http send InProc asgi.event.type",
+      "spans receive send exportados como dependencias",
+      "exclude_spans FastAPIInstrumentor",
+      "ruido de telemetría facturado",
+      "no filtrar en la consulta para tapar instrumentación"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "uv run --project src/backend pytest src/tests/backend/test_app.py -k asgi_send_receive -q",
+      "expected_signal_when_failing": "exit != 0: los eventos del protocolo vuelven a exportarse como dependencias",
+      "expected_signal_when_healthy": "exit 0: 1 passed"
+    },
+    "last_verified": "2026-09-28T10:40:00Z",
+    "expires_if_not_reverified_by": "2026-12-28T10:40:00Z",
+    "operational": true
+  }
+}

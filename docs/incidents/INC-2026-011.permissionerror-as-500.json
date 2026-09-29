@@ -1,0 +1,246 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-011",
+  "domain": "runtime",
+  "status": "open",
+  "invariant": {
+    "id": "INV-MISSING-PRINCIPAL-IS-401-AT-THE-EDGE",
+    "statement": "La falta de principal de EasyAuth es una respuesta 401 en TODA ruta, decidida en el borde y no ruta por ruta. El cliente sólo reintenta con refresco forzado ante 401; un 500 se saltea ese reintento y deja la ruta muerta hasta que el usuario recargue."
+  },
+  "signature": {
+    "family": "runtime_exception",
+    "id": "SIG-permissionerror-surfaced-as-500-instead-of-401",
+    "structural_match": {
+      "cause": "cabecera x-ms-client-principal-id ausente con APP_ENV distinto de dev",
+      "raised": "PermissionError('Authentication required. No EasyAuth principal found in headers.') desde auth/auth_utils.py",
+      "workspace_routes_status": 401,
+      "chat_routes_status": 500,
+      "same_cause_two_statuses": true,
+      "client_retries_only_on": 401,
+      "recovery_asymmetry": "en el mismo refresco las rutas de workspace volvieron a 200 cuatro segundos después y las de chat no",
+      "where_observed": "prod, Container App ca-pslc25991vme66zmins"
+    },
+    "alert_match": [
+      {
+        "rule": "macae-api-5xx",
+        "dimensions": {
+          "Name": "GET /api/v4/chat/sessions",
+          "ResultCode": "500"
+        }
+      },
+      {
+        "rule": "macae-excepciones",
+        "dimensions": {
+          "ExceptionType": "PermissionError"
+        }
+      }
+    ]
+  },
+  "env_fingerprint": {
+    "where": "local",
+    "env_names_present": [
+      "APP_ENV",
+      "APPLICATIONINSIGHTS_CONNECTION_STRING",
+      "MACAE_DEV_OBO_TOKEN"
+    ],
+    "credential_mode": "static_dev_token",
+    "dotenv_present": true,
+    "network_scope": "egress_allowed"
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "read-only",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-27T12:30:00Z",
+      "description": "Correlación por timestamp en AppRequests/AppExceptions del workspace administrado: el 2026-09-26 a las 18:01:08 un refresco de página disparó todas las llamadas sin principal; /api/v4/workspaces y /workspace/{id}/files y /entries dieron 401, y /api/v4/chat/sessions y /chat/sessions/{id} dieron 500. A las 18:01:12 las mismas rutas dieron 200."
+    },
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T10:00:00Z",
+      "description": "Volumen en 24 h al 2026-09-28: PermissionError 7 ocurrencias, el tipo de excepción más frecuente de la app; 5 de ellas como 500 en GET /api/v4/chat/sessions y 2 en /chat/sessions/{id}. Última a las 07:39:24 del 2026-09-28, o sea la firma seguía viva."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T10:20:00Z",
+      "description": "Lectura de código: auth_utils.get_authenticated_user_details levanta PermissionError pelado; app.py no registraba ningún exception_handler; una sola ruta lo atrapaba (router.py, la del stream SSE) y su propio comentario ya declaraba la regla: 'the frontend SSE client only refresh-retries on 401; a 500 skips'. En el cliente, apiClient.tsx reintenta únicamente ante 401, en la ruta normal y en la del stream."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T11:05:00Z",
+      "description": "Sonda discriminante: una app FastAPI mínima que levanta PermissionError desde una ruta responde 500 con raise_server_exceptions=False; con un exception_handler registrado responde 401."
+    },
+    {
+      "stage": "patch",
+      "class": "write-scratch",
+      "blast_radius": "own_scratch",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-09-28T11:10:00Z",
+      "description": "Un exception_handler(PermissionError) en app.py que devuelve JSONResponse 401 con el detalle. El contrato queda en el borde, no repetido por ruta."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "Al refrescar la página, las rutas de chat quedan muertas con 500 mientras las de workspace se recuperan solas en cuatro segundos, con la misma causa y en el mismo instante.",
+    "candidate_causes": [
+      "El token de EasyAuth venció y hay que volver a autenticar",
+      "La lógica de reintento del cliente está mal",
+      "La misma excepción produce dos códigos distintos según la ruta y sólo uno dispara el reintento"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "Levantar PermissionError desde una ruta de una app FastAPI mínima y leer el código de respuesta, con y sin exception_handler registrado",
+      "expected_signal_when_failing": "500 sin handler",
+      "expected_signal_when_healthy": "401 con handler"
+    },
+    "confirmed_cause": {
+      "statement": "get_authenticated_user_details levanta PermissionError, que no es HTTPException, y no había handler global. Las rutas de workspace traducen la falta de identidad a 401 por su cuenta; las de chat no, así que la excepción escapaba y Starlette respondía 500. El cliente reintenta sólo ante 401, de modo que el 500 se saltea el refresco forzado y el replay.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "AppRequests/AppExceptions 2026-09-26 18:01:08 y 18:01:12; router.py con el único try/except y su comentario; apiClient.tsx con las dos ramas de 401; medición 500 contra 401 en app mínima"
+    },
+    "false_leads": [
+      {
+        "hypothesis": "El token venció y hay que re-autenticar",
+        "discarded_by": "Un token expirado no se arregla solo en cuatro segundos sin login nuevo, y las rutas de workspace pasaron de 401 a 200 en ese lapso con el refresco silencioso.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "La lógica de reintento del cliente está mal",
+        "discarded_by": "Medido: refresco proactivo, ante 401 refresco forzado ignorando skew, replay una vez y redirección sólo si el replay también da 401. Esa escalera funcionó en el mismo instante sobre las rutas de workspace. El defecto está en el código que el backend devuelve.",
+        "side_effect_kept": "No se tocó el cliente."
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "2bc7d7f5",
+      "commit_or_pr": "árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/app.py",
+      "src/tests/backend/test_app.py"
+    ],
+    "new_functions_introduced": [
+      "app._auth_required (exception_handler de PermissionError)"
+    ],
+    "justification_if_new_functions": "El contrato es del borde: sin un handler único habría que repetir try/except en cada ruta y cualquier ruta nueva nacería con el defecto. La forma ya estaba escrita en la única ruta que lo atrapaba; esto la promueve a una sola vez."
+  },
+  "validate": {
+    "closing_layer": "L2",
+    "layers": {
+      "L0": {
+        "result": "pass",
+        "observed": "ruff check, ruff format --check y mypy limpios en src/backend."
+      },
+      "L1": {
+        "result": "pass",
+        "observed": "test_missing_easyauth_principal_is_401_not_500 sobre la app real con TestClient y APP_ENV=prod: 401 y el detalle menciona EasyAuth."
+      },
+      "L2": {
+        "result": "pass",
+        "observed": "Suite canónica completa verde tras el cambio."
+      },
+      "L3": {
+        "result": "pass",
+        "observed": "Control negativo medido en app mínima sin handler: 500; con handler: 401."
+      },
+      "L4": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L5": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      },
+      "L6": {
+        "result": "n/a",
+        "observed": "Sin desplegar: la firma seguía viva en prod a las 07:39:24 del 2026-09-28 y el cierre en prod queda pendiente del despliegue."
+      },
+      "L7": {
+        "result": "n/a",
+        "observed": "No aplica a esta firma."
+      }
+    }
+  },
+  "compare": {
+    "same_repro": true,
+    "same_env_fingerprint": true,
+    "failure_absent_after_patch": true,
+    "functional_behavior_unchanged": true,
+    "negative_control": {
+      "performed": true,
+      "reverting_patch_reproduces_failure": true,
+      "how": "Una app FastAPI mínima que levanta el mismo PermissionError responde 500 sin handler y 401 con handler, y el test sobre la app real da 401 con APP_ENV=prod. La comparación corre entera en la huella local declarada arriba; la firma se OBSERVÓ en prod (ver signature.structural_match.where_observed) y el cierre allí queda pendiente del despliegue."
+    }
+  },
+  "lanes_not_covered": [
+    "Prod: el parche no está desplegado, así que el 401 no se ha observado en el Container App.",
+    "Otras excepciones pelonas que escapen de una ruta siguen dando 500; sólo se traduce PermissionError."
+  ],
+  "residual_risk": [
+    "Cualquier PermissionError de OTRO origen que llegue al borde ahora se presenta como 401 aunque no sea un problema de autenticación."
+  ],
+  "monitor": {
+    "new_revision_at_zero_traffic": false,
+    "health_logs_latency_errors_checked": false,
+    "direct_probe_by_fqdn": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "GET /api/v4/chat/sessions por FQDN de la revisión SIN cabeceras de principal",
+      "expected_signal_when_failing": "500 con PermissionError en AppExceptions",
+      "expected_signal_when_healthy": "401 sin excepción registrada"
+    },
+    "traffic_promoted_by_human_at": null
+  },
+  "learn": {
+    "retrieval_keys": [
+      "PermissionError 500 en vez de 401",
+      "No EasyAuth principal found in headers",
+      "chat/sessions 500 y workspace 401 al mismo tiempo",
+      "el cliente reintenta sólo ante 401",
+      "exception_handler global faltante en app.py"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "uv run --project src/backend pytest src/tests/backend/test_app.py -k missing_easyauth -q",
+      "expected_signal_when_failing": "exit != 0: la falta de principal sale como 500",
+      "expected_signal_when_healthy": "exit 0: 1 passed"
+    },
+    "last_verified": "2026-09-28T11:20:00Z",
+    "expires_if_not_reverified_by": "2026-12-28T11:20:00Z",
+    "operational": true
+  }
+}
