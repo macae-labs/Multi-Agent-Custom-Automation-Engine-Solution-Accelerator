@@ -45,6 +45,19 @@ def _init_git_repo(path):
     subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
 
 
+def _assume_different_owner(workspace, monkeypatch):
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    result = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        pytest.skip("Installed Git does not honor GIT_TEST_ASSUME_DIFFERENT_OWNER")
+    assert "dubious ownership" in result.stderr
+
+
 class TestWorkspaceToolService:
     """Test cases for workspace tools."""
 
@@ -190,17 +203,7 @@ class TestDubiousOwnership:
     ):
         workspace, _, _ = _make_workspace(workspace_root)
         _init_git_repo(workspace)
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
-
-        bare = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-        )
-
-        assert bare.returncode != 0
-        assert "dubious ownership" in bare.stderr
+        _assume_different_owner(workspace, monkeypatch)
 
     def test_git_tools_work_on_a_tree_owned_by_someone_else(
         self, workspace_tools, workspace_root, monkeypatch
@@ -208,7 +211,7 @@ class TestDubiousOwnership:
         tools, _ = workspace_tools
         workspace, user_id, workspace_id = _make_workspace(workspace_root)
         _init_git_repo(workspace)
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        _assume_different_owner(workspace, monkeypatch)
 
         result = tools["workspace_git_status"](user_id, workspace_id)
 
