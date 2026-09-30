@@ -25,6 +25,9 @@ export interface WorkspaceCreateRequest {
   workspace_id?: string; // client-supplied slug; server generates if omitted
   /** Born-from-repo: https git clone (works identically in prod). */
   repo_url?: string;
+  /** Rama declarada al montar: parte del contrato del workspace (clon durable,
+   *  sandbox y fast-forward la conservan). Vacía = la por defecto del remoto. */
+  branch?: string;
   /** Transient clone auth; never stored server-side. */
   repo_token?: string;
   /** Link an existing local folder (dev only — Claude Desktop model). */

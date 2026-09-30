@@ -53,6 +53,7 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [newBranch, setNewBranch] = useState('');
   const [newRepoToken, setNewRepoToken] = useState('');
   const [newLocalPath, setNewLocalPath] = useState('');
   const [creating, setCreating] = useState(false);
@@ -106,6 +107,7 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       const ws = await WorkspaceService.create({
         name,
         repo_url: newRepoUrl.trim() || undefined,
+        branch: newBranch.trim() || undefined,
         repo_token: newRepoToken.trim() || undefined,
         local_path: newLocalPath.trim() || undefined,
       });
@@ -119,6 +121,7 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       setCreateOpen(false);
       setNewName('');
       setNewRepoUrl('');
+      setNewBranch('');
       setNewRepoToken('');
       setNewLocalPath('');
     } catch {
@@ -287,13 +290,21 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                   style={{ width: '100%' }}
                 />
                 {newRepoUrl.trim() && (
-                  <Input
-                    type="password"
-                    placeholder="Token del repo (opcional, no se almacena)"
-                    value={newRepoToken}
-                    onChange={(_e, d) => setNewRepoToken(d.value)}
-                    style={{ width: '100%' }}
-                  />
+                  <>
+                    <Input
+                      placeholder="Rama (opcional — la por defecto del repo si se deja vacía)"
+                      value={newBranch}
+                      onChange={(_e, d) => setNewBranch(d.value)}
+                      style={{ width: '100%' }}
+                    />
+                    <Input
+                      type="password"
+                      placeholder="Token del repo (opcional, no se almacena)"
+                      value={newRepoToken}
+                      onChange={(_e, d) => setNewRepoToken(d.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </>
                 )}
                 <Input
                   placeholder="Ruta local (opcional, solo dev — vincula tu carpeta)"

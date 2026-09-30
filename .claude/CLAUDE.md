@@ -34,6 +34,10 @@ uv run --project src/backend pytest src/tests/backend/test_x.py::test_y -v
 cd src/backend && uv run ruff check . && uv run ruff format --check . && uv run mypy .
 cd src/mcp_server && uv run --no-sync ruff check .   # (tras uv sync --extra dev)
 
+# Tests del MCP — en SU entorno. `testpaths` del pytest.ini no los recoge y bajo
+# el venv del backend fastmcp no es importable (los módulos se saltan enteros).
+cd src/mcp_server && uv run --no-sync python -m pytest ../tests/mcp_server -q -p no:cacheprovider
+
 # Frontend
 cd src/frontend && npm run dev      # vite :3001
 npm run build                        # tsc && vite build

@@ -10,10 +10,13 @@ import pytest
 # Get the root directory of the project
 root_dir = Path(__file__).parent
 
-# Add src directory to path for 'backend', 'common', 'v4' etc. imports
-src_path = root_dir / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+# `src` NO va en sys.path. Con `src` ahí, cada directorio de src/ con
+# __init__.py se vuelve importable como paquete (`backend.*`, `mcp_server`) y el
+# producto queda cargado DOS veces bajo dos nombres: es la firma de
+# INC-2026-004, y lo que hacía que `import mcp_server` resolviera al paquete
+# src/mcp_server en vez del módulo mcp_server.py. Nadie importa vía `src`
+# (medido: cero `from backend.`/`from agents.`); common y v4 viven bajo
+# src/backend, que sí está en el path.
 
 # Add src/backend to path for relative imports within backend
 backend_path = root_dir / "src" / "backend"

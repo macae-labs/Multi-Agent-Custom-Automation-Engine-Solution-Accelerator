@@ -41,10 +41,10 @@ class FakeTool:
     async def call_tool(self, tool_name, **kwargs):
         self.calls.append((tool_name, kwargs))
         if kwargs["command"] == "boom":
-            # Texto exacto de format_error_response("Workspace not found") en ca-mcp.
-            return (
-                "##### ❌ Error\n\n**Error:** Workspace not found\n\n"
-                "AGENT SUMMARY: An error occurred while processing the request."
+            # El envelope de error de ca-mcp: el MISMO que el de éxito, con
+            # status "error" y el motivo en summary.
+            return json.dumps(
+                {"status": "error", "action": "workspace_exec", "summary": "Workspace not found"}
             )
         return json.dumps(
             {
@@ -173,9 +173,31 @@ async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
 
     name, args = cap._tool.calls[0]
     assert name == "workspace_exec"
-    assert args["command"].startswith("git fetch --quiet origin && git merge --ff-only")
+    # En el sandbox: origin = share, upstream = el repositorio declarado. Se
+    # adelanta desde upstream y se publica al share, en un solo comando de exec.
+    assert "git fetch --quiet upstream" in args["command"]
+    assert "git merge --ff-only --quiet" in args["command"]
+    assert "git push --quiet origin" in args["command"]
     assert args["path"] == ""
     assert [i["incident_id"] for i in incidents] == ["INC-2026-004"]
+
+
+@pytest.mark.asyncio
+async def test_the_fast_forward_uses_the_branch_declared_at_mount_not_head(clone):
+    """La rama viene del meta del workspace (intención al montar), no del HEAD
+    circunstancial del sandbox."""
+    (clone / ".macae_workspace_meta.json").write_text(
+        json.dumps({"name": "x", "branch": "stable/v4-baseline"})
+    )
+    cap = WorkspaceCapability(
+        user_id="reg-user", workspace_id=clone.name, tool=FakeTool(), owned=True
+    )
+
+    await cap.registry()
+
+    _, args = cap._tool.calls[0]
+    assert "b=stable/v4-baseline && " in args["command"]
+    assert "rev-parse --abbrev-ref HEAD" not in args["command"]
 
 
 def test_the_own_workspace_wins_over_any_other_registry(clone, caplog):

@@ -12,9 +12,7 @@ import json
 
 import pytest
 
-fastmcp = pytest.importorskip("fastmcp")
-
-from utils.tool_arguments import (  # noqa: E402
+from utils.tool_arguments import (
     canonical_key,
     normalize_arguments,
     validate_arguments,
@@ -189,18 +187,21 @@ def external_tool(mock_mcp_server):
 LISTED = [{"name": "job_status", "description": "", "inputSchema": JOB_STATUS_SCHEMA}]
 
 
-# Success responses are JSON (format_success_response); error responses are
-# the Markdown block of format_error_response ("##### ❌ Error" + **Error:**).
-def _run(coro) -> str:
-    return asyncio.run(coro)
+# Success and error responses share one JSON envelope: status "success" or
+# "error", the reason in "summary". Los tests son async y usan el loop de
+# pytest-asyncio: `asyncio.run` en un test síncrono reemplazaba el loop que
+# pytest-asyncio había dejado puesto por los tests async previos, y ese loop
+# huérfano se recolectaba sin cerrar (ResourceWarning flotante sobre un socket
+# AF_UNIX, atribuido a un test al azar). Un solo modelo de loop.
 
 
 class TestCallExternalTool:
-    def test_snake_case_argument_is_conformed_and_the_call_succeeds(self, external_tool):
+    @pytest.mark.asyncio
+    async def test_snake_case_argument_is_conformed_and_the_call_succeeds(self, external_tool):
         fn, install = external_tool
         sess = install(LISTED)
         res = json.loads(
-            _run(
+            await (
                 fn(
                     server_name="higgsfield",
                     target_tool="job_status",
@@ -214,10 +215,11 @@ class TestCallExternalTool:
         assert res["details"]["renamed_arguments"] == {"job_id": "jobId"}
         assert MP4 in res["details"]["result"]
 
-    def test_missing_required_is_rejected_before_any_network_call(self, external_tool):
+    @pytest.mark.asyncio
+    async def test_missing_required_is_rejected_before_any_network_call(self, external_tool):
         fn, install = external_tool
         sess = install(LISTED)
-        raw = _run(
+        raw = await (
             fn(
                 server_name="higgsfield",
                 target_tool="job_status",
@@ -226,16 +228,21 @@ class TestCallExternalTool:
             )
         )
         assert sess.calls == []
-        assert "❌ Error" in raw
-        assert "missing required ['jobId']" in raw
-        assert "NOT sent" in raw
-        assert '"jobId"' in raw  # schema included for a one-step retry
+        payload = json.loads(raw)
+        assert payload["status"] == "error"
+        # El motivo vive en summary. Se lee el campo parseado, no el texto crudo:
+        # dentro del JSON las comillas del schema van escapadas.
+        reason = payload["summary"]
+        assert "missing required ['jobId']" in reason
+        assert "NOT sent" in reason
+        assert '"jobId"' in reason  # schema included for a one-step retry
         assert "TOOL SUCCESS" not in raw
 
-    def test_unlisted_tool_passes_through_untouched(self, external_tool):
+    @pytest.mark.asyncio
+    async def test_unlisted_tool_passes_through_untouched(self, external_tool):
         fn, install = external_tool
         sess = install([])  # server lists nothing (hidden members / pagination)
-        _run(
+        await (
             fn(
                 server_name="higgsfield",
                 target_tool="secret_member",
@@ -245,11 +252,12 @@ class TestCallExternalTool:
         )
         assert sess.calls == [("secret_member", {"job_id": JOB_ID})]
 
-    def test_remote_is_error_is_reported_as_an_error_not_success(self, external_tool):
+    @pytest.mark.asyncio
+    async def test_remote_is_error_is_reported_as_an_error_not_success(self, external_tool):
         fn, install = external_tool
         # Schema unknown → no conformance → the remote rejects with isError.
         sess = install([])
-        raw = _run(
+        raw = await (
             fn(
                 server_name="higgsfield",
                 target_tool="job_status",
@@ -258,11 +266,14 @@ class TestCallExternalTool:
             )
         )
         assert sess.calls == [("job_status", {"job_id": JOB_ID})]
-        assert "❌ Error" in raw
-        assert "Input validation error" in raw
+        payload = json.loads(raw)
+        assert payload["status"] == "error"
+        assert "Invalid arguments for tool job_status" in payload["summary"]
+        assert "Input validation error" in payload["summary"]
         assert "TOOL SUCCESS" not in raw
 
-    def test_schema_index_is_cached_across_calls(self, external_tool):
+    @pytest.mark.asyncio
+    async def test_schema_index_is_cached_across_calls(self, external_tool):
         fn, install = external_tool
         sess = install(LISTED)
         listed = 0
@@ -275,7 +286,7 @@ class TestCallExternalTool:
 
         sess.list_tools = counting
         for _ in range(3):
-            _run(
+            await (
                 fn(
                     server_name="higgsfield",
                     target_tool="job_status",

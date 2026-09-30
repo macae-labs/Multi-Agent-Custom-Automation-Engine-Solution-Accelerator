@@ -3,16 +3,15 @@ Tests for utility functions.
 """
 
 import pytest
-
-fastmcp = pytest.importorskip("fastmcp")
+from json import loads
 
 from datetime import datetime
-from src.mcp_server.utils.date_utils import (
+from utils.date_utils import (
     format_date_for_user,
     get_current_timestamp,
     format_timestamp_for_display,
 )
-from src.mcp_server.utils.formatters import (
+from utils.formatters import (
     format_mcp_response,
     format_error_response,
     format_success_response,
@@ -64,64 +63,52 @@ class TestDateUtils:
 
 
 class TestFormatters:
-    """Test cases for response formatters."""
+    """Un solo envelope JSON para éxito y error: el consumidor lee ``status``,
+    no adivina por el primer carácter ni por un título en markdown."""
 
     def test_format_mcp_response(self):
-        """Test MCP response formatting."""
-        title = "Test Action"
-        content = {"user": "John", "status": "success"}
-        summary = "Test completed successfully"
-
-        result = format_mcp_response(title, content, summary)
-
-        assert "##### Test Action" in result
-        assert "**User:** John" in result
-        assert "**Status:** success" in result
-        assert "AGENT SUMMARY: Test completed successfully" in result
-        assert "Instructions:" in result
+        payload = loads(
+            format_mcp_response(
+                "Test Action", {"user": "John", "status": "success"}, "Test completed successfully", "Do X"
+            )
+        )
+        assert payload["status"] == "success"
+        assert payload["action"] == "Test Action"
+        assert payload["summary"] == "Test completed successfully"
+        assert payload["details"]["user"] == "John"
+        assert payload["details"]["instructions"] == "Do X"
 
     def test_format_error_response(self):
-        """Test error response formatting."""
-        error_msg = "Something went wrong"
-        context = "testing error handling"
-
-        result = format_error_response(error_msg, context)
-
-        assert "##### ❌ Error" in result
-        assert "**Context:** testing error handling" in result
-        assert "**Error:** Something went wrong" in result
-        assert "AGENT SUMMARY: An error occurred" in result
+        payload = loads(format_error_response("Something went wrong", "testing error handling"))
+        assert payload == {
+            "status": "error",
+            "action": "testing error handling",
+            "summary": "Something went wrong",
+        }
 
     def test_format_error_response_no_context(self):
-        """Test error response formatting without context."""
-        error_msg = "Something went wrong"
-
-        result = format_error_response(error_msg)
-
-        assert "##### ❌ Error" in result
-        assert "**Error:** Something went wrong" in result
-        assert "**Context:**" not in result
-        assert "AGENT SUMMARY: An error occurred" in result
+        payload = loads(format_error_response("Something went wrong"))
+        assert payload == {"status": "error", "summary": "Something went wrong"}
 
     def test_format_success_response(self):
-        """Test success response formatting."""
-        action = "User Creation"
-        details = {"user": "John", "email": "john@example.com"}
-        summary = "User created successfully"
+        payload = loads(
+            format_success_response(
+                "User Creation", {"user": "John", "email": "john@example.com"}, "User created successfully"
+            )
+        )
+        assert payload["status"] == "success"
+        assert payload["action"] == "User Creation"
+        assert payload["summary"] == "User created successfully"
+        assert payload["details"] == {"user": "John", "email": "john@example.com"}
 
-        result = format_success_response(action, details, summary)
+    def test_format_success_response_without_summary_has_no_summary_key(self):
+        payload = loads(format_success_response("User Creation", {"user": "John"}))
+        assert payload["status"] == "success"
+        assert "summary" not in payload
 
-        assert "##### User Creation Completed" in result
-        assert "**User:** John" in result
-        assert "**Email:** john@example.com" in result
-        assert "AGENT SUMMARY: User created successfully" in result
-
-    def test_format_success_response_auto_summary(self):
-        """Test success response with auto-generated summary."""
-        action = "User Creation"
-        details = {"user": "John"}
-
-        result = format_success_response(action, details)
-
-        assert "##### User Creation Completed" in result
-        assert "AGENT SUMMARY: Successfully completed user creation" in result
+    def test_success_and_error_share_one_envelope(self):
+        ok = loads(format_success_response("a", {"k": 1}, "s"))
+        ko = loads(format_error_response("m", "a"))
+        assert set(ko) == {"status", "action", "summary"}
+        assert set(ko) <= set(ok)
+        assert (ok["status"], ko["status"]) == ("success", "error")

@@ -70,6 +70,15 @@ jobs:
         run: uv run --no-sync ruff format --check .
         working-directory: src/mcp_server
 
+      # La suite del MCP no corre en ningún otro gate: `testpaths` del
+      # pytest.ini del repo sólo recoge src/tests/backend y src/tests/agents,
+      # y bajo el venv del backend fastmcp no es importable. Aquí sí: mismo
+      # entorno que el servidor (fastmcp + pytest del extra dev), mismo lock.
+      # El nombre del job se conserva porque es un required check.
+      - name: pytest
+        run: uv run --no-sync python -m pytest ../tests/mcp_server -q -p no:cacheprovider
+        working-directory: src/mcp_server
+
   # ── Frontend: ESLint + tsc build ─────────────────────────────────────────
   frontend-quality:
     name: Frontend (ESLint + build)

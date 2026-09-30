@@ -246,17 +246,30 @@ def _exclude_meta(ws: Path) -> None:
 # ── workspace origins: clone / link ──────────────────────────────────────────
 
 
-def _clone_into(ws: Path, url: str, token: str | None) -> None:
+def _clone_into(
+    ws: Path, url: str, token: str | None, branch: str | None = None
+) -> None:
     """Born-from-repo workspace: git clone (https only). The token travels as a
-    transient header for this one command and is never stored on disk."""
+    transient header for this one command and is never stored on disk.
+
+    ``branch`` es la INTENCIÓN del usuario al montar el workspace y forma parte
+    de su contrato: el clon durable nace en esa rama, el sandbox se materializa
+    en esa rama y el registro se adelanta en esa rama. Sin ella el clon cae en
+    la rama por defecto del remoto y todo lo de abajo termina sincronizando lo
+    que casualmente esté checkout, que no es lo que el usuario eligió."""
     if not _SAFE_REPO_URL.match(url):
         raise HTTPException(status_code=400, detail="Repo URL must be https.")
+    if branch and not _SAFE_REF.match(branch):
+        raise HTTPException(status_code=400, detail="Invalid branch name.")
     ws.parent.mkdir(parents=True, exist_ok=True)
     args = ["git"]
     if token:
         basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         args += ["-c", f"http.extraHeader=Authorization: Basic {basic}"]
-    args += ["clone", "-q", "--", url, str(ws)]
+    args += ["clone", "-q"]
+    if branch:
+        args += ["--branch", branch]
+    args += ["--", url, str(ws)]
     try:
         result = subprocess.run(args, capture_output=True, timeout=180)
     except FileNotFoundError as exc:

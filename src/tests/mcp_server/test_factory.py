@@ -4,9 +4,7 @@ Tests for the MCP tool factory.
 
 import pytest
 
-fastmcp = pytest.importorskip("fastmcp")
-
-from src.mcp_server.core.factory import MCPToolFactory, Domain, MCPToolBase  # noqa: E402
+from core.factory import MCPToolFactory, Domain, MCPToolBase
 
 
 class TestMCPToolFactory:
@@ -93,3 +91,33 @@ class TestMCPToolBase:
         assert hr_service.domain == Domain.HR
         assert isinstance(hr_service.tool_count, int)
         assert hr_service.tool_count > 0
+
+
+# ── tool_count es una declaración a mano y se pudre en silencio ──────────────
+# HR registraba 8 tools y declaraba 7, y nadie lo vio porque esta suite no
+# corría en ningún gate. Acá cada servicio se contrasta contra lo que de verdad
+# registra, para que un número desactualizado falle el gate en vez de mentir en
+# get_tool_summary.
+
+# (módulo, clase, kwargs del constructor tal como los pasa mcp_server.py)
+SERVICES = [
+    ("services.data_tool_service", "DataToolService", {"dataset_path": "."}),
+    ("services.general_service", "GeneralService", {}),
+    ("services.hr_service", "HRService", {}),
+    ("services.inspector_service", "InspectorService", {}),
+    ("services.marketing_service", "MarketingService", {}),
+    ("services.product_service", "ProductService", {}),
+    ("services.product_service_widgets", "ProductServiceWithWidgets", {}),
+    ("services.tech_support_service", "TechSupportService", {}),
+    ("services.workspace_service", "WorkspaceToolService", {}),
+]
+
+
+@pytest.mark.parametrize("module,cls,kwargs", SERVICES, ids=[c for _, c, _ in SERVICES])
+def test_every_service_declares_exactly_the_tools_it_registers(module, cls, kwargs, mock_mcp_server):
+    import importlib
+
+    service = getattr(importlib.import_module(module), cls)(**kwargs)
+    service.register_tools(mock_mcp_server)
+
+    assert len(mock_mcp_server.tools) == service.tool_count
