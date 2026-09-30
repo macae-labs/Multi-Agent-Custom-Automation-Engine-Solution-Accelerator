@@ -13,6 +13,7 @@ import { apiClient } from '../api/apiClient';
 import { apiService } from '../api/apiService';
 import { ChatMessageRequest, ChatMessageResponse } from '../models/chatMessage';
 import type { ChatMessage, ChatSessionSummary } from '../lib/types';
+import type { ToolActivityEvent } from '../store/slices/streamingSlice';
 import { workspaceTree } from '../components/workspace/workspaceTreeStore';
 
 /** Callbacks for streaming chat responses. */
@@ -38,14 +39,7 @@ export interface StreamCallbacks {
   /** Legacy redirect — kept for backward compat. */
   onRedirect?: (planId: string) => void;
   onError: (error: string) => void;
-  onToolActivity?: (data: {
-    activity: string;
-    tool: string;
-    server?: string;
-    success?: boolean;
-    /** Progreso del turno: qué quedó hecho y qué sigue. */
-    detail?: string;
-  }) => void;
+  onToolActivity?: (data: ToolActivityEvent) => void;
   /** Called when code_interpreter generates a downloadable file. */
   onGeneratedFile?: (data: {
     file_id: string;
@@ -279,17 +273,9 @@ export class ChatService {
               if (data.session_id) onSessionId?.(data.session_id);
             },
             onToolActivity: (data) => {
+              // Actividad de tools/razonamiento: es ESTADO de la UI (indicador,
+              // registro del turno), nunca texto dentro del mensaje del modelo.
               onToolActivity?.(data);
-              // Surface tool-call activity as a minimal UI hint.
-              if (data.activity === 'calling')
-                push(
-                  `\n_🔧 Calling **${data.tool}**${data.server ? ` on \`${data.server}\`` : ''}…_\n`
-                );
-              // Canal de PROGRESO: qué quedó hecho y qué sigue, mientras el
-              // turno avanza. No es la respuesta — el turno cierra con una
-              // sola síntesis — pero el usuario tiene que verlo pasar.
-              else if (data.activity === 'thinking' && data.detail)
-                push(`\n_↳ ${data.detail}_\n\n`);
             },
             onPlanCreated: (newPlanId) => {
               onPlanCreated?.(newPlanId);

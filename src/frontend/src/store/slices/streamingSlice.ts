@@ -10,12 +10,31 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '../store';
 
-export interface ToolActivity {
+/**
+ * Evento SSE `tool_activity` tal como lo emite el backend (router.py).
+ * - calling  → tool, server?, args (cabeza ≤200 chars)
+ * - result   → tool, server?, success, result_preview
+ * - thinking → tool:"reasoning", detail (progreso textual)
+ */
+export interface ToolActivityEvent {
+  activity: 'calling' | 'result' | 'thinking' | string;
   tool: string;
-  activity: 'calling' | 'result' | 'thinking';
   server?: string;
   success?: boolean;
-  message?: string;
+  args?: string;
+  result_preview?: string;
+  detail?: string;
+}
+
+export type ToolActivity = ToolActivityEvent;
+
+/** Deed persistido en `metadata.turn_log` por el backend (`_make_deed`). */
+export interface TurnDeed {
+  server: string;
+  tool: string;
+  status: 'success' | 'error' | string;
+  args?: { text: string; chars: number; truncated: boolean };
+  result?: { text: string; chars: number; truncated: boolean };
 }
 
 export interface GeneratedFile {

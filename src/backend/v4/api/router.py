@@ -3546,6 +3546,18 @@ async def chat_message_stream(
             _turn_ledger_dropped: int = 0
             _ledger_pending_args: str = ""
 
+            def _record_deed(server: str, tool: str, status: str, result: Any) -> None:
+                # Un solo punto de entrada al ledger para MCP y workspace tools:
+                # consume los args pendientes del function_call correspondiente.
+                nonlocal _turn_ledger_dropped, _ledger_pending_args
+                if len(_turn_ledger) < _LEDGER_MAX_DEEDS:
+                    _turn_ledger.append(
+                        _make_deed(server, tool, _ledger_pending_args, status, result)
+                    )
+                else:
+                    _turn_ledger_dropped += 1
+                _ledger_pending_args = ""
+
             # Rebuild conversation memory from the REAL plumbing (Cosmos + Azure AI
             # Search), NOT previous_response_id (fragile: breaks on re-auth / session
             # regen). Two layers, deduped, oldest→newest:
@@ -3655,6 +3667,7 @@ async def chat_message_stream(
                         _call_id = getattr(content, "call_id", None)
                         if _call_id and content.name:
                             _call_names[str(_call_id)] = content.name
+                        _ledger_pending_args = str(content.arguments or "")
                         _key = ("calling", content.name or "unknown")
                         if _key != _last_tool_activity_key:
                             _last_tool_activity_key = _key
@@ -3679,6 +3692,12 @@ async def chat_message_stream(
                             "Function result: name=%s result=%s",
                             getattr(content, "name", "?"),
                             _result_preview[:4000],
+                        )
+                        _record_deed(
+                            "workspace",
+                            _tool_name or "unknown",
+                            "error" if content.exception is not None else "success",
+                            _safe_json_dumps(_to_safe_dict(_result_obj)),
                         )
                         _key = ("result", _tool_name or "unknown")
                         if _key != _last_tool_activity_key:
@@ -3727,21 +3746,14 @@ async def chat_message_stream(
                         tool_name = tool_name or "unknown"
                         server_name = server_name or "unknown"
                         last_mcp_tool_call = None
-                        if len(_turn_ledger) < _LEDGER_MAX_DEEDS:
-                            _turn_ledger.append(
-                                _make_deed(
-                                    server_name,
-                                    tool_name,
-                                    _ledger_pending_args,
-                                    "error"
-                                    if getattr(content, "status", None) == "error"
-                                    else "success",
-                                    content_preview,
-                                )
-                            )
-                        else:
-                            _turn_ledger_dropped += 1
-                        _ledger_pending_args = ""
+                        _record_deed(
+                            server_name,
+                            tool_name,
+                            "error"
+                            if getattr(content, "status", None) == "error"
+                            else "success",
+                            content_preview,
+                        )
                         _mcp_result_key = ("result", tool_name, server_name)
                         if _mcp_result_key != _last_tool_activity_key:
                             _last_tool_activity_key = _mcp_result_key
