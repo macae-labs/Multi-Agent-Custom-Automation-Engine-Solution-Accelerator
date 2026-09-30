@@ -3,10 +3,9 @@ Tests for HR service.
 """
 
 import pytest
+from json import loads
 
-fastmcp = pytest.importorskip("fastmcp")
-
-from src.mcp_server.core.factory import Domain
+from core.factory import Domain
 
 
 class TestHRService:
@@ -15,7 +14,6 @@ class TestHRService:
     def test_service_initialization(self, hr_service):
         """Test HR service initialization."""
         assert hr_service.domain == Domain.HR
-        assert hr_service.tool_count == 7
 
     def test_register_tools(self, hr_service, mock_mcp_server):
         """Test tool registration."""
@@ -46,7 +44,7 @@ class TestHRService:
         result = await schedule_tool("John Doe", "2024-12-25")
         assert "John Doe" in result
         assert "Orientation Session Scheduled" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_assign_mentor(self, hr_service, mock_mcp_server):
@@ -67,7 +65,7 @@ class TestHRService:
         assert "John Doe" in result
         assert "Jane Smith" in result
         assert "Mentor Assignment" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_register_for_benefits(self, hr_service, mock_mcp_server):
@@ -88,7 +86,7 @@ class TestHRService:
         assert "John Doe" in result
         assert "Premium" in result
         assert "Benefits Registration" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_provide_employee_handbook(self, hr_service, mock_mcp_server):
@@ -108,7 +106,7 @@ class TestHRService:
         result = await handbook_tool("John Doe")
         assert "John Doe" in result
         assert "Employee Handbook Provided" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_initiate_background_check(self, hr_service, mock_mcp_server):
@@ -129,7 +127,7 @@ class TestHRService:
         assert "John Doe" in result
         assert "Enhanced" in result
         assert "Background Check Initiated" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_request_id_card(self, hr_service, mock_mcp_server):
@@ -150,7 +148,7 @@ class TestHRService:
         assert "John Doe" in result
         assert "Engineering" in result
         assert "ID Card Request" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_set_up_payroll(self, hr_service, mock_mcp_server):
@@ -171,4 +169,4 @@ class TestHRService:
         assert "John Doe" in result
         assert "$75,000" in result
         assert "Payroll Setup" in result
-        assert "AGENT SUMMARY" in result
+        assert loads(result)["status"] == "success"

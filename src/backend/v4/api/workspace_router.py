@@ -627,6 +627,10 @@ class WorkspaceCreateRequest(BaseModel):
     workspace_id: str | None = None  # client-supplied slug; server generates if omitted
     # Where the workspace is born from (both optional; empty init otherwise):
     repo_url: str | None = None  # https git clone — works identically in prod
+    # Rama declarada al montar: parte del contrato del workspace (clon durable,
+    # sandbox y fast-forward del registro la conservan). Sin ella, la rama por
+    # defecto del remoto, y la resuelta queda igualmente registrada en el meta.
+    branch: str | None = None
     repo_token: str | None = None  # transient clone auth; NEVER stored anywhere
     local_path: str | None = None  # link an existing local folder (dev only)
 
@@ -720,7 +724,7 @@ def create_workspace(
                 if body.local_path:
                     linked_target = _link_into(ws, body.local_path)
                 elif body.repo_url:
-                    _clone_into(ws, body.repo_url.strip(), body.repo_token)
+                    _clone_into(ws, body.repo_url.strip(), body.repo_token, body.branch)
                 else:
                     ws.mkdir(parents=True, exist_ok=True)
                     # Empty-born workspace: the meta exclusion is OURS to commit
@@ -752,6 +756,14 @@ def create_workspace(
                 meta = {"name": body.name.strip(), "created_at": now_iso}
                 if body.repo_url:
                     meta["repo_url"] = body.repo_url.strip()
+                # La rama RESUELTA (la declarada, o la por defecto del remoto)
+                # queda en el meta: es la única fuente durable de esa intención
+                # y de ella parten el sandbox del MCP y el registro de INC.
+                head = _git(ws, "symbolic-ref", "--short", "HEAD")
+                if head.returncode == 0:
+                    meta["branch"] = head.stdout.decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                 if linked_target is not None:
                     meta["linked_path"] = str(linked_target)
                 _write_meta(ws, meta)

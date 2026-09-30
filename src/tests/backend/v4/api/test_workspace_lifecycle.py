@@ -12,6 +12,7 @@ Repo de verdad en ``tmp_path``; el clon se sustituye porque ``_SAFE_REPO_URL``
 sólo admite https y acá no hay red.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,21 +45,22 @@ def root(tmp_path, monkeypatch):
 
 def fake_clone(monkeypatch) -> list[tuple[Path, str]]:
     """Doble de ``_clone_into``: deja un repo con un archivo, como un clon real."""
-    calls: list[tuple[Path, str]] = []
+    calls: list[tuple[Path, str, str | None]] = []
 
-    def _clone(ws: Path, url: str, token: str | None) -> None:
-        calls.append((ws, url))
+    def _clone(ws: Path, url: str, token: str | None, branch: str | None = None) -> None:
+        calls.append((ws, url, branch))
         ws.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q"], cwd=ws, check=True, capture_output=True)
+        init = ["git", "init", "-q"] + (["-b", branch] if branch else [])
+        subprocess.run(init, cwd=ws, check=True, capture_output=True)
         (ws / "README.md").write_text("clonado")
 
     monkeypatch.setattr(wr, "_clone_into", _clone)
     return calls
 
 
-def create(name=WS, *, repo_url=URL):
+def create(name=WS, *, repo_url=URL, branch=None):
     return wr.create_workspace(
-        Req(), wr.WorkspaceCreateRequest(name=name, repo_url=repo_url)
+        Req(), wr.WorkspaceCreateRequest(name=name, repo_url=repo_url, branch=branch)
     )
 
 
@@ -126,3 +128,27 @@ def test_the_leftovers_of_a_failed_removal_are_not_a_second_registry(root, monke
     wr.delete_workspace(Req(), WS)
 
     assert wc.discover() is None
+
+
+def test_the_declared_branch_is_cloned_and_recorded_in_the_workspace_meta(root, monkeypatch):
+    """La rama es intención del usuario al montar y parte del contrato del
+    workspace: el clon nace en ella y queda en el meta, que es de donde parten
+    el sandbox del MCP (`upstream`, `--branch`, publish) y el fast-forward del
+    registro. Sin esto todo lo de abajo sincronizaba el HEAD circunstancial."""
+    calls = fake_clone(monkeypatch)
+
+    create(branch="stable/v4-baseline")
+
+    assert calls[0][2] == "stable/v4-baseline"
+    meta = json.loads((root / USER / WS / ws_mod._META_FILE).read_text())
+    assert meta["repo_url"] == URL
+    assert meta["branch"] == "stable/v4-baseline"
+
+
+def test_without_a_declared_branch_the_resolved_one_is_still_recorded(root, monkeypatch):
+    fake_clone(monkeypatch)
+
+    create()
+
+    meta = json.loads((root / USER / WS / ws_mod._META_FILE).read_text())
+    assert meta["branch"]  # la por defecto del remoto, pero registrada

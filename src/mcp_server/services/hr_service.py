@@ -258,4 +258,4 @@ class HRService(MCPToolBase):
     @property
     def tool_count(self) -> int:
         """Return the number of tools provided by this service."""
-        return 7
+        return 8

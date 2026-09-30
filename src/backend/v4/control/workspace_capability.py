@@ -31,6 +31,7 @@ reconciliador se detiene y los nombra en el log.
 import json
 import logging
 import os
+import shlex
 import subprocess
 from typing import Any
 
@@ -38,8 +39,10 @@ from agent_framework import MCPStreamableHTTPTool
 
 from v4.common.services.workspace_service import (
     _SAFE_ID,
+    _SAFE_REF,
     REGISTRY_WORKSPACE_ID,
     WORKSPACE_ROOT,
+    _read_meta,
     _resolve,
     workspace_for,
 )
@@ -133,9 +136,50 @@ class WorkspaceCapability:
                     self.workspace_id,
                 )
             return
+        # La rama es la que el usuario DECLARÓ al montar el workspace (meta del
+        # share), no el HEAD circunstancial del sandbox: sincronizar "lo que
+        # esté checkout ahora" no describe ninguna intención. Un workspace
+        # anterior a este contrato no la tiene en el meta: se cae al HEAD y se
+        # dice una vez.
+        declared = str(
+            _read_meta(workspace_for(self.user_id, self.workspace_id)).get("branch")
+            or ""
+        ).strip()
+        if declared and not _SAFE_REF.match(declared):
+            logger.warning(
+                "Rama declarada inválida en el meta (%r); se ignora", declared
+            )
+            declared = ""
+        if not declared and not getattr(self, "_said_no_branch", False):
+            self._said_no_branch = True
+            logger.info(
+                "Workspace %s sin rama declarada en su meta: el adelanto usa el HEAD "
+                "del sandbox (workspace anterior al contrato de rama)",
+                self.workspace_id,
+            )
+        branch_expr = (
+            shlex.quote(declared) if declared else "$(git rev-parse --abbrev-ref HEAD)"
+        )
         try:
+            # El comando corre en el SANDBOX del MCP (clon local del share):
+            # ahí `origin` es el share y `upstream` es el repositorio declarado
+            # al montar. Se adelanta desde upstream y se publica al share, que es
+            # lo que el usuario ve y lo que este backend lee del disco. Un
+            # workspace nacido vacío no tiene upstream: no hay de dónde
+            # adelantar y eso no es un fallo.
             evidence = await self.execute(
-                "git fetch --quiet origin && git merge --ff-only --quiet @{u}", ""
+                # Pre-flight, no manejo del error: sólo se hace merge si la rama
+                # declarada existe en upstream; si no, es un hecho que se
+                # reporta con nombre.
+                "if ! git remote get-url upstream >/dev/null 2>&1; then "
+                "echo 'sin upstream: nada que adelantar'; exit 0; fi; "
+                f"b={branch_expr} && "
+                "git fetch --quiet upstream && "
+                'if ! git rev-parse --verify --quiet "refs/remotes/upstream/$b" >/dev/null; then '
+                'echo "upstream no tiene la rama $b: nada que adelantar"; exit 0; fi; '
+                'git merge --ff-only --quiet "upstream/$b" && '
+                'git push --quiet origin "HEAD:refs/heads/$b"',
+                "",
             )
         except Exception as ex:  # la capacidad no está disponible: se lee lo que hay
             logger.warning("Registro sin adelantar (%s): %s", type(ex).__name__, ex)
@@ -181,16 +225,22 @@ class WorkspaceCapability:
             if isinstance(raw, str)
             else "".join(getattr(c, "text", "") or "" for c in raw)
         )
-        # format_error_response de ca-mcp es markdown ("##### ❌ Error …"), no
-        # JSON: cualquier texto que no sea el JSON de format_success_response es
-        # fallo de capacidad, con ese texto como motivo.
-        if not text.lstrip().startswith("{"):
-            raise RuntimeError(f"workspace_exec: {text[:500]}")
-        payload = json.loads(text)
-        if payload.get("status") != "success":
-            raise RuntimeError(
-                f"workspace_exec: {payload.get('message') or text[:500]}"
+        # ca-mcp responde éxito y error con UN envelope JSON:
+        # {"status", "action", "summary", "details"}. Un error de la tool es
+        # fallo de CAPACIDAD (no evidencia) y su motivo viene en ``summary``.
+        # Un texto que no sea ese JSON también es fallo de capacidad, con el
+        # texto como motivo: nunca se adivina por el primer carácter.
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"workspace_exec: {text[:500]}") from None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            reason = (
+                payload.get("summary") or payload.get("message")
+                if isinstance(payload, dict)
+                else None
             )
+            raise RuntimeError(f"workspace_exec: {reason or text[:500]}")
         details = payload["details"]
         return Evidence(
             exit_code=int(details["exit_code"]),

@@ -2645,4 +2645,4 @@ class InspectorService(MCPToolBase):
     @property
     def tool_count(self) -> int:
         """Return the number of tools provided by this service."""
-        return 8  # connect, discover, call, read, list, connect_from_registry, disconnect, connect_stdio
+        return 9  # connect_mcp_server, discover_mcp_capabilities, call_external_tool, read_external_resource, list_connected_servers, register_mcp_server, connect_from_registry, disconnect_mcp_server, connect_stdio_server
