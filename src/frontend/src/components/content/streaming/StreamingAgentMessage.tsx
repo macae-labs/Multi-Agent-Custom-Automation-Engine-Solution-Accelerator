@@ -15,6 +15,7 @@ import {
 } from '@fluentui/react-icons';
 import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
 import { resolveApiUrl } from '@/api/config';
+import { TurnDeedsLog } from './AgentActivity';
 
 interface StreamingAgentMessageProps {
   agentMessages: AgentMessageData[];
@@ -758,6 +759,9 @@ export const AgentMessageItem = React.memo(
               <Tag appearance="brand">AI Agent</Tag>
             </div>
           )}
+
+          {/* Registro de tools del turno: fuera de la burbuja del modelo */}
+          {!isHuman && <TurnDeedsLog deeds={msg.toolLog} />}
 
           {/* Message Bubble */}
           <div

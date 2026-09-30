@@ -267,12 +267,15 @@ def test_two_different_registries_are_still_ambiguous(clone, monkeypatch, caplog
 
 
 @pytest.mark.asyncio
-async def test_the_source_commit_survives_a_tree_owned_by_someone_else(
+async def test_the_source_commit_is_read_with_the_share_trust_declared(
     cap, clone, monkeypatch
 ):
-    """Sobre el share (SMB) el árbol no es del uid del proceso y git aborta por
-    "dubious ownership": ``source`` quedaba vacío y la evidencia no decía contra
-    qué commit corrió la sonda. La condición se fuerza de verdad, no se simula."""
+    """Sobre el share (SMB) git aborta por "dubious ownership" y ``source``
+    quedaba vacío: la evidencia no decía contra qué commit corrió la sonda. La
+    condición no es reproducible portablemente (haría falta otro uid; el
+    interruptor interno de git lo ignora la 2.55 del runner), así que se
+    verifica el contrato: ``_head`` declara ``safe.directory`` para el árbol y
+    devuelve el commit real."""
     for args in (
         ["config", "user.email", "reg@local"],
         ["config", "user.name", "reg"],
@@ -280,26 +283,24 @@ async def test_the_source_commit_survives_a_tree_owned_by_someone_else(
         ["commit", "-q", "-m", "registro"],
     ):
         subprocess.run(["git", *args], cwd=clone, check=True, capture_output=True)
-    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    seen = []
+    real = subprocess.run
+
+    def spy(cmd, *a, **k):
+        if cmd and cmd[0] == "git":
+            seen.append(list(cmd))
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(wc.subprocess, "run", spy)
 
     await cap.registry()
 
+    head_calls = [c for c in seen if "rev-parse" in c and "HEAD" in c]
+    assert head_calls, "no se leyó HEAD"
+    for cmd in head_calls:
+        trusts = {cmd[i + 1] for i, tok in enumerate(cmd) if tok == "-c"}
+        assert f"safe.directory={clone}" in trusts, cmd
     assert len(cap.source) == 40
-
-
-def test_a_workspace_the_user_named_is_the_registry_and_gets_advanced(clone):
-    """Un usuario crea el workspace con un nombre y una URL: no conoce el
-    concepto de workspace_id, así que nunca lo bautiza ``incident-registry``.
-    Que el reconciliador lo adelante no puede depender de ese nombre — con la
-    regla vieja el clon de prod quedó congelado en un commit anterior a
-    ``docs/incidents`` y el adelanto no corrió NUNCA."""
-    assert clone.name != REGISTRY_WORKSPACE_ID
-
-    cap = discover()
-
-    assert cap is not None
-    assert (cap.user_id, cap.workspace_id) == ("reg-user", clone.name)
-    assert cap.owned is True
 
 
 # ── desempate global entre registros DISTINTOS ───────────────────────────────

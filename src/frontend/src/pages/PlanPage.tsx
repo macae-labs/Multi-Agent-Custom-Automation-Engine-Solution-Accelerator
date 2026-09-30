@@ -61,6 +61,12 @@ import {
   setApprovalRequest,
   setProcessingApproval,
 } from '../store/slices/planSlice';
+import {
+  addToolActivity,
+  clearToolActivities,
+  type ToolActivityEvent,
+} from '../store/slices/streamingSlice';
+import { deedsFromActivities } from '../components/content/streaming/AgentActivity';
 
 // Interruptor chat|plan: the plan tree (right panel) is code-split out of the
 // initial bundle and only downloaded/mounted once a real plan exists.
@@ -871,6 +877,11 @@ const PlanPage: React.FC = () => {
               next_steps: [],
               content,
               raw_data: content,
+              // Deeds del turno (metadata.turn_log): se renderizan como
+              // registro, nunca dentro del contenido del modelo.
+              toolLog: Array.isArray(metadata.turn_log)
+                ? metadata.turn_log
+                : undefined,
             };
           }
         );
@@ -1103,6 +1114,10 @@ const PlanPage: React.FC = () => {
       let accumulated = '';
       let placeholderAdded = false;
       let respondingAgent = AgentType.GROUP_CHAT_MANAGER;
+      // Actividad de tools de ESTE turno: estado (indicador en vivo) y, al
+      // cerrar, registro adjunto al mensaje. Nunca texto en el contenido.
+      const turnActivities: ToolActivityEvent[] = [];
+      dispatch(clearToolActivities());
       // Transición explícita de turno + carril 1 (acuse hablado inmediato).
       abortInFlightChat();
       const abort = new AbortController();
@@ -1157,6 +1172,8 @@ const PlanPage: React.FC = () => {
             turnId,
             // Carril 2 — narración de la tool en el momento.
             onToolActivity: (data) => {
+              turnActivities.push(data);
+              dispatch(addToolActivity(data));
               if (voiceTurn && data.activity === 'calling')
                 voiceLiveNarrate(data.tool, data.server, voiceTurnId);
             },
@@ -1220,7 +1237,7 @@ const PlanPage: React.FC = () => {
         if (abort.signal.aborted) {
           // Interrumpido por el usuario: dejar la burbuja con lo recibido.
           if (chatAbortRef.current?.controller === abort)
-          chatAbortRef.current = null;
+            chatAbortRef.current = null;
         } else {
           showToast(e?.message || 'Failed to send message', 'error');
           // Solo eliminar el último mensaje si se agregó el placeholder
@@ -1231,6 +1248,20 @@ const PlanPage: React.FC = () => {
           }
         }
       } finally {
+        // El indicador se apaga; el registro del turno queda en el mensaje
+        // con la MISMA forma que persiste el backend (metadata.turn_log).
+        dispatch(clearToolActivities());
+        const toolLog = deedsFromActivities(turnActivities);
+        if (placeholderAdded && toolLog.length > 0) {
+          setAgentMessages((prev) =>
+            prev.map((m, i) =>
+              i === prev.length - 1 &&
+              m.agent_type === AgentMessageType.AI_AGENT
+                ? { ...m, toolLog }
+                : m
+            )
+          );
+        }
         setAttachedFiles([]);
         if (collectedFiles.length > 0) {
           setGeneratedFiles((prev) => [...prev, ...collectedFiles]);
@@ -1241,20 +1272,21 @@ const PlanPage: React.FC = () => {
     },
     [
       clarificationMessage,
-      planData,
-      routeSessionId,
-      planId,
-      planLane,
-      planClosed,
-      abortInFlightChat,
+      planData.plan,
       closedSessionId,
-      planApprovalRequest,
-      showToast,
-      dismissToast,
-      navigate,
-      setSearchParams,
+      routeSessionId,
       scrollToBottom,
+      planLane,
+      planId,
+      planClosed,
+      dispatch,
+      abortInFlightChat,
       attachedFiles,
+      showToast,
+      planApprovalRequest?.id,
+      dismissToast,
+      setSearchParams,
+      navigate,
     ]
   );
 

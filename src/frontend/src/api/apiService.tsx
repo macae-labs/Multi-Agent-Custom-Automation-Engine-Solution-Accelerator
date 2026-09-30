@@ -15,6 +15,7 @@ import {
   ChatMessageRequest,
   ChatMessageResponse,
 } from '../models';
+import type { ToolActivityEvent } from '../store/slices/streamingSlice';
 
 // Constants for endpoints
 const API_ENDPOINTS = {
@@ -343,12 +344,7 @@ export class APIService {
       /** Legacy redirect callback — kept for backward compat with HomeInput. */
       onRedirect?: (planId: string) => void;
       onError: (error: string) => void;
-      onToolActivity?: (data: {
-        activity: string;
-        tool: string;
-        server?: string;
-        success?: boolean;
-      }) => void;
+      onToolActivity?: (data: ToolActivityEvent) => void;
       onGeneratedFile?: (data: {
         file_id: string;
         filename: string;

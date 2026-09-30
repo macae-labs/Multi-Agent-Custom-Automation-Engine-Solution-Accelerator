@@ -4,14 +4,12 @@ import InlineToaster from '../toast/InlineToaster';
 import { AgentMessageData, AgentMessageType } from '@/models';
 import renderUserPlanMessage from './streaming/StreamingUserPlanMessage';
 import RenderPlanResponse from './streaming/StreamingPlanResponse';
-import {
-  renderPlanExecutionMessage,
-  renderThinkingState,
-} from './streaming/StreamingPlanState';
+import { renderThinkingState } from './streaming/StreamingPlanState';
 import ContentNotFound from '../NotFound/ContentNotFound';
 import PlanChatBody from './PlanChatBody';
 import RenderAgentMessages from './streaming/StreamingAgentMessage';
 import StreamingBufferMessage from './streaming/StreamingBufferMessage';
+import { AgentActivityIndicator } from './streaming/AgentActivity';
 
 interface SimplifiedPlanChatProps extends PlanChatProps {
   onPlanReceived?: (planData: MPlanData) => void;
@@ -179,6 +177,7 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
           {afterBuffer.length > 0 && (
             <RenderAgentMessages agentMessages={afterBuffer} />
           )}
+          {showProcessingPlanSpinner && <AgentActivityIndicator />}
         </div>
         <PlanChatBody
           planData={null as any}
@@ -242,7 +241,9 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
         {/* AI thinking state */}
         {renderThinkingState(waitingForPlan)}
 
-        {showProcessingPlanSpinner && renderPlanExecutionMessage()}
+        {showProcessingPlanSpinner && (
+          <AgentActivityIndicator fallback="Processing your plan and coordinating with AI agents…" />
+        )}
         {/* Streaming plan updates */}
         {showBufferingText && (
           <StreamingBufferMessage
