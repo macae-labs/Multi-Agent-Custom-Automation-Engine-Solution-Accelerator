@@ -1272,7 +1272,7 @@ const PlanPage: React.FC = () => {
     },
     [
       clarificationMessage,
-      planData.plan,
+      planData?.plan,
       closedSessionId,
       routeSessionId,
       scrollToBottom,

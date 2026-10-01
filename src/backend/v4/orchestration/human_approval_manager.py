@@ -18,10 +18,23 @@ from agent_framework_orchestrations._magentic import (
 
 import v4.models.messages as messages
 from v4.config.settings import connection_config, orchestration_config
+from v4.control.objective import (
+    VERDICT_INSTRUCTIONS,
+    Ledger,
+    parse_verdict,
+    verdict_input,
+)
 from v4.models.models import MPlan
 from v4.orchestration.helper.plan_to_mplan_converter import PlanToMPlanConverter
 
 logger = logging.getLogger(__name__)
+
+
+def _json_block(text: str) -> str:
+    """El JSON del veredicto tal como lo escribe un agente: puede venir entre
+    prosa o en un bloque de código; se toma del primer ``{`` al último ``}``."""
+    i, j = text.find("{"), text.rfind("}")
+    return text[i : j + 1] if 0 <= i < j else text
 
 
 class HumanApprovalMagenticManager(StandardMagenticManager):
@@ -125,6 +138,13 @@ Never present invented figures, statistics or research as findings.
         self._pending_chat_history: list[Message] = []
         # New API: StandardMagenticManager takes agent as first positional argument
         super().__init__(agent, *args, **kwargs)
+        # El dueño del objetivo de este plan (ley compartida con el chat).
+        self._objective: Ledger | None = None
+        self._outcome: str = ""
+        self._seen_facts: set[str] = set()
+        self._laps: int = 0
+        self._evaluated_before: bool = False
+        self._history_seen: int = 0
 
     def seed_chat_history(self, history: list) -> None:
         """Stage recovered session turns for the NEXT plan's MagenticContext.
@@ -234,6 +254,23 @@ Never present invented figures, statistics or research as findings.
 
         self.magentic_plan = self.plan_to_obj(magentic_context, self.task_ledger)
         self.magentic_plan.user_id = self.current_user_id
+        # El plan es un objetivo con dueño: mismo ledger que un turno del chat.
+        # El dueño es el id propio del MPlan, que existe desde aquí; el
+        # ``plan_id`` que la UI conoce se estampa recién al aparcar, y la UI lo
+        # resuelve a este id por el documento del plan (``m_plan_id``).
+        self._objective = Ledger(f"plan:{self.magentic_plan.id}")
+        self._outcome = ""
+        self._seen_facts = set()
+        self._laps = 0
+        self._evaluated_before = False
+        self._history_seen = 0
+        await self._objective.opened(
+            {
+                "objective": str(magentic_context.task),
+                "user_id": self.current_user_id,
+                "lane": "plan",
+            }
+        )
         return plan_message
 
     async def replan(
@@ -295,6 +332,7 @@ Never present invented figures, statistics or research as findings.
                 "Process terminated due to maximum rounds exceeded"
             )
             ledger.instruction_or_question.reason = "Task complete"
+            await self._close_objective("terminated")
 
             return ledger
 
@@ -308,6 +346,9 @@ Never present invented figures, statistics or research as findings.
         # agent instead of asking the user). Upstream arbitration is the
         # prompt, not a runtime veto.
         uncalled = self._get_uncalled_agents(magentic_context)
+        await self._apply_objective_law(magentic_context, ledger)
+        if self._outcome == "blocked":
+            return ledger
 
         # --- Premature satisfaction guard ---
         # If the LLM says the request is satisfied, verify that all planned
@@ -371,12 +412,161 @@ Never present invented figures, statistics or research as findings.
 
         return [name for name in all_agents if name not in responded]
 
+    # ── la ley del dueño del objetivo (compartida con el chat) ───────────────
+
+    def _objective_ledger(self) -> Ledger | None:
+        ledger = getattr(self, "_objective", None)
+        if ledger is not None:
+            return ledger
+        mplan_id = getattr(getattr(self, "magentic_plan", None), "id", None)
+        if mplan_id:
+            ledger = Ledger(f"plan:{mplan_id}")
+            self._objective = ledger
+        return ledger
+
+    async def _apply_objective_law(
+        self, magentic_context: MagenticContext, ledger
+    ) -> None:
+        """Hechos, veredicto y progreso con la ley compartida.
+
+        - Cada respuesta de un participante es un hecho del ledger, por
+          identidad de lo observado: repetirla no es progreso.
+        - El veredicto es el contrato estructurado del chat (``goal_met``,
+          ``blocked``, ``reason``, ``corrected_objective``) sobre la evidencia
+          acumulada; decide ``is_request_satisfied`` en lugar de la prosa del
+          ledger base. Si la evidencia contradice una premisa, el objetivo
+          vigente pasa a ser el corregido.
+        - Sin hecho nuevo desde el último veredicto no hay progreso: el
+          framework cuenta el estancamiento y replanifica (capacidad suya).
+        - Si el juicio no está disponible (red, cuota, contrato roto) se deja
+          la decisión del ledger base: el juez no tumba la corrida.
+        """
+        objective = self._objective_ledger()
+        if objective is None:
+            return
+        seen_facts: set[str] = getattr(self, "_seen_facts", set())
+        self._seen_facts = seen_facts
+        history = list(magentic_context.chat_history)
+        start = getattr(self, "_history_seen", 0)
+        participants = set(magentic_context.participant_descriptions.keys())
+        new_facts = 0
+        for msg in history[start:]:
+            author = getattr(msg, "author_name", None) or ""
+            text = getattr(msg, "text", "") or ""
+            if author not in participants or not text.strip():
+                continue
+            identity, _dup = await objective.fact(
+                author, text, {"agent": author, "output": text[:1000]}
+            )
+            if identity not in seen_facts:
+                seen_facts.add(identity)
+                new_facts += 1
+        self._history_seen = len(history)
+        evidence = [
+            f"- {getattr(m, 'author_name', '')}: {(getattr(m, 'text', '') or '')[:1500]}"
+            for m in history
+            if (getattr(m, "author_name", None) or "") in participants
+            and (getattr(m, "text", "") or "").strip()
+        ]
+        task_text = str(magentic_context.task)
+        verdict = None
+        try:
+            judged = await self._complete(
+                [
+                    Message(
+                        role="user",
+                        text=(
+                            VERDICT_INSTRUCTIONS
+                            + "\n\nRespondé SÓLO con un JSON con las claves "
+                            "goal_met (bool), blocked (bool), reason (string) y "
+                            "corrected_objective (string).\n\n"
+                            + verdict_input(task_text, evidence, "")
+                        ),
+                    )
+                ]
+            )
+            verdict = parse_verdict(_json_block(getattr(judged, "text", "") or ""))
+        except Exception as ex:  # el juez no tumba la corrida
+            logger.warning(
+                "Veredicto del plan no disponible (%s): %s", type(ex).__name__, ex
+            )
+        if verdict is None:
+            return
+        kind, reason, corrected = verdict
+        self._laps = getattr(self, "_laps", 0) + 1
+        await objective.verdict(self._laps, kind, reason, corrected, new_facts)
+        if kind == "blocked":
+            # Limitación concreta: la corrida termina y la respuesta final la
+            # nombra. Magentic sólo sabe "satisfecho → respuesta final" o
+            # "estancado → replanificar", y replanificar vuelve a pedir
+            # aprobación (medido en la UI); un bloqueo no es ninguna de las dos.
+            self._outcome = "blocked"
+            ledger.is_request_satisfied.answer = True
+            ledger.is_request_satisfied.reason = f"Bloqueado: {reason}"
+            return
+        ledger.is_request_satisfied.answer = kind == "done"
+        ledger.is_request_satisfied.reason = reason
+        if corrected and corrected != task_text:
+            logger.info(
+                "Premisa del plan corregida por la evidencia: %s", corrected[:200]
+            )
+            magentic_context.task = corrected
+            self._evaluated_before = False
+        elif kind != "done":
+            if getattr(self, "_evaluated_before", False) and new_facts == 0:
+                ledger.is_progress_being_made.answer = False
+                ledger.is_progress_being_made.reason = (
+                    "Sin hecho nuevo desde el último veredicto"
+                )
+            self._evaluated_before = True
+
+    async def _close_objective(self, status: str) -> None:
+        objective = self._objective_ledger()
+        if objective is not None:
+            await objective.closed(
+                getattr(self, "_outcome", "") or status,
+                getattr(self, "_laps", 0),
+                len(getattr(self, "_seen_facts", set())),
+            )
+
+    def on_checkpoint_save(self) -> dict[str, Any]:
+        parent = super()
+        state = (
+            parent.on_checkpoint_save() if hasattr(parent, "on_checkpoint_save") else {}
+        )
+        objective = self._objective_ledger()
+        if objective is not None:
+            state["objective"] = {
+                "owner_id": objective.owner_id,
+                "seen_facts": sorted(getattr(self, "_seen_facts", set())),
+                "laps": getattr(self, "_laps", 0),
+                "evaluated_before": getattr(self, "_evaluated_before", False),
+                "history_seen": getattr(self, "_history_seen", 0),
+            }
+        return state
+
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        parent = super()
+        if hasattr(parent, "on_checkpoint_restore"):
+            parent.on_checkpoint_restore(state)
+        saved = state.get("objective")
+        if saved:
+            # Tras un reinicio el manager es nuevo y no tiene MPlan: el dueño
+            # vuelve del checkpoint.
+            self._objective = Ledger(saved["owner_id"])
+            self._seen_facts = set(saved.get("seen_facts", []))
+            self._laps = int(saved.get("laps", 0))
+            self._evaluated_before = bool(saved.get("evaluated_before", False))
+            self._history_seen = int(saved.get("history_seen", 0))
+
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
         """
         Override to ensure final answer is prepared after all steps are executed.
         """
         logger.info("\n Magentic Manager - Preparing final answer...")
-        return await super().prepare_final_answer(magentic_context)
+        final = await super().prepare_final_answer(magentic_context)
+        await self._close_objective("done")
+        return final
 
     def plan_to_obj(self, magentic_context: MagenticContext, ledger) -> MPlan:
         """Convert the generated plan from the ledger into a structured MPlan object."""

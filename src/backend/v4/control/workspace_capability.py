@@ -4,7 +4,7 @@
   y ``workspace_for(user_id, workspace_id)`` es el único resolutor. Los INC se
   leen del clon en disco, ``docs/incidents/*.json``, con ``_resolve`` como
   contención; no hay red para leer un archivo local.
-- Ejecución: la misma vía que un agente. ``MCPStreamableHTTPTool`` sobre
+- Ejecución: la misma vía que un agente. ``ReconnectingMCPTool`` sobre
   ``MCPConfig.from_env()`` y ``call_tool("workspace_exec", ...)``; la evidencia
   es ``exit_code``/``stdout``/``stderr`` verbatim del payload de la tool
   (``format_success_response``). Un error de la tool es fallo de capacidad.
@@ -37,6 +37,7 @@ from typing import Any
 
 from agent_framework import MCPStreamableHTTPTool
 
+from v4.common.mcp_tool import ReconnectingMCPTool
 from v4.common.services.workspace_service import (
     _SAFE_ID,
     _SAFE_REF,
@@ -85,7 +86,7 @@ class WorkspaceCapability:
     async def _mcp(self) -> MCPStreamableHTTPTool:
         if self._tool is None:
             cfg = MCPConfig.from_env()
-            tool = MCPStreamableHTTPTool(
+            tool = ReconnectingMCPTool(
                 name=cfg.name, description=cfg.description, url=cfg.url
             )
             await tool.__aenter__()
