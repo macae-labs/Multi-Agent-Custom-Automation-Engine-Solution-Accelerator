@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from agent_framework import AgentResponseUpdate, Content, WorkflowEvent
+
 from common.services.event_store import EventStore, MemoryContainer, set_event_store
 from v4.api import router
 
@@ -231,6 +232,53 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
     assert [e["identity"] for e in events if e["kind"] == "verdict"] == ["t1:1"]
     closed = next(e for e in events if e["identity"] == "t1:closed")
     assert closed["payload"]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
+    _ledger_store, monkeypatch
+):
+    call = SimpleNamespace(
+        type="function_call",
+        name="compose",
+        arguments=json.dumps(
+            {
+                "pattern": "sequential",
+                "task": "investigate",
+                "participants": [
+                    {"name": "SrcAgent", "description": "d", "system_message": "s"}
+                ],
+            }
+        ),
+    )
+    fake = _fake_openai(_Stream([_done(call)]), _verdict(False, "faltan datos"))
+    client = _client()
+
+    async def _run_pattern(pattern, task, participants, history):
+        for content in (
+            Content.from_mcp_server_tool_result("m1", output="mcp evidence"),
+            Content.from_code_interpreter_tool_result(
+                outputs=[Content.from_text("code evidence")]
+            ),
+        ):
+            yield WorkflowEvent(
+                "output",
+                data=AgentResponseUpdate(contents=[content], role="assistant"),
+                executor_id="SrcAgent",
+            )
+
+    monkeypatch.setattr(client, "_run_pattern", _run_pattern)
+    with patch("openai.AsyncOpenAI", fake):
+        updates = await _collect(client)
+
+    assert "Objetivo no cumplido: faltan datos" in str(updates[-1].contents[0].text)
+    evidence = fake.instances[-1].calls[1]["input"][0]["content"]
+    assert "mcp evidence" in evidence
+    assert "code evidence" in evidence
+    events = await _ledger_store.history("t1")
+    assert len([e for e in events if e["kind"] == "fact"]) == 2
+    closed = next(e for e in events if e["identity"] == "t1:closed")
+    assert closed["payload"]["status"] == "no_progress"
 
 
 @pytest.mark.asyncio

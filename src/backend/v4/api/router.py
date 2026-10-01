@@ -3032,11 +3032,45 @@ class _RouterChatClient:
                                 call_names[str(content.call_id)] = (
                                     content.name or "unknown"
                                 )
+                                continue
                             elif content.type == "function_result":
                                 tool = getattr(content, "name", None) or call_names.get(
                                     str(content.call_id), "unknown"
                                 )
                                 result = str(content.result)
+                                failed = content.exception is not None
+                            elif content.type == "mcp_server_tool_result":
+                                tool = getattr(content, "tool_name", None) or "unknown"
+                                result = str(
+                                    getattr(content, "output", None)
+                                    or getattr(content, "text", None)
+                                    or ""
+                                )
+                                failed = getattr(content, "status", None) == "error"
+                            elif content.type == "code_interpreter_tool_result":
+                                tool = "code_interpreter"
+                                result = str(
+                                    getattr(content, "stderr", None)
+                                    or getattr(content, "output", None)
+                                    or getattr(content, "stdout", None)
+                                    or getattr(content, "text", None)
+                                    or "\n".join(
+                                        str(
+                                            getattr(part, "text", None)
+                                            or getattr(part, "output", None)
+                                            or ""
+                                        )
+                                        for part in (
+                                            getattr(content, "outputs", None) or []
+                                        )
+                                    )
+                                )
+                                failed = bool(getattr(content, "stderr", None))
+                            else:
+                                if content.type == "text" and content.text:
+                                    answer_parts.append(content.text)
+                                continue
+                            if result:
                                 identity = f"{self._turn_id}:{speaker}:{tool}:{_fact_key(result)}"
                                 if identity not in seen_facts:
                                     seen_facts.add(identity)
@@ -3044,11 +3078,15 @@ class _RouterChatClient:
                                 await self._ledger(
                                     "fact",
                                     identity,
-                                    {"tool": tool, "output": result[:1000]},
+                                    {
+                                        "tool": tool,
+                                        "failed": failed,
+                                        "output": result[:1000],
+                                    },
                                 )
-                                turn_evidence.append(f"- {speaker}: {tool} -> {result}")
-                            elif content.type == "text" and content.text:
-                                answer_parts.append(content.text)
+                                turn_evidence.append(
+                                    f"- {speaker}: {tool}{' (falló)' if failed else ''} -> {result}"
+                                )
                     answer = "".join(answer_parts)
                     if answer:
                         identity = f"{self._turn_id}:{pattern}:{_fact_key(answer)}"
@@ -3072,7 +3110,9 @@ class _RouterChatClient:
                                 "new_facts": len(since_eval),
                             },
                         )
-                        outcome = kind
+                        outcome = "no_progress" if kind == "retry" else kind
+                        if kind == "retry":
+                            yield self._text_update(f"Objetivo no cumplido: {why}")
         finally:
             await client.close()
             if composition is not None and composition[0] == "magentic":
