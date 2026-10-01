@@ -80,10 +80,18 @@ def parse_verdict(text: str) -> tuple[str, str, str] | None:
     """
     try:
         judged = json.loads(text)
+        if (
+            not isinstance(judged, dict)
+            or type(judged.get("goal_met")) is not bool
+            or type(judged.get("blocked")) is not bool
+            or not isinstance(judged.get("reason"), str)
+            or not isinstance(judged.get("corrected_objective"), str)
+        ):
+            return None
         met = judged["goal_met"]
-        reason = str(judged["reason"])[:300]
-        blocked = judged.get("blocked") is True
-        corrected = str(judged.get("corrected_objective") or "").strip()
+        reason = judged["reason"][:300]
+        blocked = judged["blocked"]
+        corrected = judged["corrected_objective"].strip()
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
     if met is True:
