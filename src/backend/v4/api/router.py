@@ -2993,9 +2993,89 @@ class _RouterChatClient:
                         ),
                     },
                 ]
+            if composition is not None:
+                pattern, task, participants = composition
+                task = task or prompt
+                logger.info(
+                    "Composer: pattern=%s task=%s participants=%s workspace=%s",
+                    pattern,
+                    task[:120],
+                    [p.get("name") for p in participants],
+                    self._workspace_id or "-",
+                )
+                self.composition = (pattern, task, participants)
+                if pattern != "magentic":
+                    names = ", ".join(p.get("name", "") for p in participants)
+                    turn_evidence.append(f"Orquestación: {pattern} con {names}")
+                    call_names: dict[str, str] = {}
+                    answer_parts: list[str] = []
+                    async for update in self._run_pattern(
+                        pattern, task, participants, history
+                    ):
+                        yield update
+                        if not isinstance(update, WorkflowEvent):
+                            continue
+                        speaker = update.executor_id or "unknown"
+                        data = update.data
+                        if isinstance(data, AgentResponseUpdate):
+                            contents = data.contents or []
+                        elif isinstance(data, AgentResponse):
+                            contents = [
+                                c
+                                for m in (data.messages or [])
+                                for c in (m.contents or [])
+                            ]
+                        else:
+                            continue
+                        for content in contents:
+                            if content.type == "function_call":
+                                call_names[str(content.call_id)] = (
+                                    content.name or "unknown"
+                                )
+                            elif content.type == "function_result":
+                                tool = getattr(content, "name", None) or call_names.get(
+                                    str(content.call_id), "unknown"
+                                )
+                                result = str(content.result)
+                                identity = f"{self._turn_id}:{speaker}:{tool}:{_fact_key(result)}"
+                                if identity not in seen_facts:
+                                    seen_facts.add(identity)
+                                    since_eval.append(identity)
+                                await self._ledger(
+                                    "fact",
+                                    identity,
+                                    {"tool": tool, "output": result[:1000]},
+                                )
+                                turn_evidence.append(f"- {speaker}: {tool} -> {result}")
+                            elif content.type == "text" and content.text:
+                                answer_parts.append(content.text)
+                    answer = "".join(answer_parts)
+                    if answer:
+                        identity = f"{self._turn_id}:{pattern}:{_fact_key(answer)}"
+                        if identity not in seen_facts:
+                            seen_facts.add(identity)
+                            since_eval.append(identity)
+                        await self._ledger("fact", identity, {"output": answer[:1000]})
+                    verdict = await self._evaluate(
+                        client, prompt, answer, turn_evidence
+                    )
+                    laps += 1
+                    if verdict is not None:
+                        kind, why, corrected = verdict
+                        await self._ledger(
+                            "verdict",
+                            f"{self._turn_id}:{laps}",
+                            {
+                                "kind": kind,
+                                "reason": why,
+                                "corrected_objective": corrected,
+                                "new_facts": len(since_eval),
+                            },
+                        )
+                        outcome = kind
         finally:
             await client.close()
-            if composition is not None:
+            if composition is not None and composition[0] == "magentic":
                 outcome = "composed"
             await self._ledger(
                 "objective",
@@ -3007,24 +3087,6 @@ class _RouterChatClient:
             logger.info(
                 "Composer answered directly (workspace=%s)", self._workspace_id or "-"
             )
-            return
-
-        pattern, task, participants = composition
-        task = task or prompt
-        logger.info(
-            "Composer: pattern=%s task=%s participants=%s workspace=%s",
-            pattern,
-            task[:120],
-            [p.get("name") for p in participants],
-            self._workspace_id or "-",
-        )
-        self.composition = (pattern, task, participants)
-        if pattern == "magentic":
-            # The formal Plan leaves this turn: the SSE handler reads
-            # ``composition`` after the stream and creates the Plan.
-            return
-        async for update in self._run_pattern(pattern, task, participants, history):
-            yield update
 
     async def _run_pattern(
         self,
