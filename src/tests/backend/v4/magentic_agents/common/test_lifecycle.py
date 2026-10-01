@@ -47,7 +47,7 @@ def _collaborators_patched(monkeypatch):
     for name, value in (
         ('ChatAgent', mock_chat_agent),
         ('HostedMCPTool', mock_hosted_mcp_tool),
-        ('MCPStreamableHTTPTool', mock_mcp_streamable_http_tool),
+        ('ReconnectingMCPTool', mock_mcp_streamable_http_tool),
         ('AzureAIAgentClient', mock_azure_ai_agent_client),
         ('AgentsClient', mock_agents_client),
         ('DefaultAzureCredential', mock_default_azure_credential),
@@ -181,7 +181,7 @@ class TestMCPEnabledBase:
                         return_value=mock_client,
                     ):
                         with patch(
-                            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+                            "v4.magentic_agents.common.lifecycle.ReconnectingMCPTool",
                             return_value=mock_mcp_tool,
                         ):
                             with patch.object(
@@ -459,7 +459,7 @@ class TestMCPEnabledBase:
         mock_mcp_tool = AsyncMock()
 
         with patch(
-            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+            "v4.magentic_agents.common.lifecycle.ReconnectingMCPTool",
             return_value=mock_mcp_tool,
         ) as mock_tool_class:
             await base._prepare_mcp_tool()
@@ -493,7 +493,7 @@ class TestMCPEnabledBase:
         base._stack = mock_stack
 
         with patch(
-            "v4.magentic_agents.common.lifecycle.MCPStreamableHTTPTool",
+            "v4.magentic_agents.common.lifecycle.ReconnectingMCPTool",
             side_effect=Exception("MCP error"),
         ):
             await base._prepare_mcp_tool()

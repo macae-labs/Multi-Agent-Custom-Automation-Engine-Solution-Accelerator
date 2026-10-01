@@ -6,7 +6,7 @@ import logging
 import re
 import time as _time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     Agent,
@@ -17,7 +17,7 @@ from agent_framework import (
 
 # agent_framework imports
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework_azure_ai import AzureAIClient
+from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
 from agent_framework_orchestrations import (
     ConcurrentBuilder,
     GroupChatBuilder,
@@ -283,9 +283,12 @@ class OrchestrationManager:
 
         try:
             # Create the chat client (AzureAIClient)
+            # Un solo cerebro: el manager del plan piensa con el contrato de
+            # inferencia del orquestador del chat (modelo y reasoning), no con
+            # el modelo del equipo, que es el de los participantes.
             chat_client = AzureAIClient(
                 project_endpoint=config.AZURE_AI_PROJECT_ENDPOINT,
-                model_deployment_name=team_config.deployment_name,
+                model_deployment_name=config.CHAT_ORCHESTRATOR_MODEL,
                 agent_name=agent_name,
                 credential=credential,
             )
@@ -294,11 +297,16 @@ class OrchestrationManager:
             manager_agent = Agent(
                 client=chat_client,
                 name="MagenticManager",
+                default_options=AzureAIProjectAgentOptions(
+                    reasoning=cast(
+                        Any, {"effort": config.CHAT_ORCHESTRATOR_REASONING_EFFORT}
+                    )
+                ),
             )
 
             cls.logger.info(
                 "Created AzureAIClient and manager Agent for orchestration with model '%s' at endpoint '%s'",
-                team_config.deployment_name,
+                config.CHAT_ORCHESTRATOR_MODEL,
                 config.AZURE_AI_PROJECT_ENDPOINT,
             )
         except Exception as e:
