@@ -391,11 +391,13 @@ class FoundryAgentTemplate(AzureAgentBase):
         """Initialize ChatAgent after connections are established."""
         if self.use_reasoning:
             self.logger.info("Initializing agent in Reasoning mode.")
-            # Use a deterministic low temperature for reasoning mode
-            temp = 0.3
+            # Modelos de razonamiento: el control que cambia el comportamiento
+            # es reasoning.effort (medido: low → 0 tokens de razonamiento,
+            # medium → 25); temperature no se envía.
+            inference: dict = {"reasoning": {"effort": config.AGENT_REASONING_EFFORT}}
         else:
             self.logger.info("Initializing agent in Foundry mode.")
-            temp = 0.3
+            inference = {"temperature": config.AGENT_TEMPERATURE}
 
         try:
             if self._use_azure_search:
@@ -420,7 +422,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                     default_options=AzureAIProjectAgentOptions(
                         store=False,
                         tool_choice="required",
-                        temperature=temp,
+                        **inference,
                     ),
                 )
             else:
@@ -457,7 +459,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                         default_options=AzureAIProjectAgentOptions(
                             store=True,
                             tool_choice="auto",
-                            temperature=temp,
+                            **inference,
                         ),
                     )
                 elif tools:
@@ -484,7 +486,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                         default_options=OpenAIChatOptions(
                             store=True,
                             tool_choice="auto",
-                            temperature=temp,
+                            **inference,
                         ),
                     )
                 else:
@@ -503,7 +505,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                         default_options=AzureAIProjectAgentOptions(
                             store=True,
                             tool_choice="auto",
-                            temperature=temp,
+                            **inference,
                         ),
                     )
 

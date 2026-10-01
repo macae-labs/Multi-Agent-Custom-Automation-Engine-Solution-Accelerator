@@ -38,6 +38,7 @@ from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages_af import TeamConfiguration
 from common.utils.utils_agents import generate_assistant_id
+from v4.common.mcp_tool import ReconnectingMCPTool
 from v4.common.services.team_service import TeamService
 from v4.config.agent_registry import agent_registry
 from v4.magentic_agents.models.agent_models import MCPConfig
@@ -809,7 +810,7 @@ class MCPEnabledBase:
                 if self._stack:
                     await self._stack.enter_async_context(http_client)
 
-            mcp_tool = MCPStreamableHTTPTool(
+            mcp_tool = ReconnectingMCPTool(
                 name=self.mcp_cfg.name,
                 description=self.mcp_cfg.description,
                 url=self.mcp_cfg.url,

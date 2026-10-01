@@ -42,6 +42,7 @@ from common.database.database_base import DatabaseBase
 from common.database.database_factory import DatabaseFactory
 from common.models.messages_af import Plan
 from common.services.event_store import (
+    LEDGER_KINDS,
     STATUS_APPLIED,
     STATUS_FAILED,
     EventStore,
@@ -121,8 +122,11 @@ async def apply_event(
             event, store=store or get_event_store(), execute=execute
         )
         return
-    if kind in (KIND_AUTHORITY, KIND_RECONCILED):
-        return  # hechos consumidos por identidad desde la transición de incident_expiry
+    if kind in (KIND_AUTHORITY, KIND_RECONCILED) or kind in LEDGER_KINDS:
+        # Hechos, no transiciones: los de incident_expiry se consumen por
+        # identidad desde su transición; los del ledger de un turno (objetivo,
+        # hecho, veredicto) se leen por pliegue (``EventStore.history``).
+        return
     user_id = payload["user_id"]
     memory_store = await DatabaseFactory.get_database(
         user_id=user_id, tenant_id=payload.get("tenant_id")
