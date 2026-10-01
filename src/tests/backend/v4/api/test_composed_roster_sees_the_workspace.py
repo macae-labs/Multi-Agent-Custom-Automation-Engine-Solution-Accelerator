@@ -137,3 +137,18 @@ async def test_a_partially_sighted_roster_is_not_good_enough():
 
     assert agents["RepositoryForensicsAgent"].use_mcp is True
     assert agents["CloudDeliveryAgent"].use_mcp is True
+
+
+@pytest.mark.asyncio
+async def test_reasoning_agents_are_composed_on_the_reasoning_deployment():
+    """Medido 2026-10-01: gpt-4.1-mini rechaza ``reasoning.effort`` (400). Un
+    agente con ``use_reasoning`` sale del roster con ``REASONING_MODEL_NAME``;
+    los demás con el deployment por defecto. El flag y el modelo son una sola
+    decisión, tomada por lo que la tarea requiere."""
+    from common.config.app_config import config
+
+    agents = by_name(await compose(ROSTER, WS))
+    reasoning = config.REASONING_MODEL_NAME
+    assert agents["RepositoryAuditAgent"].deployment_name == reasoning
+    assert agents["DevSecOpsAuditAgent"].deployment_name == reasoning
+    assert agents["ValidationAgent"].deployment_name != reasoning

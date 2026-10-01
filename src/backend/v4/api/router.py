@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -12,7 +11,6 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     Content,
-    MCPStreamableHTTPTool,
     WorkflowEvent,
 )
 from azure.core.exceptions import ResourceNotFoundError
@@ -55,6 +53,7 @@ from common.utils.utils_af import (
     rai_success,
     rai_validate_team_config,
 )
+from v4.common.mcp_tool import ReconnectingMCPTool
 from v4.common.models.mcp_connection_models import (
     McpReadResourceRequest,
     MCPServerEntry,
@@ -75,6 +74,14 @@ from v4.config.settings import (
     connection_config,
     orchestration_config,
     team_config,
+)
+from v4.control.objective import (
+    VERDICT_INSTRUCTIONS,
+    VERDICT_SCHEMA,
+    Ledger,
+    fact_key,
+    parse_verdict,
+    verdict_input,
 )
 from v4.control.reconciler import get_reconciler
 from v4.models.messages import WebsocketMessageType
@@ -547,6 +554,7 @@ async def process_request(
         user_access_token=user_access_token,
         user_id=user_id,
         workspace_id=input_task.workspace_id,
+        session_id=input_task.session_id,
     )
     try:
         pattern, task, roster = await composer.compose_plan(input_task.description)
@@ -642,7 +650,11 @@ async def _team_from_router_roster(
                 "input_key": "",
                 "type": "",
                 "name": name,
-                "deployment_name": deployment,
+                # Un agente de razonamiento corre en el modelo de razonamiento:
+                # el flag y el deployment son UNA decisión (ver la fábrica).
+                "deployment_name": (
+                    config.REASONING_MODEL_NAME if use_reasoning else deployment
+                ),
                 "icon": "",
                 "system_message": str(raw.get("system_message") or "").strip(),
                 "description": str(raw.get("description") or "").strip(),
@@ -1585,6 +1597,10 @@ def _to_safe_dict(value: Any, max_depth: int = 4, _depth: int = 0) -> Any:
     return str(value)
 
 
+# La identidad de un hecho es ley compartida con el carril de plan.
+_fact_key = fact_key
+
+
 def _describe_execution(item: Any) -> str:
     """Una línea de lo que una capacidad HIZO, tomada del item, no de la prosa.
 
@@ -2067,7 +2083,20 @@ _COMPOSER_INSTRUCTIONS = (
     "belongs to (this session's turns, plus earlier turns retrieved from the "
     "user's history). Either answer the request yourself or call `compose` once "
     "to run it through one of the framework's orchestrations with the "
-    "specialists it needs. Decide from the request and the conversation."
+    "specialists it needs. Decide from the request and the conversation. "
+    "Compose when the request asks for specialists, roles or a team, for work "
+    "in sequence, in parallel, as a group or handed off between roles, or when "
+    "it spans separate domains of responsibility: answering such a request "
+    "yourself does not satisfy it. Answer yourself only what you can complete "
+    "alone with the tools attached to this turn."
+)
+
+# Hecho del turno que el veredicto necesita cuando el orquestador respondió
+# solo: si el objetivo pedía especialistas, la evidencia tiene que decir que no
+# corrió ninguno; sin esto el veredicto juzgaba sólo los datos (medido).
+_NO_ORCHESTRATION_FACT = (
+    "- Orquestación de especialistas (compose): ninguna; el orquestador "
+    "respondió por sí mismo."
 )
 
 
@@ -2138,7 +2167,12 @@ def _read_composition(
 
 
 class _RouterChatClient:
-    """Front door of the chat lane: o4-mini on the direct Responses API.
+    _turn_id: str = ""
+    _session_id: str = ""
+    _user_id: str = ""
+    _workspace_id: str | None = None
+    _ledger_unavailable: bool = False
+    """Front door of the chat lane: gpt-5.4-mini on the direct Responses API.
 
     One reasoning model reads the request with its conversation and either
     answers it, streamed as text, or calls the single function ``compose`` with
@@ -2166,11 +2200,18 @@ class _RouterChatClient:
         workspace_id: str | None = None,
         memory_store: Any = None,
         model: str | None = None,
+        turn_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         from common.config.app_config import config
 
         self.agent_name = agent_name
         self._workspace_id = workspace_id
+        # Identidad del dueño del objetivo: el turno. Su ledger (objetivo,
+        # hechos, veredictos) se escribe como work_events por esta identidad.
+        self._turn_id = turn_id or uuid.uuid4().hex
+        self._session_id = session_id or ""
+        self._ledger_unavailable = False
         # End-user access token (EasyAuth/Bearer): the composer call runs
         # on-behalf-of the user when OBO is provisioned, and the participants'
         # MCP tools forward it (lifecycle._prepare_mcp_tool).
@@ -2206,6 +2247,16 @@ class _RouterChatClient:
         # the caller may name one; absent that, the configured default. No model
         # is pinned in code.
         self._model = model or config.CHAT_ORCHESTRATOR_MODEL
+        # reasoning por rol (loop streamed vs. compose/evaluador). `Reasoning` del
+        # SDK es un TypedDict; `effort` es un Literal, de ahí el cast del str.
+        from openai.types.shared_params import Reasoning
+
+        self._reasoning: Reasoning = {
+            "effort": cast(Any, config.CHAT_ORCHESTRATOR_REASONING_EFFORT)
+        }
+        self._reasoning_eval: Reasoning = {
+            "effort": cast(Any, config.CHAT_EVALUATOR_REASONING_EFFORT)
+        }
         # Image generation deployment — the name differs per Foundry account,
         # so it is configuration, and Azure reads it from a REQUEST HEADER
         # (_responses_client), not from the tool spec.
@@ -2371,7 +2422,8 @@ class _RouterChatClient:
             f"'{self._workspace_id}' is mounted for this conversation. Use the "
             "attached workspace tools directly to inspect it: "
             "workspace_list_entries, workspace_read_file, "
-            "workspace_search_content and workspace_exec."
+            "workspace_search_content and workspace_exec. The specialists you "
+            "compose get the same workspace tools."
         )
 
     @staticmethod
@@ -2405,6 +2457,7 @@ class _RouterChatClient:
                 tools=cast(Any, [_compose_tool(["magentic"])]),
                 tool_choice=cast(Any, {"type": "function", "name": "compose"}),
                 store=False,
+                reasoning=self._reasoning_eval,
             )
         finally:
             await client.close()
@@ -2468,7 +2521,7 @@ class _RouterChatClient:
                     created = False
                     if tool is None:
                         cfg = MCPConfig.from_env()
-                        tool = MCPStreamableHTTPTool(
+                        tool = ReconnectingMCPTool(
                             name=cfg.name, description=cfg.description, url=cfg.url
                         )
                         await tool.__aenter__()
@@ -2571,39 +2624,36 @@ class _RouterChatClient:
         logger.info("tool %s -> %s", name, " ".join(text[:200].split()))
         return text
 
+    async def _ledger(
+        self, kind: str, identity: str, payload: dict[str, Any]
+    ) -> bool | None:
+        """El ledger del dueño del objetivo (``v4.control.objective.Ledger``),
+        con el turno como dueño. ``True`` si el evento ya existía."""
+        ledger = getattr(self, "_objective_ledger", None)
+        if ledger is None or ledger.owner_id != self._turn_id:
+            ledger = Ledger(self._turn_id)
+            self._objective_ledger = ledger
+        return await ledger.record(kind, identity, payload)
+
     async def _evaluate(
         self, client: Any, objective: str, answer: str, evidence: list[str]
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str, str, str] | None:
         """¿Se cumplió el objetivo? ``None`` sólo si el evaluador no decide.
 
-        Es la vuelta que faltaba: hasta acá el turno ejecutaba y respondía sin
-        volver a mirar. Acá el modelo juzga su propia ejecución contra la
-        EVIDENCIA (lo que los items dicen que pasó), no contra su propia prosa
-        — que es exactamente cómo un turno termina narrando algo que no hizo.
-
-        El veredicto es ESTRUCTURADO (``goal_met`` booleano, esquema estricto),
-        nunca un prefijo convenido en el texto: decidir el bucle parseando
-        prosa es la misma falla que ``classify_tool_error`` prohíbe para los
-        errores. Si el modelo no devuelve el contrato, no hay veredicto.
-
-        Sin tools y sin streaming: es un juicio, no trabajo. Si el juicio falla
-        (red, cuota, contrato roto) devuelve ``None``: se responde con lo que
-        hay antes que girar por un fallo del propio evaluador.
+        La ley es la compartida con el carril de plan
+        (``v4.control.objective``): veredicto ESTRUCTURADO contra la EVIDENCIA
+        del turno, nunca un prefijo en prosa; objetivo reescrito cuando la
+        evidencia contradice una premisa (validación deliberada del usuario,
+        2026-09-30: un puerto distinto del real para observar la reacción del
+        bucle; la reacción correcta es corregir y continuar). Sin tools y sin
+        streaming: es un juicio, no trabajo. Si el juicio falla (red, cuota,
+        contrato roto) devuelve ``None``: se responde con lo que hay antes que
+        girar por un fallo del propio evaluador.
         """
         try:
             verdict = await client.responses.create(
                 model=self._model,
-                instructions=(
-                    "Verificá una ejecución YA OCURRIDA contra su objetivo. "
-                    "``goal_met`` es verdadero sólo si el objetivo quedó "
-                    "cumplido Y la evidencia lo respalda. Una capacidad que "
-                    "falló, una afirmación sin evidencia que la sostenga o un "
-                    "objetivo a medias son falso. ``reason`` explica en una "
-                    "línea qué falta o qué falló. ``blocked`` es verdadero "
-                    "SÓLO si eso no puede obtenerse con las capacidades "
-                    "disponibles en este entorno y la respuesta lo nombra como "
-                    "limitación; ofrecer continuar no es una limitación."
-                ),
+                instructions=VERDICT_INSTRUCTIONS,
                 text=cast(
                     Any,
                     {
@@ -2611,16 +2661,7 @@ class _RouterChatClient:
                             "type": "json_schema",
                             "name": "turn_verdict",
                             "strict": True,
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "goal_met": {"type": "boolean"},
-                                    "blocked": {"type": "boolean"},
-                                    "reason": {"type": "string"},
-                                },
-                                "required": ["goal_met", "blocked", "reason"],
-                                "additionalProperties": False,
-                            },
+                            "schema": VERDICT_SCHEMA,
                         }
                     },
                 ),
@@ -2629,35 +2670,21 @@ class _RouterChatClient:
                     [
                         {
                             "role": "user",
-                            "content": (
-                                f"OBJETIVO:\n{objective}\n\n"
-                                f"EVIDENCIA DE EJECUCIÓN:\n"
-                                + ("\n".join(evidence) or "(ninguna capacidad usada)")
-                                + f"\n\nRESPUESTA DADA:\n{answer or '(vacía)'}"
-                            ),
+                            "content": verdict_input(objective, evidence, answer),
                         }
                     ],
                 ),
+                reasoning=self._reasoning_eval,
                 store=False,
             )
         except Exception as ex:  # el evaluador no puede tumbar el turno
             logger.warning("Evaluación no disponible (%s): %s", type(ex).__name__, ex)
             return None
-        try:
-            judged = json.loads(str(getattr(verdict, "output_text", "") or ""))
-            met = judged["goal_met"]
-            reason = str(judged["reason"])
-            blocked = judged.get("blocked") is True
-        except (ValueError, TypeError, KeyError) as ex:
+        parsed = parse_verdict(str(getattr(verdict, "output_text", "") or ""))
+        if parsed is None:
             # Sin el contrato no hay veredicto; no se adivina por el texto.
-            logger.warning("Veredicto sin el contrato esperado: %s", ex)
-            return None
-        if met is True:
-            return ("done", reason[:300])
-        return (
-            "blocked" if blocked else "retry",
-            reason[:300] or "objetivo no cumplido",
-        )
+            logger.warning("Veredicto sin el contrato esperado")
+        return parsed
 
     async def invoke(
         self,
@@ -2685,7 +2712,22 @@ class _RouterChatClient:
         # vueltas: se sale cuando se cumple, cuando no hay progreso (el
         # evaluador repite el mismo motivo) o cuando el usuario aborta.
         conversation: list = self._composer_input(prompt, history)
-        last_signature: str | None = None
+        evaluated_before = False
+        seen_facts: set[str] = set()
+        laps = 0
+        outcome = "no_verdict"
+        if not self._turn_id:
+            self._turn_id = uuid.uuid4().hex
+        await self._ledger(
+            "objective",
+            self._turn_id,
+            {
+                "objective": prompt,
+                "session_id": self._session_id,
+                "user_id": self._user_id,
+                "workspace_id": self._workspace_id or "",
+            },
+        )
         # Evidencia del TURNO: el evaluador juzga contra todo lo ejecutado, no
         # contra la última pasada (que suele ser la síntesis, sin tools).
         turn_evidence: list[str] = []
@@ -2710,11 +2752,22 @@ class _RouterChatClient:
                     input=cast(Any, conversation),
                     tools=cast(
                         Any,
-                        [*self._capabilities(bearer), *workspace_tools],
+                        [
+                            # La decisión de componer es del dueño, en cada
+                            # pasada: sin esta tool el turno no puede crear
+                            # especialistas y sólo el selector de Plan (que
+                            # fuerza magentic) los crea. Medido 2026-10-01: un
+                            # pedido explícito de dos especialistas en secuencia
+                            # se resolvió sin ninguno.
+                            _compose_tool(patterns),
+                            *self._capabilities(bearer),
+                            *workspace_tools,
+                        ],
                     ),
                     tool_choice="auto",
                     stream=True,
                     store=False,
+                    reasoning=self._reasoning,
                 )
                 async for evt in stream:
                     etype = getattr(evt, "type", None)
@@ -2805,8 +2858,22 @@ class _RouterChatClient:
                                 author_name=self.agent_name,
                             )
                             _fail = _out.startswith("ERROR") or '"error"' in _out[:200]
-                            _h = hashlib.sha1((_args or "").encode()).hexdigest()[:8]
-                            since_eval.append(f"{_fn}:{_h}{':FAIL' if _fail else ''}")
+                            _identity = f"{self._turn_id}:{_fn}:{_fact_key(_out)}"
+                            if _identity not in seen_facts:
+                                seen_facts.add(_identity)
+                                since_eval.append(
+                                    f"{_identity}{':FAIL' if _fail else ''}"
+                                )
+                            await self._ledger(
+                                "fact",
+                                _identity,
+                                {
+                                    "tool": _fn,
+                                    "args": (_args or "{}")[:500],
+                                    "failed": _fail,
+                                    "output": _out[:1000],
+                                },
+                            )
                             evidence.append(
                                 f"- {_fn} args={_args or '{}'} -> "
                                 f"({len(_out)} chars, completo)\n{_out}"
@@ -2845,13 +2912,27 @@ class _RouterChatClient:
                         conversation = [*conversation, call, output]
                     continue
 
-                verdict = await self._evaluate(client, prompt, answer, turn_evidence)
+                verdict = await self._evaluate(
+                    client, prompt, answer, [*turn_evidence, _NO_ORCHESTRATION_FACT]
+                )
+                laps += 1
                 if verdict is None:
                     if answer:
                         yield self._text_update(answer)
                     break
-                kind, why = verdict
+                kind, why, corrected = verdict
+                await self._ledger(
+                    "verdict",
+                    f"{self._turn_id}:{laps}",
+                    {
+                        "kind": kind,
+                        "reason": why,
+                        "corrected_objective": corrected,
+                        "new_facts": len(since_eval),
+                    },
+                )
                 if kind == "done":
+                    outcome = "done"
                     final_answer = answer
                     if not final_answer.strip() and evidence:
                         final_answer = "Listo."
@@ -2860,40 +2941,67 @@ class _RouterChatClient:
                     break
                 if kind == "blocked":
                     # Limitación concreta: la respuesta ya la nombra.
+                    outcome = "blocked"
                     logger.info("Limitación concreta (%s); el turno termina", why)
                     if answer:
                         yield self._text_update(answer)
                     break
-                signature = "|".join(since_eval)
-                # Sin progreso: ya hubo un veredicto y desde entonces no corrió
-                # ninguna tool nueva. El primer veredicto nunca corta.
-                if last_signature is not None and (
-                    not since_eval or signature == last_signature
-                ):
+                if corrected and corrected != prompt:
+                    # La evidencia contradijo una premisa: el objetivo vigente
+                    # pasa a ser el corregido y su primer veredicto no corta.
+                    logger.info(
+                        "Premisa corregida por la evidencia: %s", corrected[:200]
+                    )
+                    prompt = corrected
+                    evaluated_before = False
+                # Sin progreso: ya hubo un veredicto y desde entonces no apareció
+                # ningún hecho nuevo (misma salida con otra llamada no cuenta:
+                # la identidad del hecho es lo observado). El primer veredicto
+                # nunca corta.
+                if evaluated_before and not since_eval:
+                    outcome = "no_progress"
                     logger.info("Sin progreso (%s); el turno termina", why)
                     if answer:
                         yield self._text_update(answer)
                     break
                 logger.info("Objetivo no cumplido (%s); otra vuelta", why)
-                last_signature = signature
+                evaluated_before = True
                 since_eval = []
                 for call, output in executed:
                     conversation = [*conversation, call, output]
                 conversation = [
                     *conversation,
                     {"role": "assistant", "content": said or "(sin respuesta)"},
+                    # Nota del sistema, NO un mensaje del usuario: como "user"
+                    # el modelo le contestaba a un usuario que no existe
+                    # ("Correcto: no se cumplió", "Tenés razón") y eso se
+                    # pintaba como respuesta (medido en la UI).
                     {
-                        "role": "user",
+                        "role": "developer",
                         "content": (
-                            "Verificación de tu propia ejecución: el objetivo "
-                            f"NO se cumplió. Motivo: {why}\nSeguí desde acá con "
-                            "lo que ya ejecutaste (lo tenés arriba, con sus "
-                            "resultados); no repitas un paso que ya diste igual."
+                            "Verificación de la ejecución: el objetivo no quedó "
+                            f"cumplido. Motivo: {why}\n"
+                            + (
+                                f"Objetivo vigente (corregido por la evidencia): {prompt}\n"
+                                if corrected
+                                else ""
+                            )
+                            + "Seguí desde lo ya ejecutado (arriba, con sus "
+                            "resultados) sin repetir un paso igual. Tu texto final "
+                            "es para el usuario: informá hechos y resultado; no "
+                            "respondas a esta nota."
                         ),
                     },
                 ]
         finally:
             await client.close()
+            if composition is not None:
+                outcome = "composed"
+            await self._ledger(
+                "objective",
+                f"{self._turn_id}:closed",
+                {"status": outcome, "laps": laps, "facts": len(seen_facts)},
+            )
 
         if composition is None:
             logger.info(
@@ -3467,6 +3575,8 @@ async def chat_message_stream(
                 user_id=user_id,
                 workspace_id=chat_request.workspace_id,
                 memory_store=memory_store,
+                turn_id=chat_request.turn_id,
+                session_id=chat_request.session_id,
             )
             _cleanup.push_async_callback(agent.close)
             selected_agent_name = orchestrator_name
@@ -4424,6 +4534,54 @@ def _classified_error_text(exc: BaseException, op: str) -> str:
 
 
 # ── Chat Session CRUD Endpoints ──────────────────────────────────
+
+
+@app_v4.get("/chat/turns/{turn_id}/ledger")
+async def chat_turn_ledger(turn_id: str, request: Request):
+    """El pliegue del dueño del objetivo de un turno: objetivo, hechos y
+    veredictos en orden de ocurrencia, tal como quedaron en ``work_events``.
+    Sólo su propio usuario lo lee; sin objetivo registrado es 404."""
+    user_id, _tenant_id = _extract_auth(request)
+    owner = turn_id
+    events = await get_event_store().history(owner)
+    opened = next(
+        (e for e in events if e["kind"] == "objective" and e["identity"] == owner),
+        None,
+    )
+    if opened is None:
+        # Un plan: la UI conoce su ``plan_id``; el dueño del ledger es el id
+        # propio del MPlan (existe desde que se planifica). Se resuelve por el
+        # documento del plan, nunca adivinando.
+        plan_id = turn_id[5:] if turn_id.startswith("plan:") else turn_id
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan(plan_id)
+        m_plan_id = _get_m_plan_id_from_plan(plan) if plan is not None else None
+        if m_plan_id:
+            owner = f"plan:{m_plan_id}"
+            events = await get_event_store().history(owner)
+            opened = next(
+                (
+                    e
+                    for e in events
+                    if e["kind"] == "objective" and e["identity"] == owner
+                ),
+                None,
+            )
+    if opened is None or opened["payload"].get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Turn not found.")
+    return {
+        "turn_id": turn_id,
+        "owner": owner,
+        "events": [
+            {
+                "kind": e["kind"],
+                "identity": e["identity"],
+                "payload": e["payload"],
+                "created_at": e.get("created_at"),
+            }
+            for e in events
+        ],
+    }
 
 
 @app_v4.post("/chat/turns/{turn_id}/abort")
