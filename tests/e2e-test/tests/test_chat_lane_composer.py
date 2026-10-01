@@ -1,6 +1,6 @@
 """El carril chat con el composer, en Chromium real contra el árbol.
 
-o4-mini por Responses decide en la misma llamada: responde, o compone una
+gpt-5.4-mini por Responses decide en la misma llamada: responde, o compone una
 orquestación del framework con participantes construidos por la fábrica. Este
 test mide en la posición Chat:
 
@@ -50,30 +50,43 @@ _SPEAKERS: dict[str, str] = {}
 
 
 def _tree_facts() -> dict[str, str]:
-    with open(os.path.join(ROOT, "src", "frontend", "package.json"), encoding="utf-8") as f:
+    with open(
+        os.path.join(ROOT, "src", "frontend", "package.json"), encoding="utf-8"
+    ) as f:
         pkg = json.load(f)
-    with open(os.path.join(ROOT, "src", "backend", "pyproject.toml"), encoding="utf-8") as f:
+    with open(
+        os.path.join(ROOT, "src", "backend", "pyproject.toml"), encoding="utf-8"
+    ) as f:
         m = re.search(r'^requires-python\s*=\s*"([^"]+)"', f.read(), re.M)
     assert m, "pyproject sin requires-python"
-    return {"name": pkg["name"], "version": pkg["version"], "requires_python": m.group(1)}
+    return {
+        "name": pkg["name"],
+        "version": pkg["version"],
+        "requires_python": m.group(1),
+    }
 
 
 @pytest.fixture(scope="module")
 def identity(browser: Browser):
     if not plan_lane.OID:
-        pytest.skip("MACAE_E2E_OID no definido: hace falta el oid de prod de la identidad")
+        pytest.skip(
+            "MACAE_E2E_OID no definido: hace falta el oid de prod de la identidad"
+        )
     context = browser.new_context(viewport={"width": 1500, "height": 1000})
     context.set_default_timeout(0)
     page = context.new_page()
     wire = plan_lane._wire(page, plan_lane.OID)
     page.goto(plan_lane.APP + "/", wait_until="domcontentloaded")
     page.evaluate(
-        "(ws) => localStorage.setItem('macae_active_workspace_id', ws)", plan_lane.WS_NAME
+        "(ws) => localStorage.setItem('macae_active_workspace_id', ws)",
+        plan_lane.WS_NAME,
     )
     page.reload(wait_until="domcontentloaded")
     page.get_by_role("textbox").first.wait_for()
     uid = page.evaluate("() => (window.userInfo && window.userInfo.user_id) || null")
-    assert uid == plan_lane.OID, f"la UI no tomó la identidad: window.userInfo.user_id={uid}"
+    assert uid == plan_lane.OID, (
+        f"la UI no tomó la identidad: window.userInfo.user_id={uid}"
+    )
     if plan_lane._lane(page) != "Chat":
         page.get_by_role("switch").first.click()
     assert plan_lane._lane(page) == "Chat"
@@ -88,7 +101,8 @@ def _chat_turn(page: Page, text: str) -> list[dict]:
     # prod el listado sí lo incluye). El turno lleva el workspace que el humano
     # tiene seleccionado, así que se reafirma la selección antes de enviar.
     page.evaluate(
-        "(ws) => localStorage.setItem('macae_active_workspace_id', ws)", plan_lane.WS_NAME
+        "(ws) => localStorage.setItem('macae_active_workspace_id', ws)",
+        plan_lane.WS_NAME,
     )
     box = page.get_by_placeholder(plan_lane.PLACEHOLDER).first
     box.wait_for()
@@ -151,7 +165,9 @@ def test_a_workspace_request_is_composed_and_run_in_the_turn(identity):
     answer = _text(events)
     log.info("hablaron %s; respuesta: %s", speakers, answer[:400])
     assert participants, f"ningún participante compuesto habló: {speakers}"
-    assert "tool_activity" in kinds, "sin actividad de herramientas no hubo lectura real"
+    assert "tool_activity" in kinds, (
+        "sin actividad de herramientas no hubo lectura real"
+    )
     for key, value in facts.items():
         assert value in answer, f"la respuesta no trae {key}={value!r} del árbol"
     plan_lane._shot(page, "chat-02-composed")
