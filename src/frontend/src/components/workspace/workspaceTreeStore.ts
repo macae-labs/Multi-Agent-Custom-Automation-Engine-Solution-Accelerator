@@ -11,7 +11,8 @@
  * Aquí el estado (niveles cargados + expansión) persiste entre montajes, y la
  * coherencia con Azure Files se obtiene por invalidación EXPLÍCITA:
  *   - invalidate(ws, dir)   → un nivel (mutación conocida: create/delete/rename/save)
- *   - invalidateAll(ws)     → todo, conservando expansión (Refresh / turno / foco)
+ *   - invalidateAll(ws)     → todo, conservando expansión y lo ya cargado en
+ *                             pantalla hasta que llega la relectura (Refresh / turno / foco)
  *   - expandir una carpeta  → carga si no está en caché
  * Nunca por (des)montaje. Mismo patrón que WebSocketService / useVoiceLive:
  * singleton de módulo + suscripción, sin hooks dentro del store.
@@ -83,7 +84,14 @@ function parentOf(path: string): string {
 async function load(ws: string, dir: string): Promise<void> {
   const mine = bumpSeq(ws, dir);
   const cur = get(ws);
-  set(ws, { ...cur, levels: { ...cur.levels, [dir]: 'loading' } });
+  // Relectura de un nivel ya cargado: lo cargado sigue en pantalla hasta que
+  // llega lo nuevo. Ponerlo en 'loading' vaciaba el explorador entero al
+  // terminar cada respuesta (invalidateAll) y lo dejaba en spinner mientras
+  // el proxy respondía (medido: decenas de segundos por turno).
+  const prev = cur.levels[dir];
+  if (!Array.isArray(prev)) {
+    set(ws, { ...cur, levels: { ...cur.levels, [dir]: 'loading' } });
+  }
   let entries: DirEntry[] | null = null;
   try {
     const r: { entries?: DirEntry[] } = await apiClient.get(

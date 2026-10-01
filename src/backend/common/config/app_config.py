@@ -191,9 +191,24 @@ class AppConfig:
         # generated files can never be surfaced/downloaded. The direct call
         # reproduces the Toolbox (tool search) AND exposes container_id/file_id
         # for downloads. CHAT_ORCHESTRATOR_MODEL is the model deployment the
-        # Hosted Agent used (o4-mini); CHAT_TOOLBOX_NAME is its Toolbox name.
+        # Hosted Agent used (gpt-5.4-mini); CHAT_TOOLBOX_NAME is its Toolbox name.
         self.CHAT_ORCHESTRATOR_MODEL = self._get_optional(
-            "CHAT_ORCHESTRATOR_MODEL", "o4-mini"
+            "CHAT_ORCHESTRATOR_MODEL", "gpt-5.4-mini"
+        )
+        # Inferencia. En modelos de razonamiento el control que cambia el
+        # comportamiento es reasoning.effort (medido 2026-10-01 en gpt-5.4-mini,
+        # Responses 2025-03-01-preview: low → 0 tokens de razonamiento, medium →
+        # 25; temperature y top_p los acepta pero no se envían). Modelos
+        # convencionales: temperature.
+        self.CHAT_ORCHESTRATOR_REASONING_EFFORT = self._get_optional(
+            "CHAT_ORCHESTRATOR_REASONING_EFFORT", "medium"
+        )
+        self.CHAT_EVALUATOR_REASONING_EFFORT = self._get_optional(
+            "CHAT_EVALUATOR_REASONING_EFFORT", "low"
+        )
+        self.AGENT_TEMPERATURE = float(self._get_optional("AGENT_TEMPERATURE", "0.3"))
+        self.AGENT_REASONING_EFFORT = self._get_optional(
+            "AGENT_REASONING_EFFORT", "medium"
         )
         self.CHAT_TOOLBOX_NAME = self._get_optional("CHAT_TOOLBOX_NAME", "Toolbox")
         # A Foundry project can expose SEVERAL toolboxes, each with its own

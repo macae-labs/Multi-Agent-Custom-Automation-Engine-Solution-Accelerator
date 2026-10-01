@@ -105,6 +105,26 @@ class MagenticAgentFactory:
                 f"Agent '{agent_obj.name}' missing requiered 'deployment_name' field"
             )
 
+        # Determine which template to use
+        # Usage
+        use_reasoning = self.extract_use_reasoning(agent_obj)
+
+        # Regla, no reparación: el orquestador decide por tarea si un agente
+        # razona, y el deployment se deriva de esa decisión. Un agente
+        # ``use_reasoning`` corre en el modelo de razonamiento configurado y
+        # recibe ``reasoning.effort``; en otro modelo ese parámetro es un 400
+        # (medido 2026-10-01: gpt-4.1-mini → "unsupported_parameter:
+        # reasoning.effort"). Nada depende de un equipo registrado: la misma
+        # regla rige donde se compone (roster) y donde se construye (aquí).
+        if use_reasoning and deployment_name != config.REASONING_MODEL_NAME:
+            self.logger.info(
+                "Agent '%s' use_reasoning: deployment '%s' → '%s' (modelo de razonamiento)",
+                agent_obj.name,
+                deployment_name,
+                config.REASONING_MODEL_NAME,
+            )
+            deployment_name = config.REASONING_MODEL_NAME
+
         # Validate supported models
         supported_models = json.loads(config.SUPPORTED_MODELS)
 
@@ -112,10 +132,6 @@ class MagenticAgentFactory:
             raise UnsupportedModelError(
                 f"Model '{deployment_name}' not supported. Supported: {supported_models}"
             )
-
-        # Determine which template to use
-        # Usage
-        use_reasoning = self.extract_use_reasoning(agent_obj)
 
         # Validate reasoning constraints
         if use_reasoning:

@@ -29,20 +29,29 @@ from common.config.app_config import config
 
 logger = logging.getLogger(__name__)
 
-EVENT_KINDS = frozenset(
-    {
-        "clarification",
-        "plan_review",
-        # Incremento 4 (v4/control/incident_revalidation.py): la ocurrencia del
-        # vencimiento de un INC, la decisión humana por techo y la evidencia.
-        "incident_expiry",
-        # Carril reactivo: una alerta viva compatible con una firma conocida.
-        # NO se reutiliza incident_expiry: ése significa "llegó el momento
-        # contractual de re-probar algo conocido", y su identidad es la fecha.
-        "incident_detected",
-        "human_authority",
-        "reconciled",
-    }
+# Ledger de un dueño de objetivo (el turno del chat): el objetivo, cada hecho
+# observado y cada veredicto, por identidad. Son hechos, no transiciones: el
+# reconciliador los reconoce y los deja aplicados; el estado del dueño es el
+# pliegue de su historial (``history``). Un hecho repetido es un duplicado.
+LEDGER_KINDS = frozenset({"objective", "fact", "verdict"})
+
+EVENT_KINDS = (
+    frozenset(
+        {
+            "clarification",
+            "plan_review",
+            # Incremento 4 (v4/control/incident_revalidation.py): la ocurrencia del
+            # vencimiento de un INC, la decisión humana por techo y la evidencia.
+            "incident_expiry",
+            # Carril reactivo: una alerta viva compatible con una firma conocida.
+            # NO se reutiliza incident_expiry: ése significa "llegó el momento
+            # contractual de re-probar algo conocido", y su identidad es la fecha.
+            "incident_detected",
+            "human_authority",
+            "reconciled",
+        }
+    )
+    | LEDGER_KINDS
 )
 LEASE_PK = "lease"
 LEASE_ID = "reconciler"
@@ -73,6 +82,13 @@ class Lease:
     etag: str | None = None
     held: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _param_matches(doc: dict[str, Any], name: str, value: Any) -> bool:
+    """``@campo`` es igualdad; ``@campo_prefix`` es ``STARTSWITH(c.campo, …)``."""
+    if name.endswith("_prefix"):
+        return str(doc.get(name[: -len("_prefix")], "")).startswith(str(value))
+    return doc.get(name) == value
 
 
 class MemoryContainer:
@@ -150,9 +166,9 @@ class MemoryContainer:
                 ):
                     continue
                 if any(
-                    k != "@" + self.partition_path and doc.get(k[1:]) != v
+                    not _param_matches(doc, k[1:], v)
                     for k, v in params.items()
-                    if k.startswith("@")
+                    if k.startswith("@") and k != "@" + self.partition_path
                 ):
                     continue
                 yield dict(doc)
@@ -243,6 +259,20 @@ class EventStore:
         except exceptions.CosmosResourceNotFoundError:
             return None
         return dict(doc)
+
+    async def history(self, identity_prefix: str) -> list[dict[str, Any]]:
+        """El ledger de un dueño: los eventos cuya identidad empieza por el
+        prefijo, en orden de creación. Es la lectura del pliegue."""
+        container = await self._ensure_initialized()
+        docs = [
+            dict(doc)
+            async for doc in container.query_items(
+                query="SELECT * FROM c WHERE STARTSWITH(c.identity, @identity_prefix)",
+                parameters=[{"name": "@identity_prefix", "value": identity_prefix}],
+            )
+        ]
+        docs.sort(key=lambda d: (d.get("created_at", 0), d["id"]))
+        return docs
 
     async def pending(self) -> list[dict[str, Any]]:
         container = await self._ensure_initialized()
