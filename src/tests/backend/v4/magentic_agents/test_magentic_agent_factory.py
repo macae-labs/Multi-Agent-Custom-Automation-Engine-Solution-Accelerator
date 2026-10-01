@@ -10,6 +10,9 @@ import pytest
 # Create mock classes
 mock_config = Mock()
 mock_config.SUPPORTED_MODELS = '["gpt-4", "gpt-4-32k", "gpt-35-turbo"]'
+# El deployment de razonamiento de esta config falsa: los tests de reasoning
+# construyen agentes con "gpt-4", que es por tanto el modelo de razonamiento aquí.
+mock_config.REASONING_MODEL_NAME = "gpt-4"
 mock_config.AZURE_AI_PROJECT_ENDPOINT = "https://test-endpoint.com"
 
 mock_database_base = Mock()
@@ -172,6 +175,32 @@ class TestMagenticAgentFactory:
         
         assert result is mock_proxy_instance
         mock_proxy_agent.assert_called_once_with(user_id="user123")
+
+    @pytest.mark.asyncio
+    async def test_a_reasoning_agent_runs_on_the_reasoning_deployment(self):
+        """Medido 2026-10-01: ``reasoning.effort`` en gpt-4.1-mini es un 400
+        (unsupported_parameter). ``use_reasoning`` y el deployment son UNA
+        decisión que toma el orquestador por tarea: el agente se construye con
+        ``REASONING_MODEL_NAME`` sea cual sea el deployment que traiga la
+        configuración con la que llega."""
+        previous = (mock_config.SUPPORTED_MODELS, mock_config.REASONING_MODEL_NAME)
+        mock_config.SUPPORTED_MODELS = '["gpt-4", "gpt-4.1-mini", "gpt-5.4-mini"]'
+        mock_config.REASONING_MODEL_NAME = "gpt-5.4-mini"
+        self.mock_agent_obj.deployment_name = "gpt-4.1-mini"
+        self.mock_agent_obj.use_reasoning = True
+        instance = Mock()
+        instance.open = AsyncMock(return_value=instance)
+        mock_foundry_agent_template.return_value = instance
+        try:
+            await self.factory.create_agent_from_config(
+                "user123", self.mock_agent_obj, self.mock_team_config, self.mock_memory_store
+            )
+        finally:
+            mock_config.SUPPORTED_MODELS, mock_config.REASONING_MODEL_NAME = previous
+
+        kwargs = mock_foundry_agent_template.call_args.kwargs
+        assert kwargs["model_deployment_name"] == "gpt-5.4-mini"
+        assert kwargs["use_reasoning"] is True
 
     @pytest.mark.asyncio
     async def test_create_agent_from_config_unsupported_model(self):

@@ -85,6 +85,8 @@ def _client(memory_store=None, toolboxes=None):
     c._openai_base_url = "https://account.invalid/openai"
     c._api_version = "2025-03-01-preview"
     c._model = "o4-mini"
+    c._reasoning = {"effort": "medium"}
+    c._reasoning_eval = {"effort": "low"}
     # Capacidades propias del orquestador: el despliegue de imagen viaja como
     # cabecera y los toolboxes declarados se adjuntan junto a ``compose``.
     c._image_deployment = "gpt-image-2"
@@ -133,6 +135,10 @@ async def test_plan_position_forces_compose_on_o4_mini_responses():
     assert call["model"] == "o4-mini"
     assert call["tool_choice"] == {"type": "function", "name": "compose"}
     assert call["store"] is False
+    # Contrato efectivo de inferencia: modelo de razonamiento → reasoning.effort
+    # (el del evaluador/composer), nunca temperature.
+    assert call["reasoning"] == {"effort": "low"}
+    assert "temperature" not in call
     assert call["input"] == [{"role": "user", "content": "audita el repo"}]
     (tool,) = call["tools"]
     assert tool["name"] == "compose"
@@ -188,12 +194,11 @@ async def test_chat_position_answer_is_a_framework_update():
     call = fake.instances[-1].create_kwargs
     assert call["tool_choice"] == "auto"
     assert call["stream"] is True and call["store"] is False
-    # El turno ofrece las capacidades PROPIAS del orquestador y nunca
-    # ``compose``: componer publicaba agentes en Foundry y devolvía el mismo
-    # informe tres veces (medido); el Plan se entra desde su carril.
-    assert not any(t.get("name") == "compose" for t in call["tools"])
+    # El turno ofrece ``compose`` (la decisión de la semántica es del dueño)
+    # junto a las capacidades PROPIAS del orquestador.
+    assert call["tools"][0]["name"] == "compose"
     assert {"image_generation", "web_search", "code_interpreter"} <= {
-        t["type"] for t in call["tools"]
+        t["type"] for t in call["tools"][1:]
     }
 
 
@@ -221,18 +226,20 @@ async def test_chat_position_magentic_leaves_the_composition_for_the_handler():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow_plan", [True, False])
-async def test_the_turn_never_offers_compose_so_it_cannot_create_a_plan(allow_plan):
-    # Ni con allow_plan ni sin él: el turno no puede escalar por su cuenta.
-    # Medido: escaló una pregunta de lectura a un Plan con compuerta de
-    # aprobación, y otra vez a ``sequential`` con tres participantes.
+async def test_the_turn_offers_the_five_semantics_and_magentic_only_with_a_plan_allowed(
+    allow_plan,
+):
+    # El dueño elige la semántica en cada turno. ``magentic`` (el Plan formal)
+    # sólo cuando el turno puede crear un plan: un plan no engendra otro.
     fake = _fake_openai(_Stream([]))
     with patch("openai.AsyncOpenAI", fake):
         await _collect(_client(), allow_plan=allow_plan)
     tools = fake.instances[-1].create_kwargs["tools"]
-    assert not any(t.get("name") == "compose" for t in tools)
-    assert not any(
-        "pattern" in (t.get("parameters") or {}).get("properties", {}) for t in tools
-    )
+    (compose,) = [t for t in tools if t.get("name") == "compose"]
+    offered = compose["parameters"]["properties"]["pattern"]["enum"]
+    expected = [p for p in router._PATTERNS if allow_plan or p != "magentic"]
+    assert offered == expected
+    assert ("magentic" in offered) is allow_plan
 
 
 @pytest.mark.asyncio

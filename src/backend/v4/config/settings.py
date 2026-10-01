@@ -8,7 +8,6 @@ import json
 import logging
 from typing import Any
 
-from agent_framework import ChatOptions
 from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import WebSocket
 
@@ -50,15 +49,6 @@ class AzureConfig:
             endpoint=self.endpoint,
             deployment_name=model_name,
             credential=self.ad_token_provider,  # function returning token string
-        )
-
-    def create_execution_settings(self) -> ChatOptions:
-        """
-        Create ChatOptions analogous to previous OpenAIChatPromptExecutionSettings.
-        """
-        return ChatOptions(
-            max_tokens=4000,
-            temperature=0.3,
         )
 
 
