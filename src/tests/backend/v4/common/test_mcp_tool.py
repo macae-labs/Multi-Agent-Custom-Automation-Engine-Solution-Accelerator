@@ -80,9 +80,13 @@ async def test_the_session_is_reopened_when_the_server_process_changes():
 
         assert _text(await tool.call_tool("echo", text="después")) == f"{second.pid}:después"
     finally:
-        await tool.__aexit__(None, None, None)
-        if second is not None:
-            second.kill()
+        try:
+            await tool.__aexit__(None, None, None)
+        finally:
+            if first._proc.poll() is None:
+                first.kill()
+            if second is not None and second._proc.poll() is None:
+                second.kill()
 
 
 @pytest.mark.asyncio
