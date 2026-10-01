@@ -3110,9 +3110,16 @@ class _RouterChatClient:
                                 "new_facts": len(since_eval),
                             },
                         )
-                        outcome = "no_progress" if kind == "retry" else kind
+                        outcome = "incomplete" if kind == "retry" else kind
                         if kind == "retry":
-                            yield self._text_update(f"Objetivo no cumplido: {why}")
+                            yield self._text_update(
+                                f"Objetivo no cumplido: {why}"
+                                + (
+                                    f"\nObjetivo corregido: {corrected}"
+                                    if corrected
+                                    else ""
+                                )
+                            )
         finally:
             await client.close()
             if composition is not None and composition[0] == "magentic":

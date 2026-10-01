@@ -278,7 +278,7 @@ async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
     events = await _ledger_store.history("t1")
     assert len([e for e in events if e["kind"] == "fact"]) == 2
     closed = next(e for e in events if e["identity"] == "t1:closed")
-    assert closed["payload"]["status"] == "no_progress"
+    assert closed["payload"]["status"] == "incomplete"
 
 
 @pytest.mark.asyncio
