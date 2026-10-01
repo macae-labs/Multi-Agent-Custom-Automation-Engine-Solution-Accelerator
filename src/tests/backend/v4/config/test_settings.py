@@ -37,19 +37,6 @@ class TestAzureConfig(unittest.TestCase):
         self.assertIsNotNone(config.endpoint)
         self.assertIsNotNone(config.credential)
 
-    @patch("v4.config.settings.ChatOptions")
-    def test_create_execution_settings(self, mock_chat_options):
-        """Test creating execution settings."""
-
-        mock_settings = Mock()
-        mock_chat_options.return_value = mock_settings
-
-        config = AzureConfig()
-        settings = config.create_execution_settings()
-
-        self.assertEqual(settings, mock_settings)
-        mock_chat_options.assert_called_once_with(max_tokens=4000, temperature=0.3)
-
     @patch("v4.config.settings.config")
     def test_ad_token_provider(self, mock_config):
         """Test AD token provider."""

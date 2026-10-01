@@ -3,8 +3,12 @@
 Comprehensive test cases covering HumanApprovalMagenticManager with proper mocking.
 """
 
+import json
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
+
+from common.services.event_store import EventStore, MemoryContainer, set_event_store
+from v4.control.objective import Ledger
 
 # Mock external Azure dependencies
 
@@ -190,6 +194,157 @@ class TestHumanApprovalMagenticManager(unittest.IsolatedAsyncioTestCase):
             agent=self.mock_agent,
         )
         self.test_context = MockMagenticContext()
+        # El ledger del dueño del objetivo, en memoria y con el mismo contrato.
+        self.store = EventStore(MemoryContainer())
+        set_event_store(self.store)
+
+    def tearDown(self):
+        set_event_store(None)
+
+    # ── la ley del dueño del objetivo, compartida con el chat ────────────────
+
+    def _verdict(self, goal_met, reason="", corrected=""):
+        return MockChatMessage(
+            "Veredicto: "
+            + json.dumps(
+                {
+                    "goal_met": goal_met,
+                    "blocked": False,
+                    "reason": reason,
+                    "corrected_objective": corrected,
+                }
+            )
+        )
+
+    @staticmethod
+    def _said(author, text):
+        msg = MockChatMessage(text)
+        msg.author_name = author
+        return msg
+
+    async def test_the_verdict_decides_satisfaction_and_each_answer_is_a_fact(self):
+        """La misma ley que el chat: el ledger de progreso no decide
+        ``is_request_satisfied`` por prosa sino por el veredicto estructurado
+        sobre la evidencia; cada respuesta de participante es un hecho del
+        ledger durable del plan."""
+        self.manager._objective = Ledger("plan:p1")
+        self.manager._complete = AsyncMock(return_value=self._verdict(True, "todo respaldado"))
+        context = MockMagenticContext(round_count=2)
+        context.chat_history = [
+            self._said("TestAgent1", "árbol del repo: src, tests, docs"),
+            self._said("TestAgent2", "93 passed"),
+        ]
+
+        ledger = await self.manager.create_progress_ledger(context)
+
+        self.assertTrue(ledger.is_request_satisfied.answer)
+        self.assertEqual(ledger.is_request_satisfied.reason, "todo respaldado")
+        events = await self.store.history("plan:p1")
+        kinds = [e["kind"] for e in events]
+        self.assertEqual(kinds.count("fact"), 2)
+        self.assertEqual(kinds.count("verdict"), 1)
+        self.assertEqual(events[-1]["payload"]["kind"], "done")
+
+    async def test_without_a_new_fact_since_the_last_verdict_there_is_no_progress(self):
+        """Volver a obtener lo mismo no es avanzar: con la misma evidencia y un
+        segundo veredicto no cumplido, el ledger declara que no hay progreso y
+        el framework hace lo suyo (estancamiento → replanificación)."""
+        self.manager._objective = Ledger("plan:p2")
+        self.manager._complete = AsyncMock(return_value=self._verdict(False, "falta"))
+        context = MockMagenticContext(round_count=2)
+        context.chat_history = [self._said("TestAgent1", "árbol del repo")]
+
+        first = await self.manager.create_progress_ledger(context)
+        second = await self.manager.create_progress_ledger(context)
+
+        self.assertFalse(first.is_request_satisfied.answer)
+        self.assertTrue(first.is_progress_being_made.answer)
+        self.assertFalse(second.is_progress_being_made.answer)
+        events = await self.store.history("plan:p2")
+        self.assertEqual([e["kind"] for e in events].count("fact"), 1)
+        self.assertEqual([e["kind"] for e in events].count("verdict"), 2)
+
+    async def test_a_premise_contradicted_by_the_evidence_corrects_the_task(self):
+        """Validación deliberada del usuario trasladada al plan: si la evidencia
+        contradice una premisa, el objetivo vigente pasa a ser el corregido y
+        el siguiente veredicto no corta por "sin progreso"."""
+        self.manager._objective = Ledger("plan:p3")
+        self.manager._complete = AsyncMock(
+            return_value=self._verdict(False, "dice 9124", corrected="Validá el backend en 8000")
+        )
+        context = MockMagenticContext(task="Validá el backend en 9124", round_count=1)
+        context.chat_history = [self._said("TestAgent1", "escucha en 8000")]
+
+        await self.manager.create_progress_ledger(context)
+
+        self.assertEqual(context.task, "Validá el backend en 8000")
+        self.assertFalse(self.manager._evaluated_before)
+
+    async def test_the_objective_opens_at_planning_under_the_magentic_plan_id(self):
+        """El dueño del plan es el id propio del MPlan, que existe desde
+        ``plan()``; ``plan_id`` se estampa recién al aparcar y la UI lo resuelve
+        a este id por el documento del plan."""
+        self.manager._complete = AsyncMock(return_value=MockChatMessage("plan"))
+        await self.manager.plan(self.test_context)
+
+        owner = f"plan:{self.manager.magentic_plan.id}"
+        events = await self.store.history(owner)
+        self.assertEqual([e["kind"] for e in events], ["objective"])
+        self.assertEqual(events[0]["payload"]["lane"], "plan")
+        self.assertEqual(events[0]["payload"]["user_id"], self.user_id)
+
+    async def test_a_blocked_verdict_ends_the_run_with_the_limitation(self):
+        """Magentic sólo sabe "satisfecho → respuesta final" o "estancado →
+        replanificar", y replanificar vuelve a pedir aprobación (medido en la
+        UI). Un bloqueo termina la corrida con la limitación nombrada y el
+        objetivo cierra como ``blocked``."""
+        self.manager._objective = Ledger("plan:p6")
+        self.manager._complete = AsyncMock(
+            return_value=MockChatMessage(
+                json.dumps({"goal_met": False, "blocked": True, "reason": "sin uv en el sandbox", "corrected_objective": ""})
+            )
+        )
+        context = MockMagenticContext(round_count=2)
+        context.chat_history = [self._said("TestAgent1", "uv: command not found"), self._said("TestAgent2", "n/a")]
+
+        ledger = await self.manager.create_progress_ledger(context)
+        await self.manager._close_objective("done")
+
+        self.assertTrue(ledger.is_request_satisfied.answer)
+        self.assertIn("Bloqueado", ledger.is_request_satisfied.reason)
+        closed = next(e for e in await self.store.history("plan:p6") if e["identity"] == "plan:p6:closed")
+        self.assertEqual(closed["payload"]["status"], "blocked")
+
+    async def test_an_unavailable_judge_keeps_the_base_ledger(self):
+        """El juez no tumba la corrida: sin veredicto (fallo o sin contrato) se
+        conserva la decisión del ledger base."""
+        self.manager._objective = Ledger("plan:p4")
+        self.manager._complete = AsyncMock(return_value=MockChatMessage("no es un JSON"))
+        context = MockMagenticContext(round_count=2)
+        context.chat_history = [self._said("TestAgent1", "algo")]
+
+        ledger = await self.manager.create_progress_ledger(context)
+
+        self.assertFalse(ledger.is_request_satisfied.answer)
+        self.assertEqual(ledger.is_request_satisfied.reason, "In progress")
+
+    async def test_the_objective_state_survives_a_checkpoint(self):
+        """La aprobación humana aparca el plan y lo reanuda desde el checkpoint:
+        el dueño del objetivo (identidad, hechos vistos, vueltas) viaja con él."""
+        self.manager._objective = Ledger("plan:p5")
+        self.manager._complete = AsyncMock(return_value=self._verdict(False, "falta"))
+        context = MockMagenticContext(round_count=1)
+        context.chat_history = [self._said("TestAgent1", "hecho uno")]
+        await self.manager.create_progress_ledger(context)
+
+        state = self.manager.on_checkpoint_save()
+        restored = HumanApprovalMagenticManager(user_id=self.user_id, agent=self.mock_agent)
+        restored.on_checkpoint_restore(state)
+
+        self.assertEqual(restored._objective.owner_id, "plan:p5")
+        self.assertEqual(restored._laps, 1)
+        self.assertEqual(restored._seen_facts, self.manager._seen_facts)
+        self.assertTrue(restored._evaluated_before)
 
     def test_init(self):
         """Test HumanApprovalMagenticManager initialization."""

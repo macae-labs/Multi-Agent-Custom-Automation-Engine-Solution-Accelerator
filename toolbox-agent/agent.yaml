@@ -10,7 +10,7 @@ environment_variables:
   # FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_AGENT_TOOLBOX_* are injected
   # automatically by the platform at runtime — do NOT declare them here.
   - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-    value: "o4-mini"
+    value: "gpt-5.4-mini"
   - name: TOOLBOX_NAME
     value: "Toolbox"
 

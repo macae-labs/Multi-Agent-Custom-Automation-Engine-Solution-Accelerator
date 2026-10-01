@@ -268,6 +268,41 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
 
         self.assertIn("user_id is required", str(context.exception))
 
+    @patch("v4.orchestration.orchestration_manager.Agent")
+    @patch("v4.orchestration.orchestration_manager.AzureAIClient")
+    async def test_the_manager_thinks_with_the_orchestrator_inference_contract(
+        self, mock_client_class, mock_agent_class
+    ):
+        """Un solo cerebro: el manager del plan piensa con el modelo y el
+        reasoning del orquestador del chat; el modelo del equipo es el de los
+        participantes, no el del que planifica y juzga."""
+        agents = [
+            MockAgent(agent_name="TestAgent1", has_inner_agent=True),
+            Agent(client=Mock(), name="TestAgent2"),
+        ]
+        await OrchestrationManager.init_orchestration(
+            agents=agents,
+            team_config=self.test_team_config,
+            memory_store=MockDatabaseBase(),
+            user_id=self.test_user_id,
+        )
+        client_kwargs = mock_client_class.call_args.kwargs
+        self.assertIs(
+            client_kwargs["model_deployment_name"], mock_config.CHAT_ORCHESTRATOR_MODEL
+        )
+        self.assertNotEqual(
+            client_kwargs["model_deployment_name"], self.test_team_config.deployment_name
+        )
+        agent_kwargs = next(
+            c.kwargs
+            for c in mock_agent_class.call_args_list
+            if c.kwargs.get("name") == "MagenticManager"
+        )
+        self.assertEqual(
+            agent_kwargs["default_options"],
+            {"reasoning": {"effort": mock_config.CHAT_ORCHESTRATOR_REASONING_EFFORT}},
+        )
+
     @patch("v4.orchestration.orchestration_manager.AzureAIClient")
     async def test_init_orchestration_client_creation_failure(self, mock_client_class):
         """Test orchestration initialization when client creation fails."""
