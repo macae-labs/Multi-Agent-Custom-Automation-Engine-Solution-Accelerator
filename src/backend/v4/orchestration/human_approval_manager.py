@@ -347,6 +347,8 @@ Never present invented figures, statistics or research as findings.
         # prompt, not a runtime veto.
         uncalled = self._get_uncalled_agents(magentic_context)
         await self._apply_objective_law(magentic_context, ledger)
+        if self._outcome == "blocked":
+            return ledger
 
         # --- Premature satisfaction guard ---
         # If the LLM says the request is satisfied, verify that all planned
