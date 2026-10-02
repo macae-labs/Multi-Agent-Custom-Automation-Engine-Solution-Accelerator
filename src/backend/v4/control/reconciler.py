@@ -57,6 +57,7 @@ from v4.control.incident_revalidation import (
     KIND_DETECTED,
     KIND_EXPIRY,
     KIND_RECONCILED,
+    KIND_UNMATCHED,
     AlertSource,
     Executor,
     Provider,
@@ -122,7 +123,10 @@ async def apply_event(
             event, store=store or get_event_store(), execute=execute
         )
         return
-    if kind in (KIND_AUTHORITY, KIND_RECONCILED) or kind in LEDGER_KINDS:
+    if (
+        kind in (KIND_AUTHORITY, KIND_RECONCILED, KIND_UNMATCHED)
+        or kind in LEDGER_KINDS
+    ):
         # Hechos, no transiciones: los de incident_expiry se consumen por
         # identidad desde su transición; los del ledger de un turno (objetivo,
         # hecho, veredicto) se leen por pliegue (``EventStore.history``).

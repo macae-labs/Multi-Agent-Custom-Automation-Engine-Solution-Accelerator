@@ -3028,9 +3028,18 @@ class _RouterChatClient:
                         else:
                             continue
                         for content in contents:
-                            if content.type == "function_call":
+                            if content.type in (
+                                "function_call",
+                                "mcp_server_tool_call",
+                            ):
+                                # El nombre viaja en la llamada; el resultado
+                                # (function_result / mcp_server_tool_result de
+                                # un especialista publicado en Foundry) sólo
+                                # trae call_id.
                                 call_names[str(content.call_id)] = (
-                                    content.name or "unknown"
+                                    getattr(content, "name", None)
+                                    or getattr(content, "tool_name", None)
+                                    or "unknown"
                                 )
                                 continue
                             elif content.type == "function_result":
@@ -3040,7 +3049,9 @@ class _RouterChatClient:
                                 result = str(content.result)
                                 failed = content.exception is not None
                             elif content.type == "mcp_server_tool_result":
-                                tool = getattr(content, "tool_name", None) or "unknown"
+                                tool = getattr(
+                                    content, "tool_name", None
+                                ) or call_names.get(str(content.call_id), "unknown")
                                 result = str(
                                     getattr(content, "output", None)
                                     or getattr(content, "text", None)

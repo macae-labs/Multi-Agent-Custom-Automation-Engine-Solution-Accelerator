@@ -44,7 +44,11 @@ class FakeTool:
             # El envelope de error de ca-mcp: el MISMO que el de éxito, con
             # status "error" y el motivo en summary.
             return json.dumps(
-                {"status": "error", "action": "workspace_exec", "summary": "Workspace not found"}
+                {
+                    "status": "error",
+                    "action": "workspace_exec",
+                    "summary": "Workspace not found",
+                }
             )
         return json.dumps(
             {
@@ -177,7 +181,12 @@ async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
     # adelanta desde upstream y se publica al share, en un solo comando de exec.
     assert "git fetch --quiet upstream" in args["command"]
     assert "git merge --ff-only --quiet" in args["command"]
-    assert "git push --quiet origin" in args["command"]
+    # El receive-pack del share nace sin la configuración del cliente: la
+    # confianza va en el comando del pack (INC-2026-013).
+    assert (
+        "git push --quiet --receive-pack='git -c safe.directory=* receive-pack' origin"
+        in args["command"]
+    )
     assert args["path"] == ""
     assert [i["incident_id"] for i in incidents] == ["INC-2026-004"]
 

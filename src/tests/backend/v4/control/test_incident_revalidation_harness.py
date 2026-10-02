@@ -11,7 +11,7 @@ fecha comparado con un ``now`` fijo.
 import asyncio
 import json
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -26,7 +26,7 @@ from v4.control.reconciler import Reconciler
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 ENTRY = ROOT / "docs/incidents/INC-2026-007.store-singleton-first-caller-identity.json"
-NOW = datetime(2026, 12, 31, tzinfo=timezone.utc)
+NOW = datetime(2026, 12, 31, tzinfo=UTC)
 
 
 def incident(
@@ -334,16 +334,22 @@ def alerta(aid="alerta-1", rule="macae-api-5xx", **dims):
 
 def test_a_binding_matches_when_its_dimensions_are_a_subset_of_the_alert():
     inc = con_binding(dims={"ResultCode": "500"})
-    hit = ir.candidates(
-        "macae-api-5xx", {"Name": "GET /x", "ResultCode": "500"}, [inc]
-    )
+    hit = ir.candidates("macae-api-5xx", {"Name": "GET /x", "ResultCode": "500"}, [inc])
     assert [i["incident_id"] for i in hit] == [inc["incident_id"]]
 
 
 def test_a_different_rule_or_value_is_not_a_candidate():
     inc = con_binding()
-    assert ir.candidates("macae-excepciones", {"Name": "GET /x", "ResultCode": "500"}, [inc]) == []
-    assert ir.candidates("macae-api-5xx", {"Name": "GET /x", "ResultCode": "504"}, [inc]) == []
+    assert (
+        ir.candidates(
+            "macae-excepciones", {"Name": "GET /x", "ResultCode": "500"}, [inc]
+        )
+        == []
+    )
+    assert (
+        ir.candidates("macae-api-5xx", {"Name": "GET /x", "ResultCode": "504"}, [inc])
+        == []
+    )
     assert ir.candidates("macae-api-5xx", {}, [inc]) == []
 
 
@@ -365,6 +371,23 @@ async def test_a_matching_alert_produces_one_durable_fact_per_candidate(events):
     assert doc["payload"]["rule"] == "macae-api-5xx"
     assert doc["payload"]["dimensions"] == {"Name": "GET /x", "ResultCode": "500"}
     assert doc["payload"]["ambiguous_with"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_signal_without_signature_leaves_a_durable_unmatched_fact(events):
+    a = alerta(
+        "a-nueva", rule="macae-excepciones", ExceptionType="ServiceResponseTimeoutError"
+    )
+
+    assert await ir.match_alerts([a], [con_binding()], events) == 0
+    assert await ir.match_alerts([a], [con_binding()], events) == 0  # 409, no duplica
+
+    doc = await events.find(ir.KIND_UNMATCHED, "a-nueva")
+    assert doc["payload"] == {
+        "alert_id": "a-nueva",
+        "rule": "macae-excepciones",
+        "dimensions": {"ExceptionType": "ServiceResponseTimeoutError"},
+    }
 
 
 @pytest.mark.asyncio
@@ -395,7 +418,10 @@ async def test_ambiguity_is_recorded_not_resolved(events):
     b = con_binding(dims={"Name": "GET /x"})
     b["incident_id"] = "INC-2026-999"
 
-    assert await ir.match_alerts([alerta(Name="GET /x", ResultCode="500")], [a, b], events) == 2
+    assert (
+        await ir.match_alerts([alerta(Name="GET /x", ResultCode="500")], [a, b], events)
+        == 2
+    )
 
     doc = await events.find(
         ir.KIND_DETECTED, ir.detection_identity(a["incident_id"], "alerta-1")

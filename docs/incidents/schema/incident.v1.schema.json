@@ -132,7 +132,10 @@
                     "ProblemId",
                     "Target",
                     "DependencyType",
-                    "SeverityLevel"
+                    "SeverityLevel",
+                    "ContainerName",
+                    "ContainerAppName",
+                    "Line"
                   ]
                 },
                 "additionalProperties": {

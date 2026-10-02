@@ -114,6 +114,11 @@ def test_every_binding_names_a_rule_that_exists_in_the_project():
         "macae-excepciones",
         "macae-dependencias",
         "macae-traces-error",
+        # Consola de Container Apps (stderr: fatal:/Traceback/ERROR) en
+        # macaev4-logs, por tabla: lo que App Insights no ve. Cada fila es una
+        # señal con ContainerAppName, ContainerName y Line; las firmas eligen
+        # por Line. Consulta en INC-2026-013.
+        "macae-consola-stderr",
     }
     desconocidas = sorted(
         {b["rule"] for _, b in _bindings() if b["rule"] not in reglas}

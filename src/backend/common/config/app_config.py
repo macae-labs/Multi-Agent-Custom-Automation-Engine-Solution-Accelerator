@@ -169,6 +169,16 @@ class AppConfig:
         # Azure AI settings
         self.AZURE_AI_SUBSCRIPTION_ID = self._get_required("AZURE_AI_SUBSCRIPTION_ID")
         self.AZURE_AI_RESOURCE_GROUP = self._get_required("AZURE_AI_RESOURCE_GROUP")
+        # Señales vivas para el reconciliador (v4/control/alert_source.py): las
+        # alertas disparadas en este grupo de recursos. Sin ambos valores el loop
+        # sólo origina trabajo por vencimiento de INC.
+        self.ALERTS_SUBSCRIPTION_ID = self._get_optional(
+            "ALERTS_SUBSCRIPTION_ID", self._get_optional("AZURE_SUBSCRIPTION_ID")
+        )
+        self.ALERTS_RESOURCE_GROUP = self._get_optional(
+            "ALERTS_RESOURCE_GROUP", self._get_optional("AZURE_RESOURCE_GROUP")
+        )
+        self.ALERTS_TIME_RANGE = self._get_optional("ALERTS_TIME_RANGE", "1h")
         self.AZURE_AI_PROJECT_NAME = self._get_required("AZURE_AI_PROJECT_NAME")
         self.AZURE_AI_AGENT_ENDPOINT = self._get_required("AZURE_AI_AGENT_ENDPOINT")
         self.AZURE_AI_PROJECT_ENDPOINT = self._get_optional("AZURE_AI_PROJECT_ENDPOINT")

@@ -190,6 +190,9 @@ async def operational_state(
 # una firma conocida". Son causas distintas, así que son eventos distintos.
 
 KIND_DETECTED = "incident_detected"
+#: Señal real sin firma que la reconozca: la cola de candidatos a INC. Sin este
+#: hecho el sistema vio algo nuevo y no dejó rastro ("0 emparejan" era silencio).
+KIND_UNMATCHED = "incident_unmatched"
 
 
 def detection_identity(incident_id: str, alert_id: str) -> str:
@@ -239,6 +242,15 @@ async def match_alerts(
     for alert in alerts:
         matched = candidates(alert["rule"], alert.get("dimensions") or {}, known)
         if not matched:
+            await store.append(
+                KIND_UNMATCHED,
+                alert["id"],
+                {
+                    "alert_id": alert["id"],
+                    "rule": alert["rule"],
+                    "dimensions": alert.get("dimensions") or {},
+                },
+            )
             continue
         for incident in matched:
             probe = (incident.get("learn") or {}).get("executable_probe")
