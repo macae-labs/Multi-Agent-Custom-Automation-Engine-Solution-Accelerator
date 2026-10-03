@@ -1483,6 +1483,7 @@ const PlanPage: React.FC = () => {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
                       <Button
                         appearance="primary"
+                        disabled={submittingChatDisableInput}
                         onClick={() => {
                           const req = pendingApproval;
                           setPendingApproval(null);
