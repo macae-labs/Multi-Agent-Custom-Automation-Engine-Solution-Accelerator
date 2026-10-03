@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentResponseUpdate,
     Content,
     Message,
@@ -178,6 +179,52 @@ async def _materialize_hosted_file_to_workspace(
             file_id,
             exc,
         )
+
+
+def _participant_name(agent: Any) -> str:
+    """El nombre con el que el framework identifica al participante (el
+    ``author_name`` de sus mensajes)."""
+    inner = getattr(agent, "_agent", None)
+    return str(
+        getattr(agent, "agent_name", None)
+        or getattr(inner, "name", None)
+        or getattr(agent, "name", None)
+        or ""
+    )
+
+
+def _stage_context(predecessor: str, step: str):
+    """Filtro de contexto de una etapa ``sequential``: la salida del predecesor
+    y, como último mensaje, el paso propio de este participante.
+
+    El framework pasa la conversación completa; aquí se queda lo que el
+    predecesor dijo (por ``author_name``; si no firmó, la última respuesta del
+    asistente) y se agrega el paso compuesto por el dueño. Sin paso, equivale a
+    ``context_mode="last_agent"``.
+    """
+
+    def _role(m: Any) -> str:
+        role = getattr(m, "role", "")
+        return str(getattr(role, "value", role)).lower()
+
+    def _filter(full_conversation: list[Message]) -> list[Message]:
+        prior = [
+            m
+            for m in full_conversation
+            if predecessor and getattr(m, "author_name", None) == predecessor
+        ]
+        if not prior:
+            tail: list[Message] = []
+            for m in reversed(full_conversation):
+                if _role(m) != "assistant":
+                    break
+                tail.append(m)
+            prior = list(reversed(tail))
+        if step:
+            return [*prior, Message(role="user", text=step)]
+        return prior
+
+    return _filter
 
 
 class OrchestrationManager:
@@ -388,7 +435,13 @@ class OrchestrationManager:
 
     @classmethod
     def build_pattern_workflow(
-        cls, pattern: str, agents: list, *, durable: bool = False
+        cls,
+        pattern: str,
+        agents: list,
+        *,
+        durable: bool = False,
+        steps: dict[str, str] | None = None,
+        orchestrator: Any | None = None,
     ) -> tuple[Any, list[Any]]:
         """Build the framework workflow of a composed chat-turn orchestration.
 
@@ -431,8 +484,38 @@ class OrchestrationManager:
             raise ValueError("a composed orchestration needs at least one participant")
         storage = get_checkpoint_storage() if durable else None
         if pattern == "sequential":
+            # Pipeline, no eco: el builder envuelve cada agente en un
+            # AgentExecutor con context_mode="full" (recibe la pregunta del
+            # usuario + todo lo anterior y la vuelve a responder). Envueltos
+            # aquí con "last_agent", el agente N trabaja SÓLO sobre la respuesta
+            # del N-1 — la etapa la define la posición en la cadena, no la
+            # instruction. El builder respeta Executors ya construidos
+            # (_resolve_participants). El primero recibe el input por
+            # AgentExecutorRequest, así que su modo no interviene.
+            # Con "last_agent" solo, el agente N recibe la respuesta del N-1 y
+            # nada más: ni la tarea ni SU paso, así que reformula lo anterior
+            # (medido 2026-10-03: dos especialistas, el mismo análisis dos
+            # veces). La etapa es posición MÁS instrucción propia: "custom"
+            # entrega la salida del predecesor y, como último mensaje, el paso
+            # que el dueño compuso para ese participante (``steps``). Sin paso,
+            # equivale a "last_agent".
+            names = [_participant_name(ag) for ag in agents]
+            executors: list[Any] = []
+            for i, p in enumerate(participants):
+                if i == 0:
+                    executors.append(AgentExecutor(p, context_mode="last_agent"))
+                    continue
+                executors.append(
+                    AgentExecutor(
+                        p,
+                        context_mode="custom",
+                        context_filter=_stage_context(
+                            names[i - 1], (steps or {}).get(names[i], "")
+                        ),
+                    )
+                )
             return SequentialBuilder(
-                participants=participants,
+                participants=executors,
                 intermediate_outputs=True,
                 checkpoint_storage=storage,
             ).build(), []
@@ -443,14 +526,19 @@ class OrchestrationManager:
                 checkpoint_storage=storage,
             ).build(), []
         if pattern == "group_chat":
-            orchestrator = Agent(
-                client=AzureOpenAIResponsesClient(
-                    project_endpoint=config.AZURE_AI_PROJECT_ENDPOINT,
-                    deployment_name=config.CHAT_ORCHESTRATOR_MODEL,
-                    credential=config.get_shared_async_credential(),
-                ),
-                name="GroupChatOrchestrator",
-            )
+            # ``orchestrator`` inyectado: el que elige quién habla puede venir
+            # de afuera (una prueba determinista de la semántica, sin red); si
+            # no, el del contrato del orquestador. Sólo el creado acá se cierra.
+            created = orchestrator is None
+            if orchestrator is None:
+                orchestrator = Agent(
+                    client=AzureOpenAIResponsesClient(
+                        project_endpoint=config.AZURE_AI_PROJECT_ENDPOINT,
+                        deployment_name=config.CHAT_ORCHESTRATOR_MODEL,
+                        credential=config.get_shared_async_credential(),
+                    ),
+                    name="GroupChatOrchestrator",
+                )
             workflow = GroupChatBuilder(
                 participants=participants,
                 orchestrator_agent=orchestrator,
@@ -460,7 +548,7 @@ class OrchestrationManager:
             ).build()
             # The orchestrator's client owns an aiohttp session; return it for
             # the caller to close when the workflow ends.
-            return workflow, [orchestrator]
+            return workflow, ([orchestrator] if created else [])
         if pattern == "handoff":
             builder = HandoffBuilder(
                 participants=participants, checkpoint_storage=storage
@@ -482,6 +570,7 @@ class OrchestrationManager:
         session_id: str,
         plan_id: str | None = None,
         workspace_id: str | None = None,
+        steps: dict[str, str] | None = None,
     ):
         """Run a composed (non-magentic) pattern owning its full lifecycle.
 
@@ -506,7 +595,7 @@ class OrchestrationManager:
         references and no purge will ever collect.
         """
         workflow, closables = self.build_pattern_workflow(
-            pattern, agents, durable=bool(plan_id)
+            pattern, agents, durable=bool(plan_id), steps=steps
         )
         try:
             async for event in workflow.run(messages, stream=True):

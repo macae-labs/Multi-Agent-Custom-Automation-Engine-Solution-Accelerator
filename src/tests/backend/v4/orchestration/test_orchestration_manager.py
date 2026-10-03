@@ -291,7 +291,8 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
             client_kwargs["model_deployment_name"], mock_config.CHAT_ORCHESTRATOR_MODEL
         )
         self.assertNotEqual(
-            client_kwargs["model_deployment_name"], self.test_team_config.deployment_name
+            client_kwargs["model_deployment_name"],
+            self.test_team_config.deployment_name,
         )
         agent_kwargs = next(
             c.kwargs
@@ -1272,3 +1273,64 @@ class TestWorkflowOutputEventHandling(IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     main()
+
+
+# ── etapas de sequential: posición + paso propio ─────────────────────────────
+
+
+def test_a_stage_receives_its_predecessor_output_and_its_own_step():
+    from agent_framework import Message
+
+    from v4.orchestration.orchestration_manager import _stage_context
+
+    full = [
+        Message(role="user", text="Auditar ruff"),
+        Message(
+            role="assistant",
+            text="src/backend y src/mcp_server tienen pyproject",
+            author_name="SrcAgent",
+        ),
+    ]
+    out = _stage_context("SrcAgent", "correr ruff en cada uno")(full)
+    assert [m.text for m in out] == [
+        "src/backend y src/mcp_server tienen pyproject",
+        "correr ruff en cada uno",
+    ]
+    assert str(getattr(out[-1].role, "value", out[-1].role)) == "user"
+    # Sin paso equivale a last_agent; sin firma del predecesor, la última
+    # respuesta del asistente.
+    assert [m.text for m in _stage_context("SrcAgent", "")(full)] == [
+        "src/backend y src/mcp_server tienen pyproject"
+    ]
+    unsigned = [
+        Message(role="user", text="t"),
+        Message(role="assistant", text="r1"),
+        Message(role="assistant", text="r2"),
+    ]
+    assert [m.text for m in _stage_context("Otro", "paso")(unsigned)] == [
+        "r1",
+        "r2",
+        "paso",
+    ]
+
+
+def test_sequential_wraps_each_later_stage_with_its_own_context():
+    from unittest.mock import patch
+
+    from v4.orchestration.orchestration_manager import OrchestrationManager
+
+    a = MockAgent(agent_name="SrcAgent", has_inner_agent=True)
+    b = MockAgent(agent_name="RuffAgent", has_inner_agent=True)
+    with patch("v4.orchestration.orchestration_manager.SequentialBuilder") as sb:
+        sb.return_value.build.return_value = "wf"
+        OrchestrationManager.build_pattern_workflow(
+            "sequential", [a, b], steps={"RuffAgent": "correr ruff"}
+        )
+    executors = sb.call_args.kwargs["participants"]
+    assert [e._context_mode for e in executors] == ["last_agent", "custom"]
+    from agent_framework import Message
+
+    out = executors[1]._context_filter(
+        [Message(role="assistant", text="lista", author_name="SrcAgent")]
+    )
+    assert [m.text for m in out] == ["lista", "correr ruff"]
