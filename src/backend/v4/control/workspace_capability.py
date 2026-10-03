@@ -180,11 +180,19 @@ class WorkspaceCapability:
                 # (borrar y volver a montar el workspace), el sandbox queda
                 # DETRÁS y el push se rechaza como non-fast-forward (prod
                 # 2026-10-03: exit 1 "behind its remote"). Se alinea a origin
-                # antes de adelantar; sólo si está limpio: trabajo local
-                # nunca se pisa, se reporta con nombre.
+                # antes de adelantar; sólo si está limpio y sin commits que el
+                # share no tenga (`checkout -B` resetea la rama y un HEAD
+                # suelto queda huérfano): trabajo local nunca se pisa, se
+                # reporta con nombre.
                 "git fetch --quiet origin && "
                 "if ! git diff --quiet || ! git diff --cached --quiet; then "
                 "echo 'sandbox con cambios locales: no se adelanta'; exit 0; fi; "
+                'if git rev-parse --verify --quiet "refs/heads/$b" >/dev/null && '
+                '[ -n "$(git rev-list -n 1 "refs/heads/$b" --not "origin/$b")" ]; then '
+                'echo "sandbox con commits sin publicar en $b: no se adelanta"; exit 0; fi; '
+                "if ! git symbolic-ref -q HEAD >/dev/null && "
+                '[ -n "$(git rev-list -n 1 HEAD --not --branches --remotes)" ]; then '
+                "echo 'sandbox con commits sueltos sin publicar: no se adelanta'; exit 0; fi; "
                 'git checkout --quiet -B "$b" "origin/$b" && '
                 "git fetch --quiet upstream && "
                 'if ! git rev-parse --verify --quiet "refs/remotes/upstream/$b" >/dev/null; then '
