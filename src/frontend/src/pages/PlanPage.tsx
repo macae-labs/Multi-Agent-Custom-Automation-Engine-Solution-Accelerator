@@ -325,6 +325,10 @@ const PlanPage: React.FC = () => {
     setSubmittingChatDisableInput(true);
     setErrorLoading(false);
     setClarificationMessage(null);
+    // La autorización pendiente pertenece a UNA sesión: si no se limpia aquí,
+    // al cambiar de chat la tarjeta vieja sigue visible y sus botones envían
+    // el request_id anterior contra la sesión recién abierta.
+    setPendingApproval(null);
     setReloadLeftList(true);
     // Mirror the planId guard: only signal "waiting for plan" when there IS a plan to wait for.
     setWaitingForPlan(!!planId);
@@ -361,6 +365,15 @@ const PlanPage: React.FC = () => {
     controller: AbortController;
     turnId: string;
   } | null>(null);
+  // Cambiar de chat invalida la autorización pendiente aunque no se pase por
+  // resetPlanVariables: la tarjeta se retira y la sesión nueva rehidrata la
+  // suya desde su hecho durable. El stream en vuelo navega a /session/:id sin
+  // cambiar de chat, así que ahí no se toca.
+  useEffect(() => {
+    if (chatAbortRef.current) return;
+    setPendingApproval(null);
+  }, [planId, routeSessionId]);
+
   const abortInFlightChat = useCallback(() => {
     const inflight = chatAbortRef.current;
     if (inflight) {
