@@ -2958,6 +2958,11 @@ class _RouterChatClient:
                         ],
                     ),
                     tool_choice="auto",
+                    # La compuerta humana debe ir sola: con llamadas paralelas
+                    # una respuesta podía traer request_human_approval junto a
+                    # workspace_exec o compose, y el efecto corría antes de
+                    # que el humano decidiera.
+                    parallel_tool_calls=False,
                     stream=True,
                     store=False,
                     reasoning=self._reasoning,

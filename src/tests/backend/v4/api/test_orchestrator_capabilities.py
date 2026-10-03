@@ -329,6 +329,8 @@ async def test_the_owner_can_ask_the_human_and_the_turn_waits(_ledger_store):
         t.get("name") == "request_human_approval"
         for t in fake.instances[-1].create_kwargs["tools"]
     )
+    # La solicitud no puede compartir respuesta con una tool con efectos.
+    assert fake.instances[-1].create_kwargs["parallel_tool_calls"] is False
     assert len(fake.instances[-1].calls) == 1  # sin veredicto: el turno espera
     req = client.approval_request
     assert req and req["action_class"] == "write-shared" and req["request_id"]
