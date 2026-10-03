@@ -69,8 +69,11 @@ with sync_playwright() as p:
             log(f"intento {attempt + 1}: selector de workspace no clicable ({type(e).__name__})")
             try:
                 pg.get_by_placeholder("Describe your task", exact=False).wait_for(timeout=240000)
-            except Exception:
-                pass
+            except Exception as e:
+                log(
+                    f"intento {attempt + 1}: wait_for tras fallo de click también falló "
+                    f"(se ignora para continuar): {type(e).__name__}"
+                )
     time.sleep(3)
     log(f"workspace activo: {pg.evaluate(LS)}")
     box = pg.get_by_placeholder("Describe your task", exact=False)
