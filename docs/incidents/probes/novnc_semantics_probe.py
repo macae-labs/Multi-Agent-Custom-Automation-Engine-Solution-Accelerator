@@ -110,7 +110,8 @@ with sync_playwright() as p:
                     pass
     browser.close()
 
-json.dump(events, open(SHOT + ".sse.json", "w"))
+with open(SHOT + ".sse.json", "w") as f:
+    json.dump(events, f)
 kinds: dict = {}
 speakers: list = []
 for e in events:
