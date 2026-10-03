@@ -1,0 +1,174 @@
+{
+  "schema_version": "1",
+  "incident_id": "INC-2026-013",
+  "domain": "runtime",
+  "status": "open",
+  "invariant": {
+    "id": "INV-SHARE-REMOTE-TRUSTS-THE-PROCESS-IDENTITY",
+    "statement": "El share (remoto local `origin` del sandbox) acepta upload-pack y receive-pack desde el proceso de ca-mcp aunque el árbol pertenezca a otro uid. Un remoto por ruta local arranca su pack-process sin la configuración `-c`/GIT_CONFIG_* del cliente, así que la confianza (`safe.directory`) tiene que viajar en el propio comando del pack."
+  },
+  "signature": {
+    "family": "runtime_exception",
+    "id": "SIG-share-remote-pack-dies-dubious-ownership",
+    "structural_match": {
+      "where_observed": "prod, Container App ca-pslc25991vme66zmins (backend), revisiones 0000153 y 0000156, stderr",
+      "logger_line": "WARNING:v4.control.workspace_capability:Registro sin adelantar (exit 128): …/.git",
+      "git_lines": [
+        "fatal: Could not read from remote repository.",
+        "Please make sure you have the correct access rights",
+        "and the repository exists."
+      ],
+      "cadence": "una por barrido del reconciliador (300 s): 647 ocurrencias en 3 días al 2026-10-02",
+      "failing_step": "git push --quiet origin HEAD:refs/heads/$b dentro de WorkspaceCapability._fast_forward, ejecutado por workspace_exec en el sandbox de ca-mcp; origin es el share",
+      "cause": "receive-pack/upload-pack del share corren como uid 1001 sobre un árbol 0:0 y mueren por dubious ownership; el cliente lo reporta como 'Could not read from remote repository'",
+      "not_in_app_insights": true,
+      "table": "ContainerAppConsoleLogs (workspace macaev4-logs); la regla macae-consola-stderr agrupa por _ResourceId, ContainerAppName, ContainerName, Line=substring(Log,0,80): la firma selecciona por ContainerName y Line, no por contenedor solo"
+    },
+    "alert_match": [
+      {
+        "rule": "macae-consola-stderr",
+        "dimensions": {
+          "ContainerName": "backend",
+          "Line": "fatal: Could not read from remote repository."
+        }
+      }
+    ]
+  },
+  "env_fingerprint": {
+    "where": "prod",
+    "env_names_present": [
+      "APP_ENV",
+      "MCP_SERVER_ENDPOINT",
+      "APPLICATIONINSIGHTS_CONNECTION_STRING"
+    ],
+    "credential_mode": "managed_identity",
+    "dotenv_present": false,
+    "network_scope": "egress_allowed",
+    "revision": "ca-pslc25991vme66zmins--0000156"
+  },
+  "authority_ceiling": {
+    "fixed_before_diagnose": true,
+    "max_level": "patch_and_pr",
+    "max_action_class_without_human": "read-only",
+    "human_required_for": [
+      "write-shared",
+      "merge",
+      "traffic_promotion",
+      "external_side_effect"
+    ]
+  },
+  "actions": [
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-10-02T17:30:00Z",
+      "description": "Log Analytics macaev4-logs, ContainerAppConsoleLogs, 3 días: 'fatal: Could not read from remote repository.' 396 veces en la revisión 0000156 (última 2026-10-02T17:00:14Z) y 251 en la 0000153; siempre stderr del contenedor backend, acompañado de 'WARNING:v4.control.workspace_capability:Registro sin adelantar (exit 128)' con el mismo conteo (647)."
+    },
+    {
+      "stage": "detect",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-10-02T17:40:00Z",
+      "description": "Las 4 reglas existentes miran AppRequests/AppExceptions/AppDependencies/AppTraces; este fallo es stderr de un subproceso git y sólo vive en ContainerAppConsoleLogs. Ninguna firma del registro lo cubría. Medido con la fuente de alertas (v4/control/alert_source.py) contra Azure: 15 señales en 30 días, 0 emparejan."
+    },
+    {
+      "stage": "diagnose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-10-02T17:45:00Z",
+      "description": "El comando de _fast_forward corre en el sandbox de ca-mcp: fetch desde upstream (repositorio declarado), merge --ff-only y push a origin (el share, ruta local). receive-pack/upload-pack de un remoto por ruta local nacen sin -c/GIT_CONFIG_* del cliente; el share es 0:0 y el proceso uid 1001 → dubious ownership en el pack-process → el cliente imprime 'Could not read from remote repository'. Vías medidas antes (2026-09-30): --receive-pack/--upload-pack con `git -c safe.directory=* …`, GIT_CONFIG_GLOBAL, montaje uid=1001 (descartado por el operador)."
+    },
+    {
+      "stage": "propose",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": true,
+      "human_approved_at": null,
+      "description": "Regla por tabla macae-consola-stderr creada 2026-10-02 sobre macaev4-logs: ContainerAppConsoleLogs | where Stream == 'stderr' | where Log startswith 'fatal:' or Log has 'Traceback' or Log startswith 'ERROR' | summarize AggregatedValue=count() by bin(TimeGenerated,5m), _ResourceId, ContainerAppName, ContainerName, Line=substring(Log,0,80); umbral > 0, 5 m/5 m, ag-macae. Cada fila es una señal; esta firma toma las de ContainerName=backend y Line='fatal: Could not read from remote repository.'. RBAC medido 2026-10-02: la identidad id-pslc25991vme66zmins (backend y ca-mcp, principal 2b30ae01…) ya tiene Reader (*/read: cubre Microsoft.AlertsManagement/alerts/read y Microsoft.OperationalInsights/workspaces/query/read) y Monitoring Contributor (Microsoft.AlertsManagement/alerts/*) a nivel de suscripción, y los dos workspaces están en modo 'permisos de recurso o de workspace': no hace falta ningún rol nuevo para leer alertas ni consultar. La regla duplicada macae-consola-git-remoto se borró el 2026-10-02; quedan 5 reglas."
+    }
+  ],
+  "probe_budget": {
+    "max_probes": 3,
+    "used": 1,
+    "exhausted_outcome": null
+  },
+  "diagnose": {
+    "symptom": "El registro de incidentes no se adelanta nunca en prod: cada barrido deja 'Registro sin adelantar (exit 128)' y las tres líneas de git en stderr, 288 veces al día.",
+    "candidate_causes": [
+      "upstream (GitHub) exige credenciales que el contenedor no tiene",
+      "El share no es un repositorio git o perdió la rama declarada",
+      "El pack-process del share (ruta local) muere por dubious ownership porque la confianza del cliente no viaja al remoto"
+    ],
+    "discriminating_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "git ls-remote --exit-code origin HEAD",
+      "expected_signal_when_failing": "exit 128: fatal: Could not read from remote repository (upload-pack del share muere por dubious ownership)",
+      "expected_signal_when_healthy": "exit 0: una línea con el SHA de HEAD del share"
+    },
+    "confirmed_cause": {
+      "statement": "El pack-process del remoto local no recibe la confianza del cliente: `git -c safe.directory=…` protege al proceso cliente, no a receive-pack/upload-pack que git lanza en el share. Con el share 0:0 y el proceso uid 1001 ambos mueren.",
+      "confirmed_by_signal": true,
+      "evidence_ref": "Medición 2026-09-30 (memoria git-local-remote-strips-trust): sin wrapper exit 128; con --receive-pack/--upload-pack 'git -c safe.directory=* …' exit 0. Log Analytics 2026-10-02: 647 fallos en 3 días, todos stderr backend."
+    },
+    "false_leads": [
+      {
+        "hypothesis": "upstream (GitHub) exige credenciales",
+        "discarded_by": "El fetch desde upstream es el primer paso y el mensaje aparece una sola vez por barrido; el repositorio declarado es público y el mismo fetch funciona en el sandbox local.",
+        "side_effect_kept": null
+      },
+      {
+        "hypothesis": "El share no es repositorio o perdió la rama",
+        "discarded_by": "El pre-flight del propio comando sale con exit 0 y mensaje propio ('sin upstream' / 'upstream no tiene la rama') en esos casos; acá el exit es 128 con el mensaje de git.",
+        "side_effect_kept": null
+      }
+    ]
+  },
+  "patch": {
+    "identity": {
+      "branch": "stable/v4-baseline",
+      "base_sha": "a92144e8",
+      "commit_or_pr": "árbol de trabajo, commit de Winston",
+      "etag_or_dirty": "dirty"
+    },
+    "changed_paths": [
+      "src/backend/v4/control/workspace_capability.py"
+    ],
+    "new_functions_introduced": [],
+    "justification_if_new_functions": "Ninguna: el push de _fast_forward lleva --receive-pack con la confianza del share; la forma ya estaba medida."
+  },
+  "lanes_not_covered": [
+    "La publicación desde las tools del MCP (workspace_service: publish/fetch/ff contra el share) tiene el mismo pack-process sin confianza; no se toca acá.",
+    "Mínimo privilegio: la identidad del backend tiene Monitoring Contributor a nivel de suscripción (escritura sobre reglas, grupos de acciones y workspaces) cuando la fuente sólo lee; es más de lo que el circuito necesita. Decisión del operador."
+  ],
+  "residual_risk": [
+    "safe.directory=* en el pack-process confía cualquier árbol que el share apunte; el share es un volumen privado del entorno."
+  ],
+  "learn": {
+    "retrieval_keys": [
+      "Could not read from remote repository",
+      "Registro sin adelantar (exit 128)",
+      "dubious ownership receive-pack upload-pack",
+      "remoto por ruta local sin -c",
+      "ContainerAppConsoleLogs stderr backend"
+    ],
+    "executable_probe": {
+      "class": "read-only",
+      "cwd": ".",
+      "command_or_test": "git ls-remote --exit-code origin HEAD",
+      "expected_signal_when_failing": "exit 128: fatal: Could not read from remote repository",
+      "expected_signal_when_healthy": "exit 0: SHA de HEAD del share en stdout"
+    },
+    "last_verified": "2026-10-02T17:45:00Z",
+    "expires_if_not_reverified_by": "2026-11-02T17:45:00Z",
+    "operational": true
+  }
+}

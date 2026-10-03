@@ -179,7 +179,14 @@ class WorkspaceCapability:
                 'if ! git rev-parse --verify --quiet "refs/remotes/upstream/$b" >/dev/null; then '
                 'echo "upstream no tiene la rama $b: nada que adelantar"; exit 0; fi; '
                 'git merge --ff-only --quiet "upstream/$b" && '
-                'git push --quiet origin "HEAD:refs/heads/$b"',
+                # origin es el share por ruta local: git arranca su receive-pack
+                # SIN la configuración del cliente (local_repo_env), y sobre un
+                # árbol de otro uid muere por dubious ownership; el cliente lo
+                # reporta como "Could not read from remote repository" (prod:
+                # 647 veces en 3 días, INC-2026-013). La confianza viaja en el
+                # propio comando del pack.
+                "git push --quiet --receive-pack='git -c safe.directory=* receive-pack' "
+                'origin "HEAD:refs/heads/$b"',
                 "",
             )
         except Exception as ex:  # la capacidad no está disponible: se lee lo que hay

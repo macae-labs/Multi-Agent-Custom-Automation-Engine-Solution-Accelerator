@@ -212,12 +212,32 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
             ),
             executor_id="SrcAgent",
         )
+        # Un especialista publicado en Foundry: sus tools corren alojadas y
+        # llegan como mcp_server_tool_call/result; el nombre va en la llamada.
+        yield WorkflowEvent(
+            "output",
+            data=AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        "m1",
+                        "workspace_list_entries",
+                        server_name="MacaeMcpServer",
+                        arguments='{"path": "/"}',
+                    ),
+                    Content.from_mcp_server_tool_result(
+                        "m1", output='{"status": "success", "details": {"entries": []}}'
+                    ),
+                ],
+                role="assistant",
+            ),
+            executor_id="RuffAgent",
+        )
 
     monkeypatch.setattr(client, "_run_pattern", _run_pattern)
     with patch("openai.AsyncOpenAI", fake):
         updates = await _collect(client, prompt="un especialista que busque pyproject")
 
-    assert [type(u).__name__ for u in updates] == ["WorkflowEvent"] * 3
+    assert [type(u).__name__ for u in updates] == ["WorkflowEvent"] * 4
     calls = fake.instances[-1].calls
     assert len(calls) == 2
     verdict_input = calls[1]["input"][0]["content"]
@@ -228,6 +248,7 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
     events = await _ledger_store.history("t1")
     facts = [e["identity"] for e in events if e["kind"] == "fact"]
     assert any(i.startswith("t1:SrcAgent:workspace_search_files:") for i in facts)
+    assert any(i.startswith("t1:RuffAgent:workspace_list_entries:") for i in facts)
     assert any(":workspace_search_files:" not in i for i in facts)
     assert [e["identity"] for e in events if e["kind"] == "verdict"] == ["t1:1"]
     closed = next(e for e in events if e["identity"] == "t1:closed")

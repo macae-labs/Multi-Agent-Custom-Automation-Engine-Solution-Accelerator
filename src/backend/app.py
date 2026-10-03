@@ -37,7 +37,14 @@ async def lifespan(app: FastAPI):
     # share cuando alguien lo crea desde la UI, así que el provider se reintenta
     # en cada barrido hasta vincular.
     registry_provider = RegistryProvider()
-    set_reconciler(Reconciler(provider=registry_provider))
+    # Carril reactivo: las alertas disparadas en Azure Monitor entran como
+    # señales y se emparejan con las firmas de las INC. Sin suscripción/grupo
+    # configurados la fuente es None y el loop sólo origina trabajo por
+    # vencimiento (era el estado de prod: la fuente existía pero no se inyectaba).
+    from v4.control.alert_source import AzureMonitorAlertSource
+
+    alert_source = AzureMonitorAlertSource.from_config(config)
+    set_reconciler(Reconciler(provider=registry_provider, alerts=alert_source))
     reconciler = get_reconciler()
     reconciler.start()
     yield
@@ -47,6 +54,8 @@ async def lifespan(app: FastAPI):
     try:
         await reconciler.stop()
         await registry_provider.aclose()
+        if alert_source is not None:
+            await alert_source.aclose()
     except Exception as rec_e:
         logger.warning(f"Reconciler stop warning (non-fatal): {rec_e}")
     try:

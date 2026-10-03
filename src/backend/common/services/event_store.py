@@ -47,6 +47,9 @@ EVENT_KINDS = (
             # NO se reutiliza incident_expiry: ése significa "llegó el momento
             # contractual de re-probar algo conocido", y su identidad es la fecha.
             "incident_detected",
+            # Una señal viva que ninguna firma reconoce: candidato a INC, no
+            # trabajo. Sin este hecho la señal se perdía en silencio.
+            "incident_unmatched",
             "human_authority",
             "reconciled",
         }
