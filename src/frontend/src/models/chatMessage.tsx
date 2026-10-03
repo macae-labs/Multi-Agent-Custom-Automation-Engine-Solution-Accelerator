@@ -17,6 +17,19 @@ export interface ChatMessageRequest {
   allow_plan?: boolean;
   /** Identidad del turno (uuid acuñado por el cliente). Con ella el cliente puede abortarlo: POST /v4/chat/turns/{turn_id}/abort. */
   turn_id?: string;
+  /** Decisión humana a una solicitud del dueño (evento SSE approval_request). */
+  approval_request_id?: string;
+  approval_decision?: 'approved' | 'rejected';
+}
+
+/** SSE `approval_request`: el dueño pide autorizar UNA acción que excede su techo. */
+export interface ApprovalRequestEvent {
+  request_id: string;
+  turn_id?: string;
+  action: string;
+  action_class: string;
+  reason: string;
+  session_id?: string;
 }
 
 /** Response from POST /v4/chat/message */

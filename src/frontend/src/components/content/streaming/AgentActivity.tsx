@@ -92,15 +92,19 @@ const useStyles = makeStyles({
 });
 
 // Un solo criterio de etiqueta para vivo y persistido.
-const toolLabel = (tool: string, server?: string) =>
-  server && server !== 'workspace' ? `${tool} · ${server}` : tool;
+const toolLabel = (tool: string, server?: string, agent?: string | null) => {
+  const base = server && server !== 'workspace' ? `${tool} · ${server}` : tool;
+  return agent ? `${agent} › ${base}` : base;
+};
 
 const statusText = (last: ToolActivityEvent | undefined, fallback: string) => {
   if (!last) return fallback;
-  if (last.activity === 'thinking' && last.detail) return last.detail;
-  if (last.activity === 'calling') return toolLabel(last.tool, last.server);
+  if (last.activity === 'thinking' && last.detail)
+    return last.agent ? `${last.agent} › ${last.detail}` : last.detail;
+  if (last.activity === 'calling')
+    return toolLabel(last.tool, last.server, last.agent);
   if (last.activity === 'result')
-    return `${toolLabel(last.tool, last.server)} ${last.success === false ? '✕' : '✓'}`;
+    return `${toolLabel(last.tool, last.server, last.agent)} ${last.success === false ? '✕' : '✓'}`;
   return fallback;
 };
 
@@ -144,7 +148,7 @@ export const TurnDeedsLog: React.FC<{
           <span className={d.status === 'error' ? styles.err : styles.ok}>
             {d.status === 'error' ? '✕' : '✓'}
           </span>
-          <span>{toolLabel(d.tool, d.server)}</span>
+          <span>{toolLabel(d.tool, d.server, d.agent)}</span>
           {d.args?.text ? <span>{d.args.text}</span> : null}
         </div>
       ))}
@@ -168,6 +172,7 @@ export const deedsFromActivities = (
         server: e.server ?? 'workspace',
         tool: e.tool,
         status: e.success === false ? 'error' : 'success',
+        agent: e.agent ?? null,
         args: { text: args, chars: args.length, truncated: false },
         result: {
           text: e.result_preview ?? '',

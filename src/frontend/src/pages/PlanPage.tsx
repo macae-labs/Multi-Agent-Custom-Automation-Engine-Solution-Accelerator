@@ -6,7 +6,8 @@ import React, {
   useState,
 } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Spinner, Text } from '@fluentui/react-components';
+import { Button, Spinner, Text } from '@fluentui/react-components';
+import type { ApprovalRequestEvent } from '../models/chatMessage';
 import { PlanDataService } from '../services/PlanDataService';
 import { requestOAuthConsent } from '../utils/oauthConsent';
 import {
@@ -107,6 +108,10 @@ const PlanPage: React.FC = () => {
   const [submittingChatDisableInput, setSubmittingChatDisableInput] =
     useState<boolean>(true);
   const [errorLoading, setErrorLoading] = useState<boolean>(false);
+  // Solicitud de autorización humana del dueño del objetivo (SSE
+  // approval_request): la decisión vuelve con el siguiente mensaje.
+  const [pendingApproval, setPendingApproval] =
+    useState<ApprovalRequestEvent | null>(null);
   const [clarificationMessage, setClarificationMessage] =
     useState<ParsedUserClarification | null>(null);
   const [reloadLeftList, setReloadLeftList] = useState<boolean>(true);
@@ -320,6 +325,10 @@ const PlanPage: React.FC = () => {
     setSubmittingChatDisableInput(true);
     setErrorLoading(false);
     setClarificationMessage(null);
+    // La autorización pendiente pertenece a UNA sesión: si no se limpia aquí,
+    // al cambiar de chat la tarjeta vieja sigue visible y sus botones envían
+    // el request_id anterior contra la sesión recién abierta.
+    setPendingApproval(null);
     setReloadLeftList(true);
     // Mirror the planId guard: only signal "waiting for plan" when there IS a plan to wait for.
     setWaitingForPlan(!!planId);
@@ -356,6 +365,15 @@ const PlanPage: React.FC = () => {
     controller: AbortController;
     turnId: string;
   } | null>(null);
+  // Cambiar de chat invalida la autorización pendiente aunque no se pase por
+  // resetPlanVariables: la tarjeta se retira y la sesión nueva rehidrata la
+  // suya desde su hecho durable. El stream en vuelo navega a /session/:id sin
+  // cambiar de chat, así que ahí no se toca.
+  useEffect(() => {
+    if (chatAbortRef.current) return;
+    setPendingApproval(null);
+  }, [planId, routeSessionId]);
+
   const abortInFlightChat = useCallback(() => {
     const inflight = chatAbortRef.current;
     if (inflight) {
@@ -886,6 +904,9 @@ const PlanPage: React.FC = () => {
           }
         );
         setAgentMessages(chatHistory);
+        // The approval request is announced once over SSE; after a reload or
+        // a dropped stream the session restores it from its durable fact.
+        setPendingApproval(sessionData?.pending_approval ?? null);
         dispatch(setPlanData({ planId: '', data: null }));
         setWaitingForPlan(false);
         setSubmittingChatDisableInput(false);
@@ -1015,7 +1036,11 @@ const PlanPage: React.FC = () => {
   ]);
 
   const handleOnchatSubmit = useCallback(
-    async (chatInput: string, meta?: TranscriptMeta) => {
+    async (
+      chatInput: string,
+      meta?: TranscriptMeta,
+      approval?: { request_id: string; decision: 'approved' | 'rejected' }
+    ) => {
       if (!chatInput.trim()) return;
       setInput('');
 
@@ -1170,6 +1195,13 @@ const PlanPage: React.FC = () => {
             planId: activePlanId,
             signal: abort.signal,
             turnId,
+            approval,
+            // Compuerta humana del chat: el dueño pide autorizar UNA acción
+            // que excede su techo; se muestra y la decisión vuelve con el
+            // siguiente mensaje.
+            onApprovalRequest: (data) => {
+              setPendingApproval(data);
+            },
             // Carril 2 — narración de la tool en el momento.
             onToolActivity: (data) => {
               turnActivities.push(data);
@@ -1424,6 +1456,61 @@ const PlanPage: React.FC = () => {
                 >
                   <InspectorLink />
                 </ContentToolbar>
+
+                {pendingApproval && (
+                  <div
+                    role="group"
+                    aria-label="Autorización requerida"
+                    style={{
+                      margin: '8px 16px',
+                      padding: '12px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--colorPaletteMarigoldBorder2)',
+                      backgroundColor: 'var(--colorPaletteMarigoldBackground1)',
+                    }}
+                  >
+                    <Text weight="semibold">
+                      Autorización requerida ({pendingApproval.action_class})
+                    </Text>
+                    <div style={{ marginTop: '6px', fontSize: '13px' }}>
+                      <div>
+                        <strong>Acción:</strong> {pendingApproval.action}
+                      </div>
+                      <div style={{ marginTop: '4px' }}>
+                        <strong>Motivo:</strong> {pendingApproval.reason}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                      <Button
+                        appearance="primary"
+                        disabled={submittingChatDisableInput}
+                        onClick={() => {
+                          const req = pendingApproval;
+                          setPendingApproval(null);
+                          void handleOnchatSubmit(`Aprobado: ${req.action}`, undefined, {
+                            request_id: req.request_id,
+                            decision: 'approved',
+                          });
+                        }}
+                      >
+                        Aprobar
+                      </Button>
+                      <Button
+                        appearance="secondary"
+                        onClick={() => {
+                          const req = pendingApproval;
+                          setPendingApproval(null);
+                          void handleOnchatSubmit(`Rechazado: ${req.action}`, undefined, {
+                            request_id: req.request_id,
+                            decision: 'rejected',
+                          });
+                        }}
+                      >
+                        Rechazar
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 <PlanChat
                   key={chatKey}

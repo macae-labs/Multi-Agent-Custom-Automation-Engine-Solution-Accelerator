@@ -350,6 +350,11 @@ class ChatMessageRequest(BaseModel):
     # identidad (POST /chat/turns/{turn_id}/abort): el ingress no propaga el
     # cierre del cliente al contenedor, así que el transporte no sirve de señal.
     turn_id: str | None = None
+    # Autorización humana que este mensaje responde: la solicitud que el dueño
+    # emitió (request_human_approval → evento SSE approval_request) y la
+    # decisión. Sin ellas el mensaje es un turno más.
+    approval_request_id: str | None = None
+    approval_decision: str | None = None  # "approved" | "rejected"
     # Identidad de la clarificación que este mensaje responde. Sin ella el
     # mensaje es una tarea nueva: el backend nunca decide por sesión que un
     # texto es "la respuesta" a una pregunta que el usuario no vio (prod

@@ -179,6 +179,13 @@ async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
     assert name == "workspace_exec"
     # En el sandbox: origin = share, upstream = el repositorio declarado. Se
     # adelanta desde upstream y se publica al share, en un solo comando de exec.
+    # Primero a la punta del share (origin): un share recreado deja el sandbox
+    # detrás y el push se rechaza (prod 2026-10-03, exit 1 "behind its remote").
+    assert "git fetch --quiet origin && " in args["command"]
+    assert 'git checkout --quiet -B "$b" "origin/$b" && ' in args["command"]
+    assert args["command"].index("origin/$b") < args["command"].index(
+        "git fetch --quiet upstream"
+    )
     assert "git fetch --quiet upstream" in args["command"]
     assert "git merge --ff-only --quiet" in args["command"]
     # El receive-pack del share nace sin la configuración del cliente: la
@@ -189,6 +196,78 @@ async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
     )
     assert args["path"] == ""
     assert [i["incident_id"] for i in incidents] == ["INC-2026-004"]
+
+
+class ShellTool:
+    """Ejecuta el comando de verdad en un sandbox git real."""
+
+    def __init__(self, cwd):
+        self.cwd = cwd
+
+    async def call_tool(self, tool_name, **kwargs):
+        done = subprocess.run(
+            ["bash", "-c", kwargs["command"]], cwd=self.cwd, capture_output=True
+        )
+        return json.dumps(
+            {
+                "status": "success",
+                "action": tool_name,
+                "details": {
+                    "exit_code": done.returncode,
+                    "stdout": done.stdout.decode(),
+                    "stderr": done.stderr.decode(),
+                },
+            }
+        )
+
+    async def close(self):
+        pass
+
+
+def _run_git(cwd, *args):
+    return (
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detached", [False, True])
+async def test_the_fast_forward_never_discards_unpublished_sandbox_commits(
+    clone, tmp_path, detached
+):
+    """Árbol limpio no basta: un commit que el share no tiene se perdería con
+    ``checkout -B``. Se detecta la divergencia y no se resetea."""
+    (clone / ".macae_workspace_meta.json").write_text(json.dumps({"branch": "main"}))
+    upstream = tmp_path / "upstream"
+    _run_git(tmp_path, "init", "-q", "-b", "main", str(upstream))
+    _run_git(upstream, "commit", "-q", "--allow-empty", "-m", "base")
+    share = tmp_path / "share"
+    _run_git(tmp_path, "clone", "-q", str(upstream), str(share))
+    sandbox = tmp_path / "sandbox"
+    _run_git(tmp_path, "clone", "-q", str(share), str(sandbox))
+    _run_git(sandbox, "remote", "add", "upstream", str(upstream))
+    _run_git(sandbox, "commit", "-q", "--allow-empty", "-m", "local")
+    local = _run_git(sandbox, "rev-parse", "HEAD")
+    if detached:
+        _run_git(sandbox, "checkout", "-q", "--detach")
+        _run_git(sandbox, "branch", "-q", "-f", "main", "origin/main")
+    cap = WorkspaceCapability(
+        user_id="reg-user",
+        workspace_id=clone.name,
+        tool=ShellTool(sandbox),
+        owned=True,
+    )
+
+    await cap.registry()
+
+    assert _run_git(sandbox, "rev-parse", "HEAD") == local
 
 
 @pytest.mark.asyncio

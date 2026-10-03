@@ -140,12 +140,20 @@ def _bounded_field(text: Any, cap: int) -> dict:
     return {"text": value[:cap], "chars": len(value), "truncated": len(value) > cap}
 
 
-def _make_deed(server: str, tool: str, args: Any, status: str, result: Any) -> dict:
+def _make_deed(
+    server: str,
+    tool: str,
+    args: Any,
+    status: str,
+    result: Any,
+    agent: str | None = None,
+) -> dict:
     """Registro estructurado de UNA ejecución de herramienta (metadata.turn_log)."""
     return {
         "server": server,
         "tool": tool,
         "status": status,
+        "agent": agent,
         "args": _bounded_field(args, _DEED_ARGS_CAP),
         "result": _bounded_field(result, _DEED_RESULT_CAP),
     }
@@ -2039,6 +2047,15 @@ _PARTICIPANT_SCHEMA: dict = {
                 "type": "string",
                 "description": "Reusable role instructions for the specialist.",
             },
+            "instruction": {
+                "type": "string",
+                "description": (
+                    "This specialist's OWN step in THIS request: what it must do "
+                    "and what it hands to the next one, distinct from every other "
+                    "participant. It travels in the run's message, never in the "
+                    "reusable role."
+                ),
+            },
             "coding_tools": {
                 "type": "boolean",
                 "description": (
@@ -2073,7 +2090,7 @@ _PARTICIPANT_SCHEMA: dict = {
                 ),
             },
         },
-        "required": ["name", "description", "system_message"],
+        "required": ["name", "description", "system_message", "instruction"],
     },
 }
 
@@ -2136,6 +2153,89 @@ def _compose_tool(patterns: list[str]) -> dict:
     }
 
 
+#: Clases de acción que una INC puede reservar al humano (incident.v1).
+_HUMAN_ACTION_CLASSES = (
+    "write-shared",
+    "merge",
+    "traffic_promotion",
+    "destructive",
+    "external_side_effect",
+)
+
+
+#: La compuerta humana del chat. El dueño la llama cuando la acción que sigue
+#: excede el techo de autoridad sin humano (authority_ceiling de la INC o su
+#: propio juicio): el turno queda en ``waiting_for``, el frontend muestra la
+#: solicitud y la decisión vuelve en el siguiente mensaje
+#: (``approval_request_id`` + ``approval_decision``). Medido 2026-10-03: sin
+#: esta tool el dueño decidía bien "requiere humano" y no tenía a quién pedirlo;
+#: la compuerta sólo existía en el carril de Plan.
+def _approval_identity(request_id: str) -> str:
+    """Identidad durable de una solicitud de autorización humana del chat."""
+    return f"approval-request:{request_id}"
+
+
+def _approval_session_identity(session_id: str, request_id: str) -> str:
+    """Índice por sesión de la solicitud: al recargar, la sesión la recupera."""
+    return f"approval-session:{session_id}:{request_id}"
+
+
+_APPROVAL_TOOL: dict = {
+    "type": "function",
+    "name": "request_human_approval",
+    "description": (
+        "Ask the human to authorize ONE action that exceeds what you may do "
+        "alone (an incident's authority_ceiling or your own judgement). Call it "
+        "instead of doing the action; the turn ends and the decision comes back "
+        "in the next message. Do not call it for read-only work."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "description": "Exactly what will be done if approved (command, file, target).",
+            },
+            "action_class": {
+                "type": "string",
+                "enum": list(_HUMAN_ACTION_CLASSES),
+                "description": "The class of the action, as incident.v1 names it.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why it is needed and what evidence supports it.",
+            },
+        },
+        "required": ["action", "action_class", "reason"],
+    },
+}
+
+
+def _composed_task(task: str, participants: list[dict]) -> str:
+    """El mensaje de la corrida: el objetivo más el paso propio de cada
+    participante.
+
+    Los participantes se publican en Foundry por nombre con un rol reutilizable
+    (``system_message``); si la tarea entera viaja igual para todos, en
+    ``sequential`` cada uno la hace completa y repite la misma respuesta
+    (medido 2026-10-02: dos especialistas, misma búsqueda, misma conclusión).
+    El reparto va en el mensaje, no en la definición publicada: no republica
+    por tarea.
+    """
+    steps = [
+        f"- {str(p.get('name') or '').strip()}: {str(p.get('instruction') or '').strip()}"
+        for p in participants
+        if str(p.get("instruction") or "").strip()
+    ]
+    if not steps:
+        return task
+    return (
+        f"{task}\n\nReparto de este trabajo: cada especialista hace SOLO su paso "
+        "asignado y aporta su resultado según la coordinación del equipo.\n"
+        + "\n".join(steps)
+    )
+
+
 def _read_composition(
     arguments: str | None, patterns: list[str]
 ) -> tuple[str, str, list[dict]]:
@@ -2167,6 +2267,7 @@ def _read_composition(
 
 
 class _RouterChatClient:
+    approval_request: dict[str, Any] | None = None
     _turn_id: str = ""
     _session_id: str = ""
     _user_id: str = ""
@@ -2226,6 +2327,9 @@ class _RouterChatClient:
         # else (pattern, task, participants). The SSE handler reads it after the
         # stream to create the formal Plan when the pattern is ``magentic``.
         self.composition: tuple[str, str, list[dict]] | None = None
+        # Solicitud de autorización humana emitida en este turno (None si no
+        # hubo): el manejador SSE la publica como ``approval_request``.
+        self.approval_request: dict[str, Any] | None = None
         # Cliente del ca-mcp del entorno: las tools del workspace las ejecuta
         # ESTE proceso. Un attach hosted lo conectaría el servicio del modelo,
         # que no alcanza ni el ca-mcp local ni el disco donde vive el workspace.
@@ -2635,6 +2739,54 @@ class _RouterChatClient:
             self._objective_ledger = ledger
         return await ledger.record(kind, identity, payload)
 
+    async def _consume_approval(
+        self, request_id: str, decision: str
+    ) -> dict[str, Any] | None:
+        """Valida y consume la decisión humana contra la solicitud durable.
+
+        Devuelve la solicitud original si existe, pertenece a esta sesión y
+        usuario, sigue pendiente y esta decisión es la primera en consumirla
+        (``create`` atómico: una segunda entrega es duplicado). ``None`` en
+        cualquier otro caso, incluido el store no disponible: sin prueba de la
+        solicitud no hay autorización.
+        """
+        if not request_id or decision not in ("approved", "rejected"):
+            return None
+        if not self._session_id or not self._user_id:
+            return None
+        identity = _approval_identity(request_id)
+        try:
+            pending = await get_event_store().find("fact", identity)
+        except Exception as ex:
+            logger.warning(
+                "Solicitud de autorización no verificable (%s): %s",
+                type(ex).__name__,
+                ex,
+            )
+            return None
+        payload = (pending or {}).get("payload") or {}
+        if (
+            payload.get("status") != "waiting_for"
+            or payload.get("request_id") != request_id
+            or payload.get("session_id") != self._session_id
+            or payload.get("user_id") != self._user_id
+        ):
+            return None
+        consumed = await self._ledger(
+            "fact",
+            f"{identity}:decision",
+            {
+                "approval_request_id": request_id,
+                "decision": decision,
+                "turn_id": self._turn_id,
+                "session_id": self._session_id,
+                "user_id": self._user_id,
+            },
+        )
+        if consumed is not False:
+            return None
+        return payload
+
     async def _evaluate(
         self, client: Any, objective: str, answer: str, evidence: list[str]
     ) -> tuple[str, str, str] | None:
@@ -2692,6 +2844,7 @@ class _RouterChatClient:
         history: list | None = None,
         allow_plan: bool = True,
         file_ids: list[str] | None = None,
+        approval: dict[str, str] | None = None,
         **_ignored,
     ):
         """Chat position: the composer answers, or composes and runs.
@@ -2712,6 +2865,50 @@ class _RouterChatClient:
         # vueltas: se sale cuando se cumple, cuando no hay progreso (el
         # evaluador repite el mismo motivo) o cuando el usuario aborta.
         conversation: list = self._composer_input(prompt, history)
+        if approval and approval.get("request_id"):
+            # La decisión humana es un hecho del turno y entra a la
+            # conversación como nota del sistema, no como voz del usuario.
+            # Sólo cuenta si resuelve una solicitud durable de ESTA sesión y
+            # usuario, todavía pendiente; se consume una sola vez.
+            request_id = str(approval.get("request_id") or "").strip()
+            decision = str(approval.get("decision") or "").strip().lower()
+            original = await self._consume_approval(request_id, decision)
+            if original is None:
+                logger.warning(
+                    "Decisión humana rechazada para la solicitud %s: desconocida, "
+                    "de otra sesión o ya consumida",
+                    request_id[:64],
+                )
+                note = (
+                    f"La decisión humana para la solicitud {request_id} no es "
+                    "válida (desconocida, de otra sesión o ya usada). No ejecutes "
+                    "ninguna acción que requiera autorización humana; informá que "
+                    "hace falta una nueva solicitud."
+                )
+            else:
+                await self._ledger(
+                    "fact",
+                    f"{self._turn_id}:approval:{request_id}:{decision}",
+                    {
+                        "approval_request_id": request_id,
+                        "decision": decision,
+                        "requested_by_turn": original.get("turn_id") or "",
+                    },
+                )
+                note = (
+                    f"Autorización humana para la solicitud {request_id}: "
+                    f"{decision}. Acción solicitada: {original.get('action') or ''}. "
+                    + (
+                        "Ejecutá exactamente la acción autorizada y reportá su evidencia."
+                        if decision == "approved"
+                        else "No ejecutes la acción; informá el estado y qué queda pendiente."
+                    )
+                )
+            conversation = [
+                *conversation[:-1],
+                {"role": "developer", "content": note},
+                conversation[-1],
+            ]
         evaluated_before = False
         seen_facts: set[str] = set()
         laps = 0
@@ -2760,11 +2957,17 @@ class _RouterChatClient:
                             # pedido explícito de dos especialistas en secuencia
                             # se resolvió sin ninguno.
                             _compose_tool(patterns),
+                            _APPROVAL_TOOL,
                             *self._capabilities(bearer),
                             *workspace_tools,
                         ],
                     ),
                     tool_choice="auto",
+                    # La compuerta humana debe ir sola: con llamadas paralelas
+                    # una respuesta podía traer request_human_approval junto a
+                    # workspace_exec o compose, y el efecto corría antes de
+                    # que el humano decidiera.
+                    parallel_tool_calls=False,
                     stream=True,
                     store=False,
                     reasoning=self._reasoning,
@@ -2813,6 +3016,25 @@ class _RouterChatClient:
                             since_eval.append(str(itype))
                             async for _img in self._image_as_generated_file(item):
                                 yield _img
+                        elif (
+                            itype == "function_call"
+                            and getattr(item, "name", "") == "request_human_approval"
+                        ):
+                            try:
+                                _req = json.loads(
+                                    getattr(item, "arguments", None) or "{}"
+                                )
+                            except ValueError:
+                                _req = {}
+                            self.approval_request = {
+                                "request_id": uuid.uuid4().hex,
+                                "turn_id": self._turn_id,
+                                "action": str(_req.get("action") or "").strip(),
+                                "action_class": str(
+                                    _req.get("action_class") or ""
+                                ).strip(),
+                                "reason": str(_req.get("reason") or "").strip(),
+                            }
                         elif (
                             itype == "function_call"
                             and getattr(item, "name", "") == "compose"
@@ -2901,6 +3123,45 @@ class _RouterChatClient:
                 if pending and not marker_blocked:
                     answer += pending
                 said += answer
+                if self.approval_request is not None:
+                    # El dueño pidió autorización humana: el turno queda
+                    # esperando; la decisión vuelve en el siguiente mensaje.
+                    await self._ledger(
+                        "fact",
+                        f"{self._turn_id}:approval:{self.approval_request['request_id']}",
+                        {"status": "waiting_for", **self.approval_request},
+                    )
+                    # Índice durable por solicitud: la decisión llega en otro
+                    # turno y se valida contra esto (sesión, usuario, pendiente).
+                    await self._ledger(
+                        "fact",
+                        _approval_identity(self.approval_request["request_id"]),
+                        {
+                            "status": "waiting_for",
+                            "session_id": self._session_id,
+                            "user_id": self._user_id,
+                            **self.approval_request,
+                        },
+                    )
+                    if self._session_id:
+                        await self._ledger(
+                            "fact",
+                            _approval_session_identity(
+                                self._session_id, self.approval_request["request_id"]
+                            ),
+                            {
+                                "session_id": self._session_id,
+                                "user_id": self._user_id,
+                                **self.approval_request,
+                            },
+                        )
+                    outcome = "waiting_for"
+                    logger.info(
+                        "Autorización humana solicitada (%s): %s",
+                        self.approval_request["action_class"],
+                        self.approval_request["action"][:160],
+                    )
+                    break
                 if composition is not None:
                     break
                 turn_evidence.extend(evidence)
@@ -3189,7 +3450,7 @@ class _RouterChatClient:
             Message(role=str(h.get("role") or "user"), text=str(h.get("content")))
             for h in (history or [])
             if isinstance(h, dict) and h.get("content")
-        ] + [Message(role="user", text=task)]
+        ] + [Message(role="user", text=_composed_task(task, participants))]
         async for event in OrchestrationManager().run_pattern(
             pattern,
             agents,
@@ -3782,7 +4043,14 @@ async def chat_message_stream(
                 nonlocal _turn_ledger_dropped, _ledger_pending_args
                 if len(_turn_ledger) < _LEDGER_MAX_DEEDS:
                     _turn_ledger.append(
-                        _make_deed(server, tool, _ledger_pending_args, status, result)
+                        _make_deed(
+                            server,
+                            tool,
+                            _ledger_pending_args,
+                            status,
+                            result,
+                            current_speaker,
+                        )
                     )
                 else:
                     _turn_ledger_dropped += 1
@@ -3815,6 +4083,15 @@ async def chat_message_stream(
                 "history": _history,
                 # In-plan turns never create a NEW plan regardless of the flag.
                 "allow_plan": chat_request.allow_plan and not chat_request.plan_id,
+                # Decisión humana a una solicitud del dueño (approval_request).
+                "approval": (
+                    {
+                        "request_id": chat_request.approval_request_id,
+                        "decision": chat_request.approval_decision or "",
+                    }
+                    if chat_request.approval_request_id
+                    else None
+                ),
             }
 
             async for update in agent.invoke(
@@ -3884,7 +4161,8 @@ async def chat_message_stream(
                                 {
                                     "type": "token",
                                     "content": token,
-                                    "agent": current_speaker,
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                 }
                             )
 
@@ -3905,6 +4183,8 @@ async def chat_message_stream(
                                 {
                                     "type": "tool_activity",
                                     "activity": "calling",
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                     "tool": content.name or "unknown",
                                     "args": str(content.arguments or "")[:200],
                                 }
@@ -3936,6 +4216,8 @@ async def chat_message_stream(
                                 {
                                     "type": "tool_activity",
                                     "activity": "result",
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                     "tool": _tool_name or "unknown",
                                     "success": content.exception is None,
                                     "result_preview": _result_preview,
@@ -3960,6 +4242,8 @@ async def chat_message_stream(
                                 {
                                     "type": "tool_activity",
                                     "activity": "calling",
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                     "tool": _tool_lbl,
                                     "server": _server_lbl,
                                     "wrapper": tool_name,
@@ -3991,6 +4275,8 @@ async def chat_message_stream(
                                 {
                                     "type": "tool_activity",
                                     "activity": "result",
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                     "tool": tool_name,
                                     "server": server_name,
                                     "success": content.status != "error"
@@ -4036,6 +4322,8 @@ async def chat_message_stream(
                                 {
                                     "type": "tool_activity",
                                     "activity": "calling",
+                                    "agent": current_speaker
+                                    or getattr(agent, "agent_name", None),
                                     "tool": "code_interpreter",
                                     "args": args_text,
                                 }
@@ -4055,6 +4343,8 @@ async def chat_message_stream(
                             {
                                 "type": "tool_activity",
                                 "activity": "result",
+                                "agent": current_speaker
+                                or getattr(agent, "agent_name", None),
                                 "tool": "code_interpreter",
                                 "success": not bool(getattr(content, "stderr", None)),
                                 "message": str(result_text)[:500],
@@ -4214,12 +4504,26 @@ async def chat_message_stream(
                             {
                                 "type": "tool_activity",
                                 "activity": "thinking",
+                                "agent": current_speaker
+                                or getattr(agent, "agent_name", None),
                                 "tool": "reasoning",
                                 "detail": (getattr(content, "text", "") or "")[:400],
                             }
                         )
 
                     # usage, hosted_file, etc. — skip silently
+
+            _approval = getattr(agent, "approval_request", None)
+            if _approval:
+                # La compuerta humana del chat: el frontend muestra la
+                # solicitud y devuelve la decisión con el siguiente mensaje.
+                yield _sse_event(
+                    {
+                        "type": "approval_request",
+                        **_approval,
+                        "session_id": chat_request.session_id,
+                    }
+                )
 
             composition = getattr(agent, "composition", None)
             if composition and composition[0] == "magentic":
@@ -4731,6 +5035,49 @@ async def list_chat_sessions(request: Request):
     return {"sessions": sessions}
 
 
+async def _pending_chat_approval(session_id: str, user_id: str) -> dict | None:
+    """La última solicitud de autorización de la sesión si sigue sin decisión.
+
+    Vive en ``work_events`` (no en el SSE que la anunció): una recarga o un
+    corte de conexión no la pierden. Sin store no hay solicitud que mostrar.
+    """
+    store = get_event_store()
+    try:
+        requests = await store.history(f"approval-session:{session_id}:")
+        latest = next(
+            (
+                payload
+                for event in reversed(requests)
+                if (payload := event.get("payload") or {}).get("request_id")
+                and payload.get("session_id") == session_id
+                and payload.get("user_id") == user_id
+            ),
+            None,
+        )
+        if latest is None:
+            return None
+        decided = await store.find(
+            "fact", f"{_approval_identity(latest['request_id'])}:decision"
+        )
+    except Exception as ex:
+        logger.warning(
+            "Solicitud de autorización pendiente no legible (%s): %s",
+            type(ex).__name__,
+            ex,
+        )
+        return None
+    if decided is not None:
+        return None
+    return {
+        "request_id": latest["request_id"],
+        "turn_id": latest.get("turn_id"),
+        "action": latest.get("action") or "",
+        "action_class": latest.get("action_class") or "",
+        "reason": latest.get("reason") or "",
+        "session_id": session_id,
+    }
+
+
 @app_v4.get("/chat/sessions/{session_id}")
 async def get_chat_session(session_id: str, request: Request):
     """Get a chat session with all messages."""
@@ -4762,6 +5109,9 @@ async def get_chat_session(session_id: str, request: Request):
             if parked is not None and waiting is not None
             else None
         )
+    # La compuerta humana del chat (request_human_approval): el SSE la anuncia
+    # una vez; la vista de sesión la recupera de su hecho durable.
+    session["pending_approval"] = await _pending_chat_approval(session_id, user_id)
     return session
 
 

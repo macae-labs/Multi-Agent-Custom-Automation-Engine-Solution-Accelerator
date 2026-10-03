@@ -16,6 +16,7 @@ import {
   ChatMessageResponse,
 } from '../models';
 import type { ToolActivityEvent } from '../store/slices/streamingSlice';
+import type { ApprovalRequestEvent } from '../models/chatMessage';
 
 // Constants for endpoints
 const API_ENDPOINTS = {
@@ -351,6 +352,7 @@ export class APIService {
         download_url: string;
       }) => void;
       onOAuthConsentRequest?: (consentLink: string) => void;
+      onApprovalRequest?: (data: ApprovalRequestEvent) => void;
     },
     signal?: AbortSignal
   ): Promise<void> {
@@ -424,6 +426,9 @@ export class APIService {
               case 'oauth_consent_request':
                 callbacks.onOAuthConsentRequest?.(data.consent_link);
                 break;
+              case 'approval_request':
+                callbacks.onApprovalRequest?.(data);
+                break;
             }
           } catch {
             console.warn('[chat_stream] Failed to parse SSE event:', dataLine);
@@ -483,6 +488,8 @@ export class APIService {
       request_id: string;
       question: string;
     } | null;
+    /** The chat owner's undecided approval request (request_human_approval), from work_events. */
+    pending_approval?: ApprovalRequestEvent | null;
   }> {
     return apiClient.get(`${API_ENDPOINTS.CHAT_SESSIONS}/${sessionId}`);
   }

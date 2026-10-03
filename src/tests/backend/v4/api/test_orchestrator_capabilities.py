@@ -147,12 +147,15 @@ async def test_the_orchestrator_offers_compose_and_its_own_capabilities():
     assert tools[0]["parameters"]["properties"]["pattern"]["enum"] == list(
         router._PATTERNS
     )
-    assert [t["type"] for t in tools[1:]] == [
+    # La compuerta humana va en la misma oferta: pedir autorización es una
+    # decisión del dueño, como componer.
+    assert tools[1]["name"] == "request_human_approval"
+    assert [t["type"] for t in tools[2:]] == [
         "image_generation",
         "web_search",
         "code_interpreter",
     ]
-    assert tools[3]["container"] == {"type": "auto"}
+    assert tools[4]["container"] == {"type": "auto"}
 
 
 @pytest.mark.asyncio
@@ -300,6 +303,188 @@ async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
     assert len([e for e in events if e["kind"] == "fact"]) == 2
     closed = next(e for e in events if e["identity"] == "t1:closed")
     assert closed["payload"]["status"] == "incomplete"
+
+
+@pytest.mark.asyncio
+async def test_the_owner_can_ask_the_human_and_the_turn_waits(_ledger_store):
+    # La compuerta humana del chat: request_human_approval termina el turno en
+    # waiting_for con la solicitud como hecho; el manejador SSE la publica.
+    call = SimpleNamespace(
+        type="function_call",
+        name="request_human_approval",
+        arguments=json.dumps(
+            {
+                "action": "git push --receive-pack=... origin HEAD:refs/heads/main",
+                "action_class": "write-shared",
+                "reason": "la sonda de INC-2026-013 reproduce",
+            }
+        ),
+    )
+    fake = _fake_openai(_Stream([_text("Necesito autorización."), _done(call)]))
+    client = _client()
+    with patch("openai.AsyncOpenAI", fake):
+        updates = await _collect(client, prompt="trabajá INC-2026-013")
+
+    assert any(
+        t.get("name") == "request_human_approval"
+        for t in fake.instances[-1].create_kwargs["tools"]
+    )
+    # La solicitud no puede compartir respuesta con una tool con efectos.
+    assert fake.instances[-1].create_kwargs["parallel_tool_calls"] is False
+    assert len(fake.instances[-1].calls) == 1  # sin veredicto: el turno espera
+    req = client.approval_request
+    assert req and req["action_class"] == "write-shared" and req["request_id"]
+    assert (
+        "".join(c.text for u in updates for c in u.contents) == "Necesito autorización."
+    )
+    events = await _ledger_store.history("t1")
+    waiting = next(
+        e for e in events if e["identity"] == f"t1:approval:{req['request_id']}"
+    )
+    assert waiting["payload"]["status"] == "waiting_for"
+    closed = next(e for e in events if e["identity"] == "t1:closed")
+    assert closed["payload"]["status"] == "waiting_for"
+    indexed = await _ledger_store.find("fact", f"approval-request:{req['request_id']}")
+    assert indexed["payload"]["session_id"] == "s1"
+    assert indexed["payload"]["user_id"] == "u1"
+    assert indexed["payload"]["status"] == "waiting_for"
+    # La sesión la recupera de su hecho durable (recarga / corte del SSE).
+    restored = await router._pending_chat_approval("s1", "u1")
+    assert restored == {
+        "request_id": req["request_id"],
+        "turn_id": "t1",
+        "action": req["action"],
+        "action_class": "write-shared",
+        "reason": req["reason"],
+        "session_id": "s1",
+    }
+    assert await router._pending_chat_approval("s1", "other") is None
+    assert await router._pending_chat_approval("s2", "u1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_decided_request_is_no_longer_pending_for_the_session(
+    _ledger_store,
+):
+    await _ledger_store.append(
+        "fact",
+        "approval-session:s1:r1",
+        {"request_id": "r1", "session_id": "s1", "user_id": "u1", "action": "a"},
+    )
+    assert (await router._pending_chat_approval("s1", "u1"))["request_id"] == "r1"
+    await _ledger_store.append(
+        "fact", "approval-request:r1:decision", {"decision": "approved"}
+    )
+    assert await router._pending_chat_approval("s1", "u1") is None
+
+
+async def _pending_approval(store, request_id="r1", session_id="s1", user_id="u1"):
+    await store.append(
+        "fact",
+        f"approval-request:{request_id}",
+        {
+            "status": "waiting_for",
+            "request_id": request_id,
+            "turn_id": "t0",
+            "session_id": session_id,
+            "user_id": user_id,
+            "action": "git push origin HEAD:main",
+            "action_class": "write-shared",
+            "reason": "r",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_human_decision_is_a_fact_and_a_system_note_not_a_user_voice(
+    _ledger_store,
+):
+    await _pending_approval(_ledger_store)
+    fake = _fake_openai(
+        _Stream([_text("Ejecuto la acción autorizada.")]), _verdict(True)
+    )
+    client = _client()
+    with patch("openai.AsyncOpenAI", fake):
+        await _collect_with(
+            client,
+            prompt="Aprobado: push",
+            approval={"request_id": "r1", "decision": "approved"},
+        )
+    first_input = fake.instances[-1].calls[0]["input"]
+    note = [
+        i for i in first_input if isinstance(i, dict) and i.get("role") == "developer"
+    ]
+    assert note and "r1: approved" in note[0]["content"]
+    assert first_input[-1]["role"] == "user"
+    events = await _ledger_store.history("t1")
+    assert any(
+        e["identity"] == "t1:approval:r1:approved"
+        for e in events
+        if e["kind"] == "fact"
+    )
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        None,  # solicitud desconocida
+        {"session_id": "other"},  # de otra sesión
+        {"user_id": "other"},  # de otro usuario
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_decision_without_its_own_pending_request_does_not_authorize(
+    _ledger_store, seed
+):
+    if seed is not None:
+        await _pending_approval(_ledger_store, **seed)
+    fake = _fake_openai(_Stream([_text("No ejecuto.")]), _verdict(True))
+    client = _client()
+    with patch("openai.AsyncOpenAI", fake):
+        await _collect_with(
+            client,
+            prompt="Aprobado: push",
+            approval={"request_id": "r1", "decision": "approved"},
+        )
+    note = [
+        i
+        for i in fake.instances[-1].calls[0]["input"]
+        if isinstance(i, dict) and i.get("role") == "developer"
+    ]
+    assert note and "no es válida" in note[0]["content"]
+    assert "r1: approved" not in note[0]["content"]
+    events = await _ledger_store.history("t1")
+    assert not any(e["identity"].startswith("t1:approval:r1") for e in events)
+    assert await _ledger_store.find("fact", "approval-request:r1:decision") is None
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_decision_does_not_authorize_twice(_ledger_store):
+    await _pending_approval(_ledger_store)
+    notes = []
+    for turn in ("t1", "t2"):
+        fake = _fake_openai(_Stream([_text("ok")]), _verdict(True))
+        client = _client()
+        client._turn_id = turn
+        with patch("openai.AsyncOpenAI", fake):
+            await _collect_with(
+                client,
+                prompt="Aprobado: push",
+                approval={"request_id": "r1", "decision": "approved"},
+            )
+        notes.append(
+            next(
+                i["content"]
+                for i in fake.instances[-1].calls[0]["input"]
+                if isinstance(i, dict) and i.get("role") == "developer"
+            )
+        )
+    assert "r1: approved" in notes[0]
+    assert "no es válida" in notes[1]
+
+
+async def _collect_with(client, prompt, **kw):
+    return [u async for u in client.invoke(prompt, history=[], **kw)]
 
 
 @pytest.mark.asyncio
