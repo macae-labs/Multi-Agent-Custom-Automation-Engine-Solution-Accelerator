@@ -2225,8 +2225,8 @@ def _composed_task(task: str, participants: list[dict]) -> str:
     if not steps:
         return task
     return (
-        f"{task}\n\nReparto de este trabajo: cada especialista hace SOLO su paso, "
-        "sobre lo que recibe del anterior, y entrega su resultado al siguiente.\n"
+        f"{task}\n\nReparto de este trabajo: cada especialista hace SOLO su paso "
+        "asignado y aporta su resultado según la coordinación del equipo.\n"
         + "\n".join(steps)
     )
 
