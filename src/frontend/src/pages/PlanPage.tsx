@@ -891,6 +891,9 @@ const PlanPage: React.FC = () => {
           }
         );
         setAgentMessages(chatHistory);
+        // The approval request is announced once over SSE; after a reload or
+        // a dropped stream the session restores it from its durable fact.
+        setPendingApproval(sessionData?.pending_approval ?? null);
         dispatch(setPlanData({ planId: '', data: null }));
         setWaitingForPlan(false);
         setSubmittingChatDisableInput(false);

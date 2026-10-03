@@ -2175,6 +2175,11 @@ def _approval_identity(request_id: str) -> str:
     return f"approval-request:{request_id}"
 
 
+def _approval_session_identity(session_id: str, request_id: str) -> str:
+    """Índice por sesión de la solicitud: al recargar, la sesión la recupera."""
+    return f"approval-session:{session_id}:{request_id}"
+
+
 _APPROVAL_TOOL: dict = {
     "type": "function",
     "name": "request_human_approval",
@@ -3138,6 +3143,18 @@ class _RouterChatClient:
                             **self.approval_request,
                         },
                     )
+                    if self._session_id:
+                        await self._ledger(
+                            "fact",
+                            _approval_session_identity(
+                                self._session_id, self.approval_request["request_id"]
+                            ),
+                            {
+                                "session_id": self._session_id,
+                                "user_id": self._user_id,
+                                **self.approval_request,
+                            },
+                        )
                     outcome = "waiting_for"
                     logger.info(
                         "Autorización humana solicitada (%s): %s",
@@ -5018,6 +5035,49 @@ async def list_chat_sessions(request: Request):
     return {"sessions": sessions}
 
 
+async def _pending_chat_approval(session_id: str, user_id: str) -> dict | None:
+    """La última solicitud de autorización de la sesión si sigue sin decisión.
+
+    Vive en ``work_events`` (no en el SSE que la anunció): una recarga o un
+    corte de conexión no la pierden. Sin store no hay solicitud que mostrar.
+    """
+    store = get_event_store()
+    try:
+        requests = await store.history(f"approval-session:{session_id}:")
+        latest = next(
+            (
+                payload
+                for event in reversed(requests)
+                if (payload := event.get("payload") or {}).get("request_id")
+                and payload.get("session_id") == session_id
+                and payload.get("user_id") == user_id
+            ),
+            None,
+        )
+        if latest is None:
+            return None
+        decided = await store.find(
+            "fact", f"{_approval_identity(latest['request_id'])}:decision"
+        )
+    except Exception as ex:
+        logger.warning(
+            "Solicitud de autorización pendiente no legible (%s): %s",
+            type(ex).__name__,
+            ex,
+        )
+        return None
+    if decided is not None:
+        return None
+    return {
+        "request_id": latest["request_id"],
+        "turn_id": latest.get("turn_id"),
+        "action": latest.get("action") or "",
+        "action_class": latest.get("action_class") or "",
+        "reason": latest.get("reason") or "",
+        "session_id": session_id,
+    }
+
+
 @app_v4.get("/chat/sessions/{session_id}")
 async def get_chat_session(session_id: str, request: Request):
     """Get a chat session with all messages."""
@@ -5049,6 +5109,9 @@ async def get_chat_session(session_id: str, request: Request):
             if parked is not None and waiting is not None
             else None
         )
+    # La compuerta humana del chat (request_human_approval): el SSE la anuncia
+    # una vez; la vista de sesión la recupera de su hecho durable.
+    session["pending_approval"] = await _pending_chat_approval(session_id, user_id)
     return session
 
 

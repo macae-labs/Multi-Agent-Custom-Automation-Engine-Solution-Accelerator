@@ -348,6 +348,34 @@ async def test_the_owner_can_ask_the_human_and_the_turn_waits(_ledger_store):
     assert indexed["payload"]["session_id"] == "s1"
     assert indexed["payload"]["user_id"] == "u1"
     assert indexed["payload"]["status"] == "waiting_for"
+    # La sesión la recupera de su hecho durable (recarga / corte del SSE).
+    restored = await router._pending_chat_approval("s1", "u1")
+    assert restored == {
+        "request_id": req["request_id"],
+        "turn_id": "t1",
+        "action": req["action"],
+        "action_class": "write-shared",
+        "reason": req["reason"],
+        "session_id": "s1",
+    }
+    assert await router._pending_chat_approval("s1", "other") is None
+    assert await router._pending_chat_approval("s2", "u1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_decided_request_is_no_longer_pending_for_the_session(
+    _ledger_store,
+):
+    await _ledger_store.append(
+        "fact",
+        "approval-session:s1:r1",
+        {"request_id": "r1", "session_id": "s1", "user_id": "u1", "action": "a"},
+    )
+    assert (await router._pending_chat_approval("s1", "u1"))["request_id"] == "r1"
+    await _ledger_store.append(
+        "fact", "approval-request:r1:decision", {"decision": "approved"}
+    )
+    assert await router._pending_chat_approval("s1", "u1") is None
 
 
 async def _pending_approval(store, request_id="r1", session_id="s1", user_id="u1"):

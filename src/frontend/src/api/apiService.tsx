@@ -488,6 +488,8 @@ export class APIService {
       request_id: string;
       question: string;
     } | null;
+    /** The chat owner's undecided approval request (request_human_approval), from work_events. */
+    pending_approval?: ApprovalRequestEvent | null;
   }> {
     return apiClient.get(`${API_ENDPOINTS.CHAT_SESSIONS}/${sessionId}`);
   }
