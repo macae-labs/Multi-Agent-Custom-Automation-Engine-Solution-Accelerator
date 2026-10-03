@@ -32,6 +32,7 @@ BACKEND = sys.argv[5] if len(sys.argv) > 5 else "http://127.0.0.1:8000"
 LS = '() => localStorage.getItem("macae_active_workspace_id")'
 turn: dict = {}
 sse: list = []
+stream_done: dict = {"finished": False}
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False, args=["--window-size=1400,860"])
@@ -50,8 +51,15 @@ with sync_playwright() as p:
         if "/chat/message/stream" in r.url:
             sse.append(r)
 
+    def on_req_finished(r):
+        if "/chat/message/stream" in r.url:
+            stream_done["finished"] = True
+            log("stream SSE finalizado (request completo)")
+
     pg.on("request", on_req)
     pg.on("response", on_resp)
+    pg.on("requestfinished", on_req_finished)
+    pg.on("requestfailed", on_req_finished)
     pg.on("pageerror", lambda e: log(f"PAGEERROR {str(e)[:160]}"))
     pg.goto(FRONTEND, wait_until="domcontentloaded", timeout=120000)
     pg.get_by_placeholder("Describe your task", exact=False).wait_for(timeout=240000)
@@ -81,17 +89,17 @@ with sync_playwright() as p:
     box.fill(TASK)
     box.press("Enter")
     t_send = time.monotonic()
-    last, stable = "", None
+    last = ""
     while time.monotonic() - t_send < 600:
         time.sleep(3)
         try:
             body = pg.evaluate("() => document.body.innerText")
         except Exception:
-            continue
-        if body != last:
-            last, stable = body, time.monotonic()
-        elif stable and time.monotonic() - stable > 45:
-            log(f"UI estable ({time.monotonic() - t_send:.0f}s tras enviar)")
+            body = None
+        if body is not None and body != last:
+            last = body
+        if stream_done["finished"]:
+            log(f"stream completo ({time.monotonic() - t_send:.0f}s tras enviar)")
             break
     pg.screenshot(path=SHOT)
     i = last.find("Multi-Agent Chat")
