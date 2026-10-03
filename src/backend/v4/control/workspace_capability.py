@@ -175,6 +175,17 @@ class WorkspaceCapability:
                 "if ! git remote get-url upstream >/dev/null 2>&1; then "
                 "echo 'sin upstream: nada que adelantar'; exit 0; fi; "
                 f"b={branch_expr} && "
+                # El share (origin) es la verdad del usuario; el sandbox del
+                # registro es computación desechable. Si el share se recreó
+                # (borrar y volver a montar el workspace), el sandbox queda
+                # DETRÁS y el push se rechaza como non-fast-forward (prod
+                # 2026-10-03: exit 1 "behind its remote"). Se alinea a origin
+                # antes de adelantar; sólo si está limpio: trabajo local
+                # nunca se pisa, se reporta con nombre.
+                "git fetch --quiet origin && "
+                "if ! git diff --quiet || ! git diff --cached --quiet; then "
+                "echo 'sandbox con cambios locales: no se adelanta'; exit 0; fi; "
+                'git checkout --quiet -B "$b" "origin/$b" && '
                 "git fetch --quiet upstream && "
                 'if ! git rev-parse --verify --quiet "refs/remotes/upstream/$b" >/dev/null; then '
                 'echo "upstream no tiene la rama $b: nada que adelantar"; exit 0; fi; '

@@ -22,6 +22,7 @@ import './../../styles/HomeInput.css';
 import { HomeInputProps, iconMap, QuickTask } from '../../models/homeInput';
 import { NewTaskService } from '../../services/NewTaskService';
 import { ChatService } from '../../services/ChatService';
+import type { ApprovalRequestEvent } from '../../models/chatMessage';
 import { requestOAuthConsent } from '../../utils/oauthConsent';
 
 import ChatInput from '@/coral/modules/ChatInput';
@@ -98,6 +99,10 @@ interface ExtendedQuickTask extends QuickTask {
 
 const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
   const [submitting, setSubmitting] = useState<boolean>(false);
+  // Solicitud de autorización humana del dueño (SSE approval_request): la
+  // decisión vuelve con el siguiente mensaje (approval_request_id + decisión).
+  const [pendingApproval, setPendingApproval] =
+    useState<ApprovalRequestEvent | null>(null);
   const [input, setInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<
     Array<{ name: string; file_id: string }>
@@ -245,7 +250,10 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
     };
   }, []);
 
-  const handleSubmit = async (overrideMessage?: string) => {
+  const handleSubmit = async (
+    overrideMessage?: string,
+    approval?: { request_id: string; decision: 'approved' | 'rejected' }
+  ) => {
     const messageToSend = overrideMessage || input.trim();
     if (messageToSend) {
       setSubmitting(true);
@@ -314,7 +322,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             onToken: (token) => {
               // Primer texto del router: desde aquí una nueva voz del usuario
               // es interrupción, no continuación del enunciado.
-              if (voiceTurn && !fullResponse) markVoiceTurnAnswered(voiceTurnId);
+              if (voiceTurn && !fullResponse)
+                markVoiceTurnAnswered(voiceTurnId);
               fullResponse += token;
               dispatch(addStreamToken(token));
             },
@@ -351,6 +360,9 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
               // popup on the user's click and retries this message on success.
               requestOAuthConsent(consentLink, () => handleSubmit(userMessage));
             },
+            onApprovalRequest: (data: ApprovalRequestEvent) => {
+              setPendingApproval(data);
+            },
           },
           fileIds,
           undefined, // planId — no aplicable desde este carril
@@ -359,7 +371,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             ? window.localStorage.getItem('macae_active_workspace_id')
             : undefined,
           abort.signal,
-          turnId
+          turnId,
+          approval
         );
 
         const aborted = abort.signal.aborted;
@@ -675,6 +688,64 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           </ChatInput>
 
           <InlineToaster />
+
+          {/* Compuerta humana: el dueño pidió autorizar UNA acción que excede su techo */}
+          {pendingApproval && (
+            <div
+              role="group"
+              aria-label="Autorización requerida"
+              style={{
+                marginTop: '12px',
+                marginBottom: '12px',
+                padding: '12px 14px',
+                borderRadius: '8px',
+                border: '1px solid var(--colorPaletteMarigoldBorder2)',
+                backgroundColor: 'var(--colorPaletteMarigoldBackground1)',
+              }}
+            >
+              <Body1Strong>
+                Autorización requerida ({pendingApproval.action_class})
+              </Body1Strong>
+              <div style={{ marginTop: '6px', fontSize: '13px' }}>
+                <div>
+                  <strong>Acción:</strong> {pendingApproval.action}
+                </div>
+                <div style={{ marginTop: '4px' }}>
+                  <strong>Motivo:</strong> {pendingApproval.reason}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <Button
+                  appearance="primary"
+                  disabled={submitting}
+                  onClick={() => {
+                    const req = pendingApproval;
+                    setPendingApproval(null);
+                    void handleSubmit(`Aprobado: ${req.action}`, {
+                      request_id: req.request_id,
+                      decision: 'approved',
+                    });
+                  }}
+                >
+                  Aprobar
+                </Button>
+                <Button
+                  appearance="secondary"
+                  disabled={submitting}
+                  onClick={() => {
+                    const req = pendingApproval;
+                    setPendingApproval(null);
+                    void handleSubmit(`Rechazado: ${req.action}`, {
+                      request_id: req.request_id,
+                      decision: 'rejected',
+                    });
+                  }}
+                >
+                  Rechazar
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Generated files panel - Professional download cards */}
           {generatedFiles.length > 0 && (

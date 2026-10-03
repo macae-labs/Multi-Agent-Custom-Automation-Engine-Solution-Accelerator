@@ -16,6 +16,7 @@ import {
   ChatMessageResponse,
 } from '../models';
 import type { ToolActivityEvent } from '../store/slices/streamingSlice';
+import type { ApprovalRequestEvent } from '../models/chatMessage';
 
 // Constants for endpoints
 const API_ENDPOINTS = {
@@ -351,6 +352,7 @@ export class APIService {
         download_url: string;
       }) => void;
       onOAuthConsentRequest?: (consentLink: string) => void;
+      onApprovalRequest?: (data: ApprovalRequestEvent) => void;
     },
     signal?: AbortSignal
   ): Promise<void> {
@@ -423,6 +425,9 @@ export class APIService {
                 break;
               case 'oauth_consent_request':
                 callbacks.onOAuthConsentRequest?.(data.consent_link);
+                break;
+              case 'approval_request':
+                callbacks.onApprovalRequest?.(data);
                 break;
             }
           } catch {

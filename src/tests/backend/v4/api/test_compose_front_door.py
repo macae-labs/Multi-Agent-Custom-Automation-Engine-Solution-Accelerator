@@ -275,6 +275,35 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
     assert client.composition == ("concurrent", "Compare", ROSTER)
 
 
+def test_each_participant_receives_its_own_step_in_the_run_message():
+    # Rol reutilizable en la definición publicada; el paso de ESTA tarea en el
+    # mensaje de la corrida. Sin reparto, dos especialistas en secuencia hacían
+    # la tarea entera cada uno y repetían la misma respuesta (medido).
+    participants = [
+        {
+            "name": "SrcAgent",
+            "system_message": "rol",
+            "instruction": "listar pyproject bajo src/",
+        },
+        {
+            "name": "RuffAgent",
+            "system_message": "rol",
+            "instruction": "correr ruff en cada uno",
+        },
+    ]
+    text = router._composed_task("Auditar ruff", participants)
+    assert text.startswith("Auditar ruff\n\nReparto de este trabajo")
+    assert "- SrcAgent: listar pyproject bajo src/" in text
+    assert "- RuffAgent: correr ruff en cada uno" in text
+    assert text.index("SrcAgent") < text.index("RuffAgent")
+    # Sin pasos, el mensaje es el objetivo tal cual.
+    assert (
+        router._composed_task("Auditar ruff", [{"name": "X", "system_message": "rol"}])
+        == "Auditar ruff"
+    )
+    assert "instruction" in router._PARTICIPANT_SCHEMA["items"]["required"]
+
+
 def test_unknown_pattern_is_refused_by_the_builder():
     from v4.orchestration.orchestration_manager import OrchestrationManager
 

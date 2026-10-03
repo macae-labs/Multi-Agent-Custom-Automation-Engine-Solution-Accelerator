@@ -179,6 +179,13 @@ async def test_the_discovered_registry_is_fast_forwarded_before_reading(clone):
     assert name == "workspace_exec"
     # En el sandbox: origin = share, upstream = el repositorio declarado. Se
     # adelanta desde upstream y se publica al share, en un solo comando de exec.
+    # Primero a la punta del share (origin): un share recreado deja el sandbox
+    # detrás y el push se rechaza (prod 2026-10-03, exit 1 "behind its remote").
+    assert "git fetch --quiet origin && " in args["command"]
+    assert 'git checkout --quiet -B "$b" "origin/$b" && ' in args["command"]
+    assert args["command"].index("origin/$b") < args["command"].index(
+        "git fetch --quiet upstream"
+    )
     assert "git fetch --quiet upstream" in args["command"]
     assert "git merge --ff-only --quiet" in args["command"]
     # El receive-pack del share nace sin la configuración del cliente: la

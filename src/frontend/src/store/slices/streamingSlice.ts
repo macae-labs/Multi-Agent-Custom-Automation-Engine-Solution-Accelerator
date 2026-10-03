@@ -18,6 +18,8 @@ import type { RootState } from '../store';
  */
 export interface ToolActivityEvent {
   activity: 'calling' | 'result' | 'thinking' | string;
+  /** Agente que ejecuta la herramienta (`current_speaker` del backend). */
+  agent?: string | null;
   tool: string;
   server?: string;
   success?: boolean;
@@ -33,6 +35,7 @@ export interface TurnDeed {
   server: string;
   tool: string;
   status: 'success' | 'error' | string;
+  agent?: string | null;
   args?: { text: string; chars: number; truncated: boolean };
   result?: { text: string; chars: number; truncated: boolean };
 }

@@ -93,6 +93,15 @@
       "human_required": true,
       "human_approved_at": null,
       "description": "Regla por tabla macae-consola-stderr creada 2026-10-02 sobre macaev4-logs: ContainerAppConsoleLogs | where Stream == 'stderr' | where Log startswith 'fatal:' or Log has 'Traceback' or Log startswith 'ERROR' | summarize AggregatedValue=count() by bin(TimeGenerated,5m), _ResourceId, ContainerAppName, ContainerName, Line=substring(Log,0,80); umbral > 0, 5 m/5 m, ag-macae. Cada fila es una señal; esta firma toma las de ContainerName=backend y Line='fatal: Could not read from remote repository.'. RBAC medido 2026-10-02: la identidad id-pslc25991vme66zmins (backend y ca-mcp, principal 2b30ae01…) ya tiene Reader (*/read: cubre Microsoft.AlertsManagement/alerts/read y Microsoft.OperationalInsights/workspaces/query/read) y Monitoring Contributor (Microsoft.AlertsManagement/alerts/*) a nivel de suscripción, y los dos workspaces están en modo 'permisos de recurso o de workspace': no hace falta ningún rol nuevo para leer alertas ni consultar. La regla duplicada macae-consola-git-remoto se borró el 2026-10-02; quedan 5 reglas."
+    },
+    {
+      "stage": "observe",
+      "class": "read-only",
+      "blast_radius": "none",
+      "reversible": true,
+      "human_required": false,
+      "executed_at": "2026-10-03T00:22:00Z",
+      "description": "Prod, revisión 0000157 con el --receive-pack desplegado: el pack ya no muere; el push se rechaza con exit 1 'behind its remote' porque el workspace se borró y se volvió a montar y el sandbox del registro quedó detrás del share nuevo. _fast_forward ahora se alinea a origin/$b antes de adelantar (sólo con el sandbox limpio). La sonda pasa a ser el mismo push en seco: ls-remote no ejercitaba el camino corregido y habría quedado roja con el fix puesto."
     }
   ],
   "probe_budget": {
@@ -110,9 +119,9 @@
     "discriminating_probe": {
       "class": "read-only",
       "cwd": ".",
-      "command_or_test": "git ls-remote --exit-code origin HEAD",
-      "expected_signal_when_failing": "exit 128: fatal: Could not read from remote repository (upload-pack del share muere por dubious ownership)",
-      "expected_signal_when_healthy": "exit 0: una línea con el SHA de HEAD del share"
+      "command_or_test": "b=$(git rev-parse --abbrev-ref HEAD) && git fetch --quiet origin && git push --dry-run --quiet --receive-pack='git -c safe.directory=* receive-pack' origin \"HEAD:refs/heads/$b\"",
+      "expected_signal_when_failing": "exit 128 (el receive-pack del share muere: dubious ownership) o exit 1 (rechazado: el sandbox está detrás del share); es el mismo camino que _fast_forward publica",
+      "expected_signal_when_healthy": "exit 0: el share aceptaría el push desde el sandbox con la identidad del proceso"
     },
     "confirmed_cause": {
       "statement": "El pack-process del remoto local no recibe la confianza del cliente: `git -c safe.directory=…` protege al proceso cliente, no a receive-pack/upload-pack que git lanza en el share. Con el share 0:0 y el proceso uid 1001 ambos mueren.",
@@ -158,14 +167,15 @@
       "Registro sin adelantar (exit 128)",
       "dubious ownership receive-pack upload-pack",
       "remoto por ruta local sin -c",
-      "ContainerAppConsoleLogs stderr backend"
+      "ContainerAppConsoleLogs stderr backend",
+      "behind its remote non-fast-forward sandbox detrás del share"
     ],
     "executable_probe": {
       "class": "read-only",
       "cwd": ".",
-      "command_or_test": "git ls-remote --exit-code origin HEAD",
-      "expected_signal_when_failing": "exit 128: fatal: Could not read from remote repository",
-      "expected_signal_when_healthy": "exit 0: SHA de HEAD del share en stdout"
+      "command_or_test": "b=$(git rev-parse --abbrev-ref HEAD) && git fetch --quiet origin && git push --dry-run --quiet --receive-pack='git -c safe.directory=* receive-pack' origin \"HEAD:refs/heads/$b\"",
+      "expected_signal_when_failing": "exit 128 (el receive-pack del share muere: dubious ownership) o exit 1 (rechazado: el sandbox está detrás del share); es el mismo camino que _fast_forward publica",
+      "expected_signal_when_healthy": "exit 0: el share aceptaría el push desde el sandbox con la identidad del proceso"
     },
     "last_verified": "2026-10-02T17:45:00Z",
     "expires_if_not_reverified_by": "2026-11-02T17:45:00Z",

@@ -11,7 +11,7 @@
  */
 import { apiClient } from '../api/apiClient';
 import { apiService } from '../api/apiService';
-import { ChatMessageRequest, ChatMessageResponse } from '../models/chatMessage';
+import { ChatMessageRequest, ChatMessageResponse, ApprovalRequestEvent } from '../models/chatMessage';
 import type { ChatMessage, ChatSessionSummary } from '../lib/types';
 import type { ToolActivityEvent } from '../store/slices/streamingSlice';
 import { workspaceTree } from '../components/workspace/workspaceTreeStore';
@@ -48,6 +48,8 @@ export interface StreamCallbacks {
   }) => void;
   /** Called when an MCP tool (e.g. GitHub) needs the user to complete OAuth consent. */
   onOAuthConsentRequest?: (consentLink: string) => void;
+  /** Called when the owner requests approval for an action that exceeds their ceiling. */
+  onApprovalRequest?: (data: ApprovalRequestEvent) => void;
 }
 
 // In-memory cache of chat sessions (persists during page lifetime)
@@ -80,7 +82,8 @@ export class ChatService {
     allowPlan?: boolean,
     workspaceId?: string | null,
     signal?: AbortSignal,
-    turnId?: string
+    turnId?: string,
+    approval?: { request_id: string; decision: 'approved' | 'rejected' }
   ): Promise<void> {
     const request: ChatMessageRequest = {
       session_id: sessionId || '',
@@ -90,6 +93,13 @@ export class ChatService {
       ...(allowPlan === false ? { allow_plan: false } : {}),
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
       ...(turnId ? { turn_id: turnId } : {}),
+      // Decisión humana a una solicitud del dueño (SSE approval_request).
+      ...(approval
+        ? {
+            approval_request_id: approval.request_id,
+            approval_decision: approval.decision,
+          }
+        : {}),
     };
 
     // Reconciliación explícita del árbol de workspace al cierre del turno:
@@ -226,6 +236,10 @@ export class ChatService {
       onToolActivity?: StreamCallbacks['onToolActivity'];
       /** Identidad del turno acuñada por el composer (ver abortTurn). */
       turnId?: string;
+      /** Solicitud de autorización humana del dueño (el turno termina esperando). */
+      onApprovalRequest?: (data: ApprovalRequestEvent) => void;
+      /** Decisión humana que este mensaje responde (botones Aprobar/Rechazar). */
+      approval?: { request_id: string; decision: 'approved' | 'rejected' };
     } = {}
   ): AsyncIterable<string> {
     const {
@@ -240,6 +254,8 @@ export class ChatService {
       signal,
       onToolActivity,
       turnId,
+      onApprovalRequest,
+      approval,
     } = options;
     return {
       [Symbol.asyncIterator](): AsyncIterator<string> {
@@ -293,6 +309,9 @@ export class ChatService {
               onOAuthConsentRequest?.(link);
               finish();
             },
+            onApprovalRequest: (data) => {
+              onApprovalRequest?.(data);
+            },
           },
           fileIds,
           planId,
@@ -301,7 +320,8 @@ export class ChatService {
             ? window.localStorage.getItem('macae_active_workspace_id')
             : null,
           signal,
-          turnId
+          turnId,
+          approval
           // Si el stream termina sin `done` (abort por barge-in), cerrar igual:
           // el `for await` del consumidor no puede quedar colgado.
         ).then(finish, fail);
