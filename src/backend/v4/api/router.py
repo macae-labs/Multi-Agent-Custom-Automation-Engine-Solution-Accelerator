@@ -2162,6 +2162,7 @@ _HUMAN_ACTION_CLASSES = (
     "external_side_effect",
 )
 
+
 #: La compuerta humana del chat. El dueño la llama cuando la acción que sigue
 #: excede el techo de autoridad sin humano (authority_ceiling de la INC o su
 #: propio juicio): el turno queda en ``waiting_for``, el frontend muestra la
@@ -2169,6 +2170,11 @@ _HUMAN_ACTION_CLASSES = (
 #: (``approval_request_id`` + ``approval_decision``). Medido 2026-10-03: sin
 #: esta tool el dueño decidía bien "requiere humano" y no tenía a quién pedirlo;
 #: la compuerta sólo existía en el carril de Plan.
+def _approval_identity(request_id: str) -> str:
+    """Identidad durable de una solicitud de autorización humana del chat."""
+    return f"approval-request:{request_id}"
+
+
 _APPROVAL_TOOL: dict = {
     "type": "function",
     "name": "request_human_approval",
@@ -2728,6 +2734,54 @@ class _RouterChatClient:
             self._objective_ledger = ledger
         return await ledger.record(kind, identity, payload)
 
+    async def _consume_approval(
+        self, request_id: str, decision: str
+    ) -> dict[str, Any] | None:
+        """Valida y consume la decisión humana contra la solicitud durable.
+
+        Devuelve la solicitud original si existe, pertenece a esta sesión y
+        usuario, sigue pendiente y esta decisión es la primera en consumirla
+        (``create`` atómico: una segunda entrega es duplicado). ``None`` en
+        cualquier otro caso, incluido el store no disponible: sin prueba de la
+        solicitud no hay autorización.
+        """
+        if not request_id or decision not in ("approved", "rejected"):
+            return None
+        if not self._session_id or not self._user_id:
+            return None
+        identity = _approval_identity(request_id)
+        try:
+            pending = await get_event_store().find("fact", identity)
+        except Exception as ex:
+            logger.warning(
+                "Solicitud de autorización no verificable (%s): %s",
+                type(ex).__name__,
+                ex,
+            )
+            return None
+        payload = (pending or {}).get("payload") or {}
+        if (
+            payload.get("status") != "waiting_for"
+            or payload.get("request_id") != request_id
+            or payload.get("session_id") != self._session_id
+            or payload.get("user_id") != self._user_id
+        ):
+            return None
+        consumed = await self._ledger(
+            "fact",
+            f"{identity}:decision",
+            {
+                "approval_request_id": request_id,
+                "decision": decision,
+                "turn_id": self._turn_id,
+                "session_id": self._session_id,
+                "user_id": self._user_id,
+            },
+        )
+        if consumed is not False:
+            return None
+        return payload
+
     async def _evaluate(
         self, client: Any, objective: str, answer: str, evidence: list[str]
     ) -> tuple[str, str, str] | None:
@@ -2809,26 +2863,45 @@ class _RouterChatClient:
         if approval and approval.get("request_id"):
             # La decisión humana es un hecho del turno y entra a la
             # conversación como nota del sistema, no como voz del usuario.
+            # Sólo cuenta si resuelve una solicitud durable de ESTA sesión y
+            # usuario, todavía pendiente; se consume una sola vez.
+            request_id = str(approval.get("request_id") or "").strip()
             decision = str(approval.get("decision") or "").strip().lower()
-            await self._ledger(
-                "fact",
-                f"{self._turn_id}:approval:{approval['request_id']}:{decision}",
-                {"approval_request_id": approval["request_id"], "decision": decision},
-            )
+            original = await self._consume_approval(request_id, decision)
+            if original is None:
+                logger.warning(
+                    "Decisión humana rechazada para la solicitud %s: desconocida, "
+                    "de otra sesión o ya consumida",
+                    request_id[:64],
+                )
+                note = (
+                    f"La decisión humana para la solicitud {request_id} no es "
+                    "válida (desconocida, de otra sesión o ya usada). No ejecutes "
+                    "ninguna acción que requiera autorización humana; informá que "
+                    "hace falta una nueva solicitud."
+                )
+            else:
+                await self._ledger(
+                    "fact",
+                    f"{self._turn_id}:approval:{request_id}:{decision}",
+                    {
+                        "approval_request_id": request_id,
+                        "decision": decision,
+                        "requested_by_turn": original.get("turn_id") or "",
+                    },
+                )
+                note = (
+                    f"Autorización humana para la solicitud {request_id}: "
+                    f"{decision}. Acción solicitada: {original.get('action') or ''}. "
+                    + (
+                        "Ejecutá exactamente la acción autorizada y reportá su evidencia."
+                        if decision == "approved"
+                        else "No ejecutes la acción; informá el estado y qué queda pendiente."
+                    )
+                )
             conversation = [
                 *conversation[:-1],
-                {
-                    "role": "developer",
-                    "content": (
-                        f"Autorización humana para la solicitud {approval['request_id']}: "
-                        f"{decision}. "
-                        + (
-                            "Ejecutá exactamente la acción autorizada y reportá su evidencia."
-                            if decision == "approved"
-                            else "No ejecutes la acción; informá el estado y qué queda pendiente."
-                        )
-                    ),
-                },
+                {"role": "developer", "content": note},
                 conversation[-1],
             ]
         evaluated_before = False
@@ -3047,6 +3120,18 @@ class _RouterChatClient:
                         "fact",
                         f"{self._turn_id}:approval:{self.approval_request['request_id']}",
                         {"status": "waiting_for", **self.approval_request},
+                    )
+                    # Índice durable por solicitud: la decisión llega en otro
+                    # turno y se valida contra esto (sesión, usuario, pendiente).
+                    await self._ledger(
+                        "fact",
+                        _approval_identity(self.approval_request["request_id"]),
+                        {
+                            "status": "waiting_for",
+                            "session_id": self._session_id,
+                            "user_id": self._user_id,
+                            **self.approval_request,
+                        },
                     )
                     outcome = "waiting_for"
                     logger.info(

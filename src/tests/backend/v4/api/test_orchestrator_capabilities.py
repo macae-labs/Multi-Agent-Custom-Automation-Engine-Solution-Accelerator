@@ -342,12 +342,34 @@ async def test_the_owner_can_ask_the_human_and_the_turn_waits(_ledger_store):
     assert waiting["payload"]["status"] == "waiting_for"
     closed = next(e for e in events if e["identity"] == "t1:closed")
     assert closed["payload"]["status"] == "waiting_for"
+    indexed = await _ledger_store.find("fact", f"approval-request:{req['request_id']}")
+    assert indexed["payload"]["session_id"] == "s1"
+    assert indexed["payload"]["user_id"] == "u1"
+    assert indexed["payload"]["status"] == "waiting_for"
+
+
+async def _pending_approval(store, request_id="r1", session_id="s1", user_id="u1"):
+    await store.append(
+        "fact",
+        f"approval-request:{request_id}",
+        {
+            "status": "waiting_for",
+            "request_id": request_id,
+            "turn_id": "t0",
+            "session_id": session_id,
+            "user_id": user_id,
+            "action": "git push origin HEAD:main",
+            "action_class": "write-shared",
+            "reason": "r",
+        },
+    )
 
 
 @pytest.mark.asyncio
 async def test_the_human_decision_is_a_fact_and_a_system_note_not_a_user_voice(
     _ledger_store,
 ):
+    await _pending_approval(_ledger_store)
     fake = _fake_openai(
         _Stream([_text("Ejecuto la acción autorizada.")]), _verdict(True)
     )
@@ -370,6 +392,65 @@ async def test_the_human_decision_is_a_fact_and_a_system_note_not_a_user_voice(
         for e in events
         if e["kind"] == "fact"
     )
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        None,  # solicitud desconocida
+        {"session_id": "other"},  # de otra sesión
+        {"user_id": "other"},  # de otro usuario
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_decision_without_its_own_pending_request_does_not_authorize(
+    _ledger_store, seed
+):
+    if seed is not None:
+        await _pending_approval(_ledger_store, **seed)
+    fake = _fake_openai(_Stream([_text("No ejecuto.")]), _verdict(True))
+    client = _client()
+    with patch("openai.AsyncOpenAI", fake):
+        await _collect_with(
+            client,
+            prompt="Aprobado: push",
+            approval={"request_id": "r1", "decision": "approved"},
+        )
+    note = [
+        i
+        for i in fake.instances[-1].calls[0]["input"]
+        if isinstance(i, dict) and i.get("role") == "developer"
+    ]
+    assert note and "no es válida" in note[0]["content"]
+    assert "r1: approved" not in note[0]["content"]
+    events = await _ledger_store.history("t1")
+    assert not any(e["identity"].startswith("t1:approval:r1") for e in events)
+    assert await _ledger_store.find("fact", "approval-request:r1:decision") is None
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_decision_does_not_authorize_twice(_ledger_store):
+    await _pending_approval(_ledger_store)
+    notes = []
+    for turn in ("t1", "t2"):
+        fake = _fake_openai(_Stream([_text("ok")]), _verdict(True))
+        client = _client()
+        client._turn_id = turn
+        with patch("openai.AsyncOpenAI", fake):
+            await _collect_with(
+                client,
+                prompt="Aprobado: push",
+                approval={"request_id": "r1", "decision": "approved"},
+            )
+        notes.append(
+            next(
+                i["content"]
+                for i in fake.instances[-1].calls[0]["input"]
+                if isinstance(i, dict) and i.get("role") == "developer"
+            )
+        )
+    assert "r1: approved" in notes[0]
+    assert "no es válida" in notes[1]
 
 
 async def _collect_with(client, prompt, **kw):
