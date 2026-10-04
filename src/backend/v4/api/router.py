@@ -3274,9 +3274,11 @@ class _RouterChatClient:
                         if itype == "image_generation_call":
                             evidence.append(_describe_execution(item))
                             since_eval.append(str(itype))
-                            produced_artifact = True
+                            generated = False
                             async for _img in self._image_as_generated_file(item):
+                                generated = True
                                 yield _img
+                            produced_artifact = generated
                         elif (
                             itype == "function_call"
                             and getattr(item, "name", "") == "request_human_approval"
