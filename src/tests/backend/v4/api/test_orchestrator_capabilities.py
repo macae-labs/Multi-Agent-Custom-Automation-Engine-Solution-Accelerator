@@ -227,8 +227,15 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
                         server_name="MacaeMcpServer",
                         arguments='{"path": "/"}',
                     ),
+                    # Resultado alojado como lista de Content (así llega del
+                    # framework): el hecho guarda el TEXTO, no el repr.
                     Content.from_mcp_server_tool_result(
-                        "m1", output='{"status": "success", "details": {"entries": []}}'
+                        "m1",
+                        output=[
+                            Content.from_text(
+                                '{"status": "success", "details": {"entries": ["src"]}}'
+                            )
+                        ],
                     ),
                 ],
                 role="assistant",
@@ -252,6 +259,13 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
     facts = [e["identity"] for e in events if e["kind"] == "fact"]
     assert any(i.startswith("t1:SrcAgent:workspace_search_files:") for i in facts)
     assert any(i.startswith("t1:RuffAgent:workspace_list_entries:") for i in facts)
+    hosted = next(
+        e
+        for e in events
+        if e["identity"].startswith("t1:RuffAgent:workspace_list_entries:")
+    )
+    assert '"entries": ["src"]' in hosted["payload"]["output"]
+    assert "Content object" not in hosted["payload"]["output"]
     assert any(":workspace_search_files:" not in i for i in facts)
     assert [e["identity"] for e in events if e["kind"] == "verdict"] == ["t1:1"]
     closed = next(e for e in events if e["identity"] == "t1:closed")
@@ -300,7 +314,12 @@ async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
     assert "mcp evidence" in evidence
     assert "code evidence" in evidence
     events = await _ledger_store.history("t1")
-    assert len([e for e in events if e["kind"] == "fact"]) == 2
+    facts = [e for e in events if e["kind"] == "fact"]
+    # La semántica elegida también es un hecho del turno.
+    assert [e["identity"] for e in facts if ":compose:" in e["identity"]] == [
+        "t1:compose:sequential"
+    ]
+    assert len([e for e in facts if ":compose:" not in e["identity"]]) == 2
     closed = next(e for e in events if e["identity"] == "t1:closed")
     assert closed["payload"]["status"] == "incomplete"
 

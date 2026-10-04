@@ -1991,28 +1991,36 @@ _DIRECT_RESPONSES_API_VERSION = "2025-03-01-preview"
 # The orchestrations the framework offers (agent_framework_orchestrations
 # builders), in the composer's terms. The composer picks one from the request
 # and the conversation; nothing in code inspects the request.
+# El alfabeto con el que el dueño elige la semántica. Son patrones
+# independientes: cada descripción dice QUÉ forma tiene el pedido, no cómo se
+# ejecuta. Medido 2026-10-03: "dominios de responsabilidad separados" en
+# magentic hacía que dos evaluaciones separadas (concurrent) terminaran en un
+# Plan formal; magentic es la excepción (pasos desconocidos), no el default.
 _PATTERNS: dict[str, str] = {
-    "magentic": (
-        "One composite objective spanning clearly separate domains of "
-        "responsibility, coordinated by a manager that plans, keeps a progress "
-        "ledger, re-plans on stalls and submits the plan for human review before "
-        "executing (the formal Plan, tracked on its own page)."
-    ),
-    "group_chat": (
-        "Open collaboration: an orchestrator picks who speaks next from the "
-        "conversation state until the group converges."
+    "concurrent": (
+        "Several independent assessments of the same request, each from its own "
+        "angle and with no dependency between them, produced in parallel and "
+        "delivered side by side."
     ),
     "sequential": (
-        "A fixed pipeline: each specialist builds on the previous one's output, "
-        "in the order given."
+        "A pipeline whose order is known: each step consumes the previous step's "
+        "output and adds its own (extract then propose, gather then run, draft "
+        "then review)."
     ),
-    "concurrent": (
-        "Independent specialists work on the same request in parallel and their "
-        "outputs are aggregated."
+    "group_chat": (
+        "A discussion that must converge on one answer: specialists respond to "
+        "each other and an orchestrator picks who speaks next until they agree."
     ),
     "handoff": (
-        "One specialist owns the conversation with the user and hands it to "
-        "another specialist when the topic leaves its domain."
+        "Routing: one specialist takes the conversation and hands it to the one "
+        "whose domain it is; that specialist answers the user directly."
+    ),
+    "magentic": (
+        "Only when the steps are NOT known upfront: an open objective that needs "
+        "a manager to plan, run specialists, keep a progress ledger, re-plan on "
+        "stalls and submit the plan for human review before executing (the "
+        "formal Plan, on its own page). Not for separate assessments, pipelines, "
+        "debates or routing: those are the other four."
     ),
 }
 
@@ -2209,6 +2217,34 @@ _APPROVAL_TOOL: dict = {
         "required": ["action", "action_class", "reason"],
     },
 }
+
+
+def _observed_text(value: Any) -> str:
+    """Lo que una tool devolvió, como texto: lo que el veredicto puede leer y
+    de lo que ``fact_key`` saca una identidad estable.
+
+    Un resultado alojado (``mcp_server_tool_result.output``) llega como lista
+    de ``Content``; su ``str()`` es ``[<Content object at 0x…>]`` (medido
+    2026-10-03 en una corrida ``concurrent``): el veredicto no veía lo
+    observado y cada llamada parecía un hecho nuevo.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        parts = []
+        for item in value:
+            text = getattr(item, "text", None)
+            parts.append(text if isinstance(text, str) else _observed_text(item))
+        return "\n".join(p for p in parts if p)
+    text = getattr(value, "text", None)
+    if isinstance(text, str):
+        return text
+    try:
+        return _safe_json_dumps(_to_safe_dict(value))
+    except Exception:
+        return str(value)
 
 
 def _composed_task(task: str, participants: list[dict]) -> str:
@@ -3268,6 +3304,14 @@ class _RouterChatClient:
                 if pattern != "magentic":
                     names = ", ".join(p.get("name", "") for p in participants)
                     turn_evidence.append(f"Orquestación: {pattern} con {names}")
+                    # La decisión del dueño es un hecho del turno: qué semántica
+                    # corrió y con quién. Sin esto el ledger mostraba a los
+                    # participantes pero no el patrón elegido.
+                    await self._ledger(
+                        "fact",
+                        f"{self._turn_id}:compose:{pattern}",
+                        {"pattern": pattern, "participants": names},
+                    )
                     call_names: dict[str, str] = {}
                     answer_parts: list[str] = []
                     async for update in self._run_pattern(
@@ -3307,13 +3351,18 @@ class _RouterChatClient:
                                 tool = getattr(content, "name", None) or call_names.get(
                                     str(content.call_id), "unknown"
                                 )
-                                result = str(content.result)
                                 failed = content.exception is not None
+                                result = _observed_text(content.result)
+                                if failed and not result:
+                                    result = (
+                                        str(content.exception)
+                                        or type(content.exception).__name__
+                                    )
                             elif content.type == "mcp_server_tool_result":
                                 tool = getattr(
                                     content, "tool_name", None
                                 ) or call_names.get(str(content.call_id), "unknown")
-                                result = str(
+                                result = _observed_text(
                                     getattr(content, "output", None)
                                     or getattr(content, "text", None)
                                     or ""
@@ -3459,6 +3508,12 @@ class _RouterChatClient:
             session_id="",
             plan_id=None,  # chat turn: no durable identity, ends on request_info
             workspace_id=self._workspace_id,
+            # El paso propio de cada participante: en sequential define la
+            # etapa junto con la posición.
+            steps={
+                str(p.get("name") or ""): str(p.get("instruction") or "")
+                for p in participants
+            },
         ):
             yield event
 
