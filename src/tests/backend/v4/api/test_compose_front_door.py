@@ -191,7 +191,16 @@ async def test_chat_position_answer_is_a_framework_update():
                 SimpleNamespace(type="response.output_text.delta", delta="¿qué hay?"),
             ]
         ),
-        SimpleNamespace(output_text=json.dumps({"goal_met": True})),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "goal_met": True,
+                    "blocked": False,
+                    "reason": "",
+                    "corrected_objective": "",
+                }
+            )
+        ),
     )
     client = _client()
     with patch("openai.AsyncOpenAI", fake):

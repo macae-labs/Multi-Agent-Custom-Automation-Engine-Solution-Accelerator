@@ -850,8 +850,20 @@ async def test_a_generated_artifact_ends_the_turn_without_a_text_verdict(_ledger
             return True
 
     fake = _fake_openai(
+        _Stream(
+            [
+                _done(
+                    SimpleNamespace(
+                        type="function_call",
+                        name="compose",
+                        arguments=json.dumps(
+                            {"pattern": "direct", "task": "hola", "participants": []}
+                        ),
+                    )
+                )
+            ]
+        ),
         _Stream([_done(_image_item(base64.b64encode(PNG).decode()))]),
-        _verdict(True),
     )
     with (
         patch("openai.AsyncOpenAI", fake),
@@ -864,7 +876,7 @@ async def test_a_generated_artifact_ends_the_turn_without_a_text_verdict(_ledger
 
     (content,) = [x for u in updates for x in u.contents]
     assert content.type == "hosted_file"
-    assert len(fake.instances[-1].calls) == 1
+    assert len(fake.instances[-1].calls) == 2
     events = await _ledger_store.history("t1")
     assert not any(e["kind"] == "verdict" for e in events)
     closed = next(e for e in events if e["identity"] == "t1:closed")
