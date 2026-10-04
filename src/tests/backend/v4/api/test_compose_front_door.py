@@ -299,11 +299,12 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
 
 
 @pytest.mark.asyncio
-async def test_each_participant_carries_its_own_step_in_its_definition_and_the_input_is_shared():
-    # Como define el framework concurrent (doc oficial): el ángulo de cada
-    # agente vive en SU definición y la entrada es la misma para todos.
-    # Medido 2026-10-04 con el reparto en el mensaje compartido: cada
-    # especialista hizo el trabajo de los dos.
+async def test_published_definition_stays_reusable_and_the_step_is_not_baked_in():
+    # La definición publicada es reutilizable por nombre: system_message lleva
+    # SÓLO el rol del especialista, nunca el paso de ESTA petición. Hornear el
+    # paso versionaría la definición en Foundry por petición y dejaría que
+    # use_latest_version corriera el paso de otra petición concurrente; el paso
+    # viaja por-run (``run_pattern(steps=...)``), no en la definición.
     participants = [
         {
             "name": "SrcAgent",
@@ -333,9 +334,13 @@ async def test_each_participant_carries_its_own_step_in_its_definition_and_the_i
         participants, "Auditar ruff", "u1", _Store(), None, with_proxy=False
     )
     by_name = {a.name: a.system_message for a in team.agents}
-    assert by_name["SrcAgent"] == "rol A\n\nYour step in this task: listar pyproject bajo src/"
-    assert by_name["RuffAgent"] == "rol B\n\nYour step in this task: correr ruff en cada uno"
-    assert "RuffAgent" not in by_name["SrcAgent"]
+    # El paso NO se hornea: la definición queda igual al rol reutilizable.
+    assert by_name["SrcAgent"] == "rol A"
+    assert by_name["RuffAgent"] == "rol B"
+    assert "Your step in this task" not in by_name["SrcAgent"]
+    assert "Your step in this task" not in by_name["RuffAgent"]
+    assert "listar pyproject" not in by_name["SrcAgent"]
+    assert "correr ruff" not in by_name["RuffAgent"]
     assert "instruction" in router._PARTICIPANT_SCHEMA["items"]["required"]
 
 

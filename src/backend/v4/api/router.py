@@ -653,15 +653,15 @@ async def _team_from_router_roster(
             bool(raw.get("use_reasoning")) and not coding_tools and not use_bing
         )
         seen.add(lowered)
-        # El ángulo de cada participante vive en SU definición y la entrada es
-        # la misma para todos: así define el framework concurrent (doc
-        # oficial: "You are a translation assistant who only responds in
-        # French" + input "Hello, world!"). El paso de esta tarea va al final
-        # de sus instrucciones; la publicación en Foundry detecta el cambio
-        # de definición y versiona.
-        role = str(raw.get("system_message") or "").strip()
-        step = str(raw.get("instruction") or "").strip()
-        system_message = f"{role}\n\nYour step in this task: {step}" if step else role
+        # La definición publicada es REUTILIZABLE: system_message lleva sólo el
+        # rol del especialista, nunca el paso de ESTA petición. _register_in_foundry
+        # versiona una definición en cuanto difieren sus instrucciones, así que
+        # hornear aquí el paso de la tarea provocaría churn de versiones por
+        # petición y, para agentes con herramientas server-side, dejaría que
+        # use_latest_version corriera el paso de otra petición concurrente. El
+        # paso viaja por-run (``run_pattern(steps=...)`` / executor context),
+        # jamás en la definición.
+        system_message = str(raw.get("system_message") or "").strip()
         agents.append(
             {
                 "input_key": "",
