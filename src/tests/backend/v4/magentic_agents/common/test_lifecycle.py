@@ -469,6 +469,8 @@ class TestMCPEnabledBase:
                 description=self.mock_mcp_config.description,
                 url=self.mock_mcp_config.url,
                 http_client=None,
+                # Aprobación por tool según readOnlyHint del servidor.
+                approval_from_annotations=True,
             )
             # The tool is opened directly (NOT entered into the AsyncExitStack)
             # to avoid anyio cross-task cancel-scope violations on close().

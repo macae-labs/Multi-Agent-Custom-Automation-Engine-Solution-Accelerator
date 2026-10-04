@@ -1599,7 +1599,7 @@ class InspectorService(MCPToolBase):
                     context=(f"connecting to MCP server at {server_url}"),
                 )
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def discover_mcp_capabilities(server_name: str, user_id: str = "") -> str:
             """
             Discover all capabilities (tools, resources, prompts) on a
@@ -1837,7 +1837,7 @@ class InspectorService(MCPToolBase):
                     context=f"executing '{target_tool}' on '{server_name}'",
                 )
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def read_external_resource(server_name: str, resource_uri: str, user_id: str = "") -> str:
             """
             Read a resource from a connected external MCP server.
@@ -1893,7 +1893,7 @@ class InspectorService(MCPToolBase):
                     context=f"reading '{resource_uri}' from '{server_name}'",
                 )
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def list_connected_servers(user_id: str = "") -> str:
             """
             List active sessions and registry catalog servers.

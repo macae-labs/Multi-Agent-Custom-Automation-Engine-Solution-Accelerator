@@ -49,7 +49,7 @@ class DataToolService(MCPToolBase):
         return f"Error reading file '{filename}': File not found."
 
     def register_tools(self, mcp):
-        @mcp.tool()
+        @mcp.tool(annotations={"readOnlyHint": True})
         def data_provider(tablename: str) -> str:
             """A tool that provides data from database based on given table name as parameter."""
             logger = logging.getLogger("file_provider")
@@ -71,7 +71,7 @@ class DataToolService(MCPToolBase):
                 logger.error("Error reading file '%s': %s", filename, e)
                 return f"Error reading file '{filename}': {e}"
 
-        @mcp.tool()
+        @mcp.tool(annotations={"readOnlyHint": True})
         def show_tables() -> list[str]:
             """Returns a list of allowed table names (without .csv extension) that exist in the dataset path."""
             logger = logging.getLogger("show_tables")

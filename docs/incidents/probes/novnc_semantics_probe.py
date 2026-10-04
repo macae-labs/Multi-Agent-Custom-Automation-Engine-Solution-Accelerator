@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 T0 = time.monotonic()
 
@@ -29,6 +29,10 @@ def log(message: str) -> None:
 TASK, SHOT, UID = sys.argv[1], sys.argv[2], sys.argv[3]
 FRONTEND = sys.argv[4] if len(sys.argv) > 4 else "http://localhost:3001"
 BACKEND = sys.argv[5] if len(sys.argv) > 5 else "http://127.0.0.1:8000"
+# Mensajes siguientes (separados por "||"): cada uno responde a lo que el turno
+# anterior dejó pendiente (un agente que preguntó). Si aparece la tarjeta de
+# autorización, se pulsa Aprobar en vez de escribir.
+FOLLOW_UPS = [m for m in (sys.argv[6] if len(sys.argv) > 6 else "").split("||") if m.strip()]
 LS = '() => localStorage.getItem("macae_active_workspace_id")'
 turn: dict = {}
 sse: list = []
@@ -45,7 +49,11 @@ with sync_playwright() as p:
             except Exception:
                 body = {}
             turn["id"] = body.get("turn_id")
-            log(f"POST chat turn_id={turn['id']} workspace={body.get('workspace_id')}")
+            turn.setdefault("all", []).append(body.get("turn_id"))
+            log(
+                f"POST chat turn_id={turn['id']} workspace={body.get('workspace_id')} "
+                f"approval={body.get('approval_request_id')}:{body.get('approval_decision')}"
+            )
 
     def on_resp(r):
         if "/chat/message/stream" in r.url:
@@ -101,6 +109,38 @@ with sync_playwright() as p:
         if stream_done["finished"]:
             log(f"stream completo ({time.monotonic() - t_send:.0f}s tras enviar)")
             break
+    def _wait_stable(t_from):
+        prev, since = "", None
+        while time.monotonic() - t_from < 600:
+            time.sleep(3)
+            try:
+                body = pg.evaluate("() => document.body.innerText")
+            except Exception:
+                continue
+            if body != prev:
+                prev, since = body, time.monotonic()
+            elif since and time.monotonic() - since > 45:
+                return body
+        return prev
+
+    for follow in FOLLOW_UPS:
+        approve = pg.get_by_role("button", name="Aprobar")
+        try:
+            # La tarjeta se monta después del cierre del stream: se la espera
+            # antes de escribir, o el texto respondería por ella.
+            approve.first.wait_for(timeout=20000)
+        except PlaywrightTimeoutError:
+            log("tarjeta de autorización no apareció dentro de 20s; se continúa con flujo normal")
+        if approve.count():
+            log("tarjeta de autorización visible: Aprobar")
+            approve.first.click()
+        else:
+            box = pg.get_by_placeholder("Describe your task", exact=False)
+            box.click()
+            box.fill(follow)
+            box.press("Enter")
+            log(f"seguimiento enviado: {follow[:80]}")
+        last = _wait_stable(time.monotonic())
     pg.screenshot(path=SHOT)
     i = last.find("Multi-Agent Chat")
     print("----- UI (desde el chat) -----")
@@ -139,8 +179,7 @@ for e in events:
         )
     if e.get("type") in ("approval_request", "plan_created", "error"):
         print(f"   {e}")
-tid = turn.get("id")
-if tid:
+for tid in turn.get("all", []):
     req = urllib.request.Request(
         f"{BACKEND}/api/v4/chat/turns/{tid}/ledger", headers={"x-ms-client-principal-id": UID}
     )

@@ -16,7 +16,7 @@ class HRService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         """Register HR tools with the MCP server."""
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def employee_onboarding_blueprint_flat(
             employee_name: str | None = None,
             start_date: str | None = None,

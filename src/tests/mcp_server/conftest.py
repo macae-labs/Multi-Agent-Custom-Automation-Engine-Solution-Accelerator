@@ -73,9 +73,11 @@ def mock_mcp_server():
 
             return decorator
 
-        def tool(self, tags=None):
+        def tool(self, tags=None, annotations=None):
             def decorator(func):
-                self.tools.append({"func": func, "tags": tags or []})
+                self.tools.append(
+                    {"func": func, "tags": tags or [], "annotations": annotations or {}}
+                )
                 return func
 
             return decorator

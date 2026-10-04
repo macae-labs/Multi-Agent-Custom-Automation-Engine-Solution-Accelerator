@@ -14,7 +14,7 @@ class MarketingService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         """Register Marketing tools with the MCP server."""
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def generate_press_release(key_information_for_press_release: str) -> str:
             """This is a function to draft / write a press release. You must call the function by passing the key information that you want to be included in the press release."""
 

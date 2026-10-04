@@ -334,7 +334,7 @@ class WorkspaceToolService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         # ── READ TOOLS ────────────────────────────────────────────────────
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_list_entries(user_id: str, workspace_id: str, path: str = "") -> str:
             """List ONE directory level of the user's project workspace
             (directories first). Call with path='' for the root, then with a
@@ -373,7 +373,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_list_entries")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_read_file(user_id: str, workspace_id: str, path: str) -> str:
             """Read a TEXT file from the user's project workspace and return its
             full content. Binary files and files over 1 MB are refused. user_id
@@ -402,7 +402,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_read_file")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_search_files(user_id: str, workspace_id: str, query: str) -> str:
             """Find files by name across the WHOLE workspace (case-insensitive
             substring on the relative path; git is the index). Returns up to
@@ -431,7 +431,7 @@ class WorkspaceToolService(MCPToolBase):
 
         # ── GIT-READ TOOLS ────────────────────────────────────────────────
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_search_content(user_id: str, workspace_id: str, pattern: str, path: str = "") -> str:
             """Grep for *pattern* (literal string, case-insensitive) inside tracked
             and untracked files. Optionally restrict to a sub-path (relative to
@@ -471,7 +471,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_search_content")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_git_status(user_id: str, workspace_id: str) -> str:
             """Return the short git status of the workspace (staged, unstaged,
             untracked files). Equivalent to `git status --short`."""
@@ -492,7 +492,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_git_status")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_git_diff(user_id: str, workspace_id: str, path: str = "", staged: bool = False) -> str:
             """Show the diff of uncommitted changes. Set staged=true to see
             staged (indexed) changes. Optionally restrict to a sub-path.
@@ -523,7 +523,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_git_diff")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_git_log(user_id: str, workspace_id: str, max_entries: int = 20) -> str:
             """Return the last *max_entries* (capped at 100) git commits in the
             workspace as a list of {hash, author, date, message}."""
@@ -558,7 +558,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_git_log")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_git_current_branch(user_id: str, workspace_id: str) -> str:
             """Return the name of the currently checked-out branch (or the
             detached HEAD SHA if not on a branch)."""
@@ -580,7 +580,7 @@ class WorkspaceToolService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="workspace_git_current_branch")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def workspace_git_list_branches(user_id: str, workspace_id: str) -> str:
             """List all local branches in the workspace. The active branch is
             marked with a leading '*'."""

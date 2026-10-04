@@ -815,6 +815,9 @@ class MCPEnabledBase:
                 description=self.mcp_cfg.description,
                 url=self.mcp_cfg.url,
                 http_client=http_client,
+                # Lectura sin aprobación; el resto pide aprobación humana según
+                # lo que el servidor declara (readOnlyHint).
+                approval_from_annotations=True,
             )
             # Open the tool directly (not via stack) to avoid cross-task
             # cancel-scope violations on close.

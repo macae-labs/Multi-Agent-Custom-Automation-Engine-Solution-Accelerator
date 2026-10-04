@@ -42,9 +42,10 @@ class _Stream:
         return self._events.pop(0)
 
 
-def _fake_openai(reply):
-    """Sustituto de AsyncOpenAI: responses.create devuelve `reply` (respuesta
-    no stream, o un _Stream). Guarda los kwargs de construcción y de llamada."""
+def _fake_openai(*replies):
+    """Sustituto de AsyncOpenAI: consume las respuestas en orden y repite la
+    última. Guarda los kwargs de construcción y de llamada."""
+    queue = list(replies)
 
     class _Fake:
         instances: list = []
@@ -53,17 +54,17 @@ def _fake_openai(reply):
             self.kwargs = kwargs
             self.closed = False
             self.create_kwargs = None
-            # Un turno hace más de una llamada (compositor + evaluador).
-            # calls guarda todas; create_kwargs se queda con la PRIMERA,
-            # la del compositor, que es la oferta del turno.
+            # Un turno hace más de una llamada (contrato + compositor +
+            # evaluador). calls guarda todas; create_kwargs se queda con la
+            # del COMPOSITOR (la que ofrece tools), que es la oferta del turno.
             self.calls: list = []
             _Fake.instances.append(self)
 
             async def create(**kw):
                 self.calls.append(kw)
-                if self.create_kwargs is None:
+                if self.create_kwargs is None and "tools" in kw:
                     self.create_kwargs = kw
-                return reply
+                return queue.pop(0) if len(queue) > 1 else queue[0]
 
             self.responses = SimpleNamespace(create=create)
 
@@ -178,10 +179,28 @@ async def test_chat_position_answer_is_a_framework_update():
     fake = _fake_openai(
         _Stream(
             [
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=_compose_item(pattern="direct", task="hola", participants=[]),
+                )
+            ]
+        ),
+        _Stream(
+            [
                 SimpleNamespace(type="response.output_text.delta", delta="Hola, "),
                 SimpleNamespace(type="response.output_text.delta", delta="¿qué hay?"),
             ]
-        )
+        ),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "goal_met": True,
+                    "blocked": False,
+                    "reason": "",
+                    "corrected_objective": "",
+                }
+            )
+        ),
     )
     client = _client()
     with patch("openai.AsyncOpenAI", fake):
@@ -192,7 +211,7 @@ async def test_chat_position_answer_is_a_framework_update():
     assert updates[0].author_name == "Composer"
     assert client.composition is None
     call = fake.instances[-1].create_kwargs
-    assert call["tool_choice"] == "auto"
+    assert call["tool_choice"] == {"type": "function", "name": "compose"}
     assert call["stream"] is True and call["store"] is False
     # El turno ofrece ``compose`` (la decisión de la semántica es del dueño)
     # junto a las capacidades PROPIAS del orquestador.
@@ -200,6 +219,9 @@ async def test_chat_position_answer_is_a_framework_update():
     assert {"image_generation", "web_search", "code_interpreter"} <= {
         t["type"] for t in call["tools"][1:]
     }
+    execution = fake.instances[-1].calls[1]
+    assert execution["tool_choice"] == "auto"
+    assert all(t.get("name") != "compose" for t in execution["tools"])
 
 
 @pytest.mark.asyncio
@@ -261,7 +283,8 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
     client = _client(memory_store=object())
     ran: list = []
 
-    async def _run_pattern(pattern, task, participants, history):
+    async def _run_pattern(pattern, task, participants, history, *, resume=None):
+        assert resume is None
         ran.append((pattern, task, participants, history))
         yield WorkflowEvent("output", data="x", executor_id="RepoAgent")
 
@@ -275,32 +298,49 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
     assert client.composition == ("concurrent", "Compare", ROSTER)
 
 
-def test_each_participant_receives_its_own_step_in_the_run_message():
-    # Rol reutilizable en la definición publicada; el paso de ESTA tarea en el
-    # mensaje de la corrida. Sin reparto, dos especialistas en secuencia hacían
-    # la tarea entera cada uno y repetían la misma respuesta (medido).
+@pytest.mark.asyncio
+async def test_published_definition_stays_reusable_and_the_step_is_not_baked_in():
+    # La definición publicada es reutilizable por nombre: system_message lleva
+    # SÓLO el rol del especialista, nunca el paso de ESTA petición. Hornear el
+    # paso versionaría la definición en Foundry por petición y dejaría que
+    # use_latest_version corriera el paso de otra petición concurrente; el paso
+    # viaja por-run (``run_pattern(steps=...)``), no en la definición.
     participants = [
         {
             "name": "SrcAgent",
-            "system_message": "rol",
+            "description": "d",
+            "system_message": "rol A",
             "instruction": "listar pyproject bajo src/",
         },
         {
             "name": "RuffAgent",
-            "system_message": "rol",
+            "description": "d",
+            "system_message": "rol B",
             "instruction": "correr ruff en cada uno",
         },
     ]
-    text = router._composed_task("Auditar ruff", participants)
-    assert text.startswith("Auditar ruff\n\nReparto de este trabajo")
-    assert "- SrcAgent: listar pyproject bajo src/" in text
-    assert "- RuffAgent: correr ruff en cada uno" in text
-    assert text.index("SrcAgent") < text.index("RuffAgent")
-    # Sin pasos, el mensaje es el objetivo tal cual.
-    assert (
-        router._composed_task("Auditar ruff", [{"name": "X", "system_message": "rol"}])
-        == "Auditar ruff"
+
+    class _Store:
+        async def get_team(self, _):
+            return None
+
+        async def add_team(self, _):
+            pass
+
+        async def update_team(self, _):
+            pass
+
+    team = await router._team_from_router_roster(
+        participants, "Auditar ruff", "u1", _Store(), None, with_proxy=False
     )
+    by_name = {a.name: a.system_message for a in team.agents}
+    # El paso NO se hornea: la definición queda igual al rol reutilizable.
+    assert by_name["SrcAgent"] == "rol A"
+    assert by_name["RuffAgent"] == "rol B"
+    assert "Your step in this task" not in by_name["SrcAgent"]
+    assert "Your step in this task" not in by_name["RuffAgent"]
+    assert "listar pyproject" not in by_name["SrcAgent"]
+    assert "correr ruff" not in by_name["RuffAgent"]
     assert "instruction" in router._PARTICIPANT_SCHEMA["items"]["required"]
 
 
