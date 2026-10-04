@@ -14,7 +14,7 @@ class ProductService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         """Register Product tools with the MCP server."""
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def get_product_info() -> str:
             """Get information about the different products and phone plans available, including roaming services."""
             product_info = """

@@ -53,7 +53,7 @@ from common.utils.utils_af import (
     rai_success,
     rai_validate_team_config,
 )
-from v4.common.mcp_tool import ReconnectingMCPTool
+from v4.common.mcp_tool import TOOL_OBSERVER, ReconnectingMCPTool
 from v4.common.models.mcp_connection_models import (
     McpReadResourceRequest,
     MCPServerEntry,
@@ -653,6 +653,15 @@ async def _team_from_router_roster(
             bool(raw.get("use_reasoning")) and not coding_tools and not use_bing
         )
         seen.add(lowered)
+        # El ángulo de cada participante vive en SU definición y la entrada es
+        # la misma para todos: así define el framework concurrent (doc
+        # oficial: "You are a translation assistant who only responds in
+        # French" + input "Hello, world!"). El paso de esta tarea va al final
+        # de sus instrucciones; la publicación en Foundry detecta el cambio
+        # de definición y versiona.
+        role = str(raw.get("system_message") or "").strip()
+        step = str(raw.get("instruction") or "").strip()
+        system_message = f"{role}\n\nYour step in this task: {step}" if step else role
         agents.append(
             {
                 "input_key": "",
@@ -664,7 +673,7 @@ async def _team_from_router_roster(
                     config.REASONING_MODEL_NAME if use_reasoning else deployment
                 ),
                 "icon": "",
-                "system_message": str(raw.get("system_message") or "").strip(),
+                "system_message": system_message,
                 "description": str(raw.get("description") or "").strip(),
                 # No composed team has a Search index; use_rag without
                 # index_name yields SearchConfig=None in the factory — an agent
@@ -1988,15 +1997,28 @@ _DIRECT_RESPONSES_API_VERSION = "2025-03-01-preview"
 
 
 # ── Composer ────────────────────────────────────────────────────────────────
-# The orchestrations the framework offers (agent_framework_orchestrations
-# builders), in the composer's terms. The composer picks one from the request
-# and the conversation; nothing in code inspects the request.
-# El alfabeto con el que el dueño elige la semántica. Son patrones
-# independientes: cada descripción dice QUÉ forma tiene el pedido, no cómo se
-# ejecuta. Medido 2026-10-03: "dominios de responsabilidad separados" en
-# magentic hacía que dos evaluaciones separadas (concurrent) terminaran en un
-# Plan formal; magentic es la excepción (pasos desconocidos), no el default.
+
 _PATTERNS: dict[str, str] = {
+    "direct": (
+        "The request is for you: you carry it out yourself with the tools "
+        "attached to this turn, or you answer it. No participants."
+    ),
+    "handoff": (
+        "A request that cannot be completed from what the user has said so far: "
+        "what is missing can only come from the user, and each answer the user "
+        "gives decides who should take the conversation next. The FIRST "
+        "participant is the triage that decides which specialist owns the "
+        "conversation and always hands off; each other participant is a "
+        "specialist that answers or asks the user in its own domain and hands "
+        "back to the triage when the request leaves it. When a participant "
+        "answers without handing off, the conversation waits for the user and "
+        "the next message continues the same workflow. A request that already "
+        "contains everything needed to be carried out is not this."
+    ),
+    "group_chat": (
+        "A discussion that must converge on one answer: specialists respond to "
+        "each other and an orchestrator picks who speaks next until they agree."
+    ),
     "concurrent": (
         "Several independent assessments of the same request, each from its own "
         "angle and with no dependency between them, produced in parallel and "
@@ -2006,14 +2028,6 @@ _PATTERNS: dict[str, str] = {
         "A pipeline whose order is known: each step consumes the previous step's "
         "output and adds its own (extract then propose, gather then run, draft "
         "then review)."
-    ),
-    "group_chat": (
-        "A discussion that must converge on one answer: specialists respond to "
-        "each other and an orchestrator picks who speaks next until they agree."
-    ),
-    "handoff": (
-        "Routing: one specialist takes the conversation and hands it to the one "
-        "whose domain it is; that specialist answers the user directly."
     ),
     "magentic": (
         "Only when the steps are NOT known upfront: an open objective that needs "
@@ -2033,7 +2047,7 @@ _PARTICIPANT_SCHEMA: dict = {
     "type": "array",
     "description": (
         "The specialists for this request — 1 to 4, fewer is better; derive them "
-        "from the request itself. Specialists are REUSED by name across requests, "
+        "from the request itself; empty for `direct`. Specialists are REUSED by name across requests, "
         "so write system_message as reusable role instructions (what the "
         "specialist is and does), never one-task orders. Do not include a proxy, "
         "manager or orchestrator entry."
@@ -2058,10 +2072,18 @@ _PARTICIPANT_SCHEMA: dict = {
             "instruction": {
                 "type": "string",
                 "description": (
-                    "This specialist's OWN step in THIS request: what it must do "
-                    "and what it hands to the next one, distinct from every other "
-                    "participant. It travels in the run's message, never in the "
-                    "reusable role."
+                    "This specialist's OWN part in THIS request, distinct from "
+                    "every other participant. It is appended to this specialist's "
+                    "instructions."
+                ),
+            },
+            "autonomous": {
+                "type": "boolean",
+                "description": (
+                    "handoff only. true if this specialist completes its part "
+                    "without needing the user (it keeps working when it does not "
+                    "hand off); false if, when it does not hand off, the "
+                    "conversation must go back to the user."
                 ),
             },
             "coding_tools": {
@@ -2106,14 +2128,14 @@ _COMPOSER_INSTRUCTIONS = (
     "You are the orchestration layer of a multi-agent system built on Microsoft "
     "Agent Framework. You receive the user's request with the conversation it "
     "belongs to (this session's turns, plus earlier turns retrieved from the "
-    "user's history). Either answer the request yourself or call `compose` once "
-    "to run it through one of the framework's orchestrations with the "
-    "specialists it needs. Decide from the request and the conversation. "
-    "Compose when the request asks for specialists, roles or a team, for work "
-    "in sequence, in parallel, as a group or handed off between roles, or when "
-    "it spans separate domains of responsibility: answering such a request "
-    "yourself does not satisfy it. Answer yourself only what you can complete "
-    "alone with the tools attached to this turn."
+    "user's history). Your first act on every request is ONE `compose` call: "
+    "it states the request as the complete, self-contained task it really is "
+    "(read with the conversation) and how it runs — `direct` when you carry "
+    "it out yourself with the tools attached to this turn or simply answer it; "
+    "an orchestration of specialists when the request asks for specialists, "
+    "roles or a team, for work in sequence, in parallel, as a group or handed "
+    "off between roles, or when it spans separate domains of responsibility. "
+    "After a `direct` composition you work on the task yourself."
 )
 
 # Hecho del turno que el veredicto necesita cuando el orquestador respondió
@@ -2135,8 +2157,8 @@ def _compose_tool(patterns: list[str]) -> dict:
         "type": "function",
         "name": "compose",
         "description": (
-            "Run the request through an orchestration of specialists. Call it "
-            "once; do not call it when you answer the request yourself."
+            "State the request as the task it really is and how it runs. Call "
+            "it once per request, before anything else."
         ),
         "parameters": {
             "type": "object",
@@ -2151,7 +2173,15 @@ def _compose_tool(patterns: list[str]) -> dict:
                 "task": {
                     "type": "string",
                     "description": (
-                        "The full, self-contained objective, as the user expressed it."
+                        "The complete, self-contained task, written from the "
+                        "request AND the conversation: resolve every implicit "
+                        "reference (files, services, identifiers, values, the "
+                        "incident or task in progress), state what the user takes "
+                        "for granted and what it takes for the request to be "
+                        "actually done, not just looked at; if the conversation "
+                        "left something open and this request continues it, start "
+                        "from there. Keep the user's intent intact; expand only "
+                        "what was implicit."
                     ),
                 },
                 "participants": _PARTICIPANT_SCHEMA,
@@ -2178,6 +2208,12 @@ _HUMAN_ACTION_CLASSES = (
 #: (``approval_request_id`` + ``approval_decision``). Medido 2026-10-03: sin
 #: esta tool el dueño decidía bien "requiere humano" y no tenía a quién pedirlo;
 #: la compuerta sólo existía en el carril de Plan.
+def _parked_identity(session_id: str, request_id: str) -> str:
+    """Identidad durable de un workflow compuesto aparcado en ``request_info``:
+    la sesión es la identidad que vuelve con el siguiente mensaje."""
+    return f"composition-session:{session_id}:{request_id}"
+
+
 def _approval_identity(request_id: str) -> str:
     """Identidad durable de una solicitud de autorización humana del chat."""
     return f"approval-request:{request_id}"
@@ -2247,31 +2283,6 @@ def _observed_text(value: Any) -> str:
         return str(value)
 
 
-def _composed_task(task: str, participants: list[dict]) -> str:
-    """El mensaje de la corrida: el objetivo más el paso propio de cada
-    participante.
-
-    Los participantes se publican en Foundry por nombre con un rol reutilizable
-    (``system_message``); si la tarea entera viaja igual para todos, en
-    ``sequential`` cada uno la hace completa y repite la misma respuesta
-    (medido 2026-10-02: dos especialistas, misma búsqueda, misma conclusión).
-    El reparto va en el mensaje, no en la definición publicada: no republica
-    por tarea.
-    """
-    steps = [
-        f"- {str(p.get('name') or '').strip()}: {str(p.get('instruction') or '').strip()}"
-        for p in participants
-        if str(p.get("instruction") or "").strip()
-    ]
-    if not steps:
-        return task
-    return (
-        f"{task}\n\nReparto de este trabajo: cada especialista hace SOLO su paso "
-        "asignado y aporta su resultado según la coordinación del equipo.\n"
-        + "\n".join(steps)
-    )
-
-
 def _read_composition(
     arguments: str | None, patterns: list[str]
 ) -> tuple[str, str, list[dict]]:
@@ -2304,6 +2315,8 @@ def _read_composition(
 
 class _RouterChatClient:
     approval_request: dict[str, Any] | None = None
+    _parked_now: bool = False
+    _pending_approval_payload: dict[str, Any] | None = None
     _turn_id: str = ""
     _session_id: str = ""
     _user_id: str = ""
@@ -2775,6 +2788,114 @@ class _RouterChatClient:
             self._objective_ledger = ledger
         return await ledger.record(kind, identity, payload)
 
+    async def _park_composition(
+        self,
+        pattern: str,
+        task: str,
+        participants: list[dict],
+        info: dict[str, Any],
+    ) -> None:
+        """El workflow compuesto pidió al usuario: queda aparcado en su
+        checkpoint con la sesión como identidad (doc de handoff, "puntos de
+        control para flujos duraderos")."""
+        identity = _parked_identity(self._session_id, info["request_id"])
+        await self._ledger(
+            "fact",
+            identity,
+            {
+                "status": "waiting_for",
+                "pattern": pattern,
+                "task": task,
+                "participants": participants,
+                "request_id": info["request_id"],
+                "checkpoint_id": info["checkpoint_id"],
+                "kind": info.get("kind") or "",
+                "approval": info.get("approval"),
+                "turn_id": self._turn_id,
+                "session_id": self._session_id,
+                "user_id": self._user_id,
+                "workspace_id": self._workspace_id or "",
+            },
+        )
+        self._parked_now = True
+        approval = info.get("approval")
+        if approval:
+            # La tarjeta Aprobar/Rechazar que ya existe; la decisión vuelve con
+            # el siguiente mensaje y reanuda ESTE workflow.
+            self.approval_request = {
+                "request_id": info["request_id"],
+                "turn_id": self._turn_id,
+                "action": f"{approval.get('tool')} {approval.get('arguments')}".strip(),
+                "action_class": "write-shared",
+                "reason": (
+                    f"La tool {approval.get('tool')} no está declarada de solo lectura "
+                    "por el servidor MCP (readOnlyHint): requiere aprobación humana."
+                ),
+            }
+        logger.info(
+            "Workflow %s aparcado en request_info %s (%s, sesión %s)",
+            pattern,
+            info["request_id"],
+            info.get("kind"),
+            self._session_id[:12],
+        )
+
+    async def _resume_parked_composition(
+        self, request_id: str | None = None, *, with_decision: bool = False
+    ) -> dict[str, Any] | None:
+        """El workflow aparcado de esta sesión, consumido UNA vez (``create``
+        atómico), o ``None``. Sin store disponible no hay reanudación.
+
+        Una aprobación de tool pendiente sólo la resuelve una decisión
+        (``with_decision``): un mensaje de texto no la consume (medido
+        2026-10-04: un seguimiento escrito la resolvía como rechazo)."""
+        if not self._session_id or not self._user_id:
+            return None
+        try:
+            events = await get_event_store().history(
+                f"composition-session:{self._session_id}:"
+            )
+        except Exception as ex:
+            logger.warning(
+                "Workflow aparcado no verificable (%s): %s", type(ex).__name__, ex
+            )
+            return None
+        consumed = {
+            e["identity"][: -len(":resumed")]
+            for e in events
+            if e["identity"].endswith(":resumed")
+        }
+        waiting = [
+            e
+            for e in events
+            if not e["identity"].endswith(":resumed")
+            and e["identity"] not in consumed
+            and (e.get("payload") or {}).get("status") == "waiting_for"
+            and (e.get("payload") or {}).get("user_id") == self._user_id
+            and (
+                request_id is None
+                or (e.get("payload") or {}).get("request_id") == request_id
+            )
+        ]
+        if not waiting:
+            return None
+        parked = waiting[-1]
+        is_approval = (parked.get("payload") or {}).get(
+            "kind"
+        ) == "function_approval_request"
+        if is_approval and not with_decision:
+            # Sigue pendiente: se vuelve a mostrar la solicitud.
+            self._pending_approval_payload = dict(parked["payload"])
+            return None
+        took = await self._ledger(
+            "fact",
+            f"{parked['identity']}:resumed",
+            {"turn_id": self._turn_id, "session_id": self._session_id},
+        )
+        if took is not False:
+            return None
+        return dict(parked["payload"])
+
     async def _consume_approval(
         self, request_id: str, decision: str
     ) -> dict[str, Any] | None:
@@ -2901,7 +3022,15 @@ class _RouterChatClient:
         # vueltas: se sale cuando se cumple, cuando no hay progreso (el
         # evaluador repite el mismo motivo) o cuando el usuario aborta.
         conversation: list = self._composer_input(prompt, history)
+        # Una decisión sobre una tool de un workflow compuesto aparcado reanuda
+        # ese workflow (to_function_approval_response); no es una autorización
+        # del dueño.
+        parked_by_decision = None
         if approval and approval.get("request_id"):
+            parked_by_decision = await self._resume_parked_composition(
+                str(approval.get("request_id") or ""), with_decision=True
+            )
+        if approval and approval.get("request_id") and parked_by_decision is None:
             # La decisión humana es un hecho del turno y entra a la
             # conversación como nota del sistema, no como voz del usuario.
             # Sólo cuenta si resuelve una solicitud durable de ESTA sesión y
@@ -2951,11 +3080,17 @@ class _RouterChatClient:
         outcome = "no_verdict"
         if not self._turn_id:
             self._turn_id = uuid.uuid4().hex
+        # El objetivo vigente es el pedido; cuando el modelo compone, el
+        # ``task`` de ``compose`` (enriquecido por su propia descripción, con
+        # el historial a la vista) pasa a ser el objetivo. ``corrected_objective``
+        # lo reescribe.
+        objective = prompt
         await self._ledger(
             "objective",
             self._turn_id,
             {
-                "objective": prompt,
+                "objective": objective,
+                "request": prompt,
                 "session_id": self._session_id,
                 "user_id": self._user_id,
                 "workspace_id": self._workspace_id or "",
@@ -2965,10 +3100,56 @@ class _RouterChatClient:
         # contra la última pasada (que suele ser la síntesis, sin tools).
         turn_evidence: list[str] = []
         since_eval: list[str] = []
+        # Si la sesión tiene un workflow compuesto aparcado (un agente le
+        # preguntó al usuario), este mensaje es la respuesta: se reanuda ese
+        # workflow en vez de decidir de nuevo (doc de handoff).
+        resume: dict[str, Any] | None = None
+        self._parked_now = False
+        self._pending_approval_payload = None
+        parked = parked_by_decision or await self._resume_parked_composition()
+        pending_approval = self._pending_approval_payload
+        if parked is None and pending_approval is not None:
+            tool = (pending_approval.get("approval") or {}).get("tool") or "una tool"
+            args = (pending_approval.get("approval") or {}).get("arguments") or ""
+            self.approval_request = {
+                "request_id": pending_approval["request_id"],
+                "turn_id": self._turn_id,
+                "action": f"{tool} {args}".strip(),
+                "action_class": "write-shared",
+                "reason": (
+                    f"Sigue pendiente la aprobación de {tool}: el workflow "
+                    "espera tu decisión antes de continuar."
+                ),
+            }
+            await self._ledger(
+                "objective",
+                f"{self._turn_id}:closed",
+                {"status": "waiting_for", "laps": 0, "facts": 0},
+            )
+            return
+        if parked is not None:
+            composition = (
+                str(parked.get("pattern") or ""),
+                str(parked.get("task") or ""),
+                list(parked.get("participants") or []),
+            )
+            resume = {
+                "checkpoint_id": parked["checkpoint_id"],
+                "answer": prompt,
+                "decision": str((approval or {}).get("decision") or "")
+                if parked_by_decision is not None
+                else "",
+            }
+            await self._ledger(
+                "fact",
+                f"{self._turn_id}:resume:{parked['request_id']}",
+                {"pattern": composition[0], "request_id": parked["request_id"]},
+            )
         workspace_tools = await self._workspace_tools() if self._workspace_id else []
         logger.info("Orquestador: %d tools de workspace", len(workspace_tools))
+        composed = False
         try:
-            while True:
+            while resume is None:
                 pending = ""
                 marker_blocked = False
                 answer = ""
@@ -2979,6 +3160,17 @@ class _RouterChatClient:
                 said = ""
                 evidence: list[str] = []
                 executed: list[tuple[dict, dict]] = []
+                restated = False
+                # Un artefacto generado (imagen/archivo) es el entregable
+                # terminal del turno: el juez es de texto y no puede verificar
+                # su contenido. Como el Model Router (run_image_generation), se
+                # despacha y el turno termina, sin re-juicio ni regeneración.
+                produced_artifact = False
+                # La decisión es UNA por turno (el salto decisión → ejecución del
+                # Model Router): la primera pasada es ``compose`` obligatorio;
+                # las siguientes ejecutan sin la tool. Medido 2026-10-04: con
+                # la tool siempre ofrecida, el modelo recomponía en cada pasada.
+                composing = not composed
                 stream = await client.responses.create(
                     model=self._model,
                     instructions=self._instructions(),
@@ -2986,19 +3178,15 @@ class _RouterChatClient:
                     tools=cast(
                         Any,
                         [
-                            # La decisión de componer es del dueño, en cada
-                            # pasada: sin esta tool el turno no puede crear
-                            # especialistas y sólo el selector de Plan (que
-                            # fuerza magentic) los crea. Medido 2026-10-01: un
-                            # pedido explícito de dos especialistas en secuencia
-                            # se resolvió sin ninguno.
-                            _compose_tool(patterns),
+                            *([_compose_tool(patterns)] if composing else []),
                             _APPROVAL_TOOL,
                             *self._capabilities(bearer),
                             *workspace_tools,
                         ],
                     ),
-                    tool_choice="auto",
+                    tool_choice=(
+                        {"type": "function", "name": "compose"} if composing else "auto"
+                    ),
                     # La compuerta humana debe ir sola: con llamadas paralelas
                     # una respuesta podía traer request_human_approval junto a
                     # workspace_exec o compose, y el efecto corría antes de
@@ -3050,6 +3238,7 @@ class _RouterChatClient:
                         if itype == "image_generation_call":
                             evidence.append(_describe_execution(item))
                             since_eval.append(str(itype))
+                            produced_artifact = True
                             async for _img in self._image_as_generated_file(item):
                                 yield _img
                         elif (
@@ -3076,10 +3265,28 @@ class _RouterChatClient:
                             and getattr(item, "name", "") == "compose"
                         ):
                             try:
-                                composition = _read_composition(
+                                _pattern, _task, _parts = _read_composition(
                                     getattr(item, "arguments", None), patterns
                                 )
+                                composed = True
+                                objective = _task or objective
+                                if _pattern == "direct":
+                                    # El salto decisión → ejecución: lo que
+                                    # ejecuta Responses de aquí en más es el
+                                    # task enriquecido, no la prosa del usuario.
+                                    conversation = [
+                                        *conversation[:-1],
+                                        {"role": "user", "content": objective},
+                                    ]
+                                    restated = True
+                                    logger.info(
+                                        "Composer: pattern=direct task=%s",
+                                        objective[:500],
+                                    )
+                                else:
+                                    composition = (_pattern, _task, _parts)
                             except ValueError as e:
+                                composed = True
                                 logger.warning(
                                     "Composer returned an unusable composition: %s", e
                                 )
@@ -3202,15 +3409,26 @@ class _RouterChatClient:
                     break
                 turn_evidence.extend(evidence)
 
-                # Pasada de pura ejecución: el turno está en curso, no falló.
+                # El artefacto es el entregable: se emitió al usuario en esta
+                # misma pasada. El juez de texto no puede verificar sus píxeles,
+                # así que re-juzgarlo sólo regenera en bucle (medido 2026-10-04:
+                # el mismo gato una y otra vez). El turno termina aquí.
+                if produced_artifact:
+                    outcome = "done"
+                    if answer:
+                        yield self._text_update(answer)
+                    break
+
+                # Pasada de pura ejecución (o la de ``compose`` direct, que
+                # sólo reescribió el pedido): el turno está en curso, no falló.
                 # Se devuelven las salidas por el protocolo y se sigue.
-                if executed and not answer.strip():
+                if (executed or restated) and not answer.strip():
                     for call, output in executed:
                         conversation = [*conversation, call, output]
                     continue
 
                 verdict = await self._evaluate(
-                    client, prompt, answer, [*turn_evidence, _NO_ORCHESTRATION_FACT]
+                    client, objective, answer, [*turn_evidence, _NO_ORCHESTRATION_FACT]
                 )
                 laps += 1
                 if verdict is None:
@@ -3243,13 +3461,13 @@ class _RouterChatClient:
                     if answer:
                         yield self._text_update(answer)
                     break
-                if corrected and corrected != prompt:
+                if corrected and corrected != objective:
                     # La evidencia contradijo una premisa: el objetivo vigente
                     # pasa a ser el corregido y su primer veredicto no corta.
                     logger.info(
                         "Premisa corregida por la evidencia: %s", corrected[:200]
                     )
-                    prompt = corrected
+                    objective = corrected
                     evaluated_before = False
                 # Sin progreso: ya hubo un veredicto y desde entonces no apareció
                 # ningún hecho nuevo (misma salida con otra llamada no cuenta:
@@ -3279,7 +3497,7 @@ class _RouterChatClient:
                             "Verificación de la ejecución: el objetivo no quedó "
                             f"cumplido. Motivo: {why}\n"
                             + (
-                                f"Objetivo vigente (corregido por la evidencia): {prompt}\n"
+                                f"Objetivo vigente (corregido por la evidencia): {objective}\n"
                                 if corrected
                                 else ""
                             )
@@ -3292,7 +3510,15 @@ class _RouterChatClient:
                 ]
             if composition is not None:
                 pattern, task, participants = composition
-                task = task or prompt
+                # Los participantes trabajan contra el CONTRATO del turno, el
+                # mismo contra el que los juzga el veredicto; el ``task`` que el
+                # dueño redactó en ``compose`` sólo cubre si no hubo contrato.
+                # Antes era al revés y el contrato no llegaba a ninguna
+                # semántica compuesta. Al reanudar un workflow aparcado el task
+                # es el del turno que lo creó.
+                if resume is None and objective and objective != prompt:
+                    task = objective
+                task = task or objective
                 logger.info(
                     "Composer: pattern=%s task=%s participants=%s workspace=%s",
                     pattern,
@@ -3314,8 +3540,15 @@ class _RouterChatClient:
                     )
                     call_names: dict[str, str] = {}
                     answer_parts: list[str] = []
+                    # Cada ejecución real de una tool MCP de un participante,
+                    # vista donde ocurre (la ejecutada tras una aprobación no
+                    # aparece en el stream del workflow).
+                    observed: list[tuple[str, dict, Any]] = []
+                    observer_token = TOOL_OBSERVER.set(
+                        lambda name, args, result: observed.append((name, args, result))
+                    )
                     async for update in self._run_pattern(
-                        pattern, task, participants, history
+                        pattern, task, participants, history, resume=resume
                     ):
                         yield update
                         if not isinstance(update, WorkflowEvent):
@@ -3408,6 +3641,31 @@ class _RouterChatClient:
                                 turn_evidence.append(
                                     f"- {speaker}: {tool}{' (falló)' if failed else ''} -> {result}"
                                 )
+                    TOOL_OBSERVER.reset(observer_token)
+                    streamed_keys = {i.rsplit(":", 1)[-1] for i in seen_facts}
+                    for name, args, result in observed:
+                        out = _observed_text(result)
+                        key = _fact_key(out)
+                        if key in streamed_keys:
+                            continue
+                        streamed_keys.add(key)
+                        identity = f"{self._turn_id}:executed:{name}:{key}"
+                        if identity not in seen_facts:
+                            seen_facts.add(identity)
+                            since_eval.append(identity)
+                        await self._ledger(
+                            "fact",
+                            identity,
+                            {
+                                "tool": name,
+                                "args": json.dumps(
+                                    {k: v for k, v in args.items() if k != "user_id"},
+                                    default=str,
+                                )[:500],
+                                "output": out[:1000],
+                            },
+                        )
+                        turn_evidence.append(f"- {name} (ejecutada) -> {out}")
                     answer = "".join(answer_parts)
                     if answer:
                         identity = f"{self._turn_id}:{pattern}:{_fact_key(answer)}"
@@ -3415,10 +3673,19 @@ class _RouterChatClient:
                             seen_facts.add(identity)
                             since_eval.append(identity)
                         await self._ledger("fact", identity, {"output": answer[:1000]})
-                    verdict = await self._evaluate(
-                        client, prompt, answer, turn_evidence
+                    verdict = (
+                        None
+                        if self._parked_now
+                        else await self._evaluate(
+                            client, objective, answer, turn_evidence
+                        )
                     )
-                    laps += 1
+                    if self._parked_now:
+                        # Un participante espera al usuario (pregunta o
+                        # aprobación): el turno queda abierto, no se juzga.
+                        outcome = "waiting_for"
+                    else:
+                        laps += 1
                     if verdict is not None:
                         kind, why, corrected = verdict
                         await self._ledger(
@@ -3462,6 +3729,7 @@ class _RouterChatClient:
         task: str,
         participants: list[dict],
         history: list | None,
+        resume: dict[str, Any] | None = None,
     ):
         """Build the composed participants with the existing factory and hand
         the run to ``OrchestrationManager.run_pattern`` — the single authority
@@ -3499,20 +3767,36 @@ class _RouterChatClient:
             Message(role=str(h.get("role") or "user"), text=str(h.get("content")))
             for h in (history or [])
             if isinstance(h, dict) and h.get("content")
-        ] + [Message(role="user", text=_composed_task(task, participants))]
+        ] + [Message(role="user", text=task)]
         async for event in OrchestrationManager().run_pattern(
             pattern,
             agents,
             messages,
             user_id=self._user_id,
-            session_id="",
-            plan_id=None,  # chat turn: no durable identity, ends on request_info
+            session_id=self._session_id,
+            plan_id=None,
             workspace_id=self._workspace_id,
+            # Identidad durable del turno compuesto: la sesión. Un agente que
+            # pide al usuario aparca el workflow; el siguiente mensaje lo
+            # reanuda (``resume``).
+            on_park=(
+                (lambda info: self._park_composition(pattern, task, participants, info))
+                if self._session_id
+                else None
+            ),
+            resume=resume,
             # El paso propio de cada participante: en sequential define la
             # etapa junto con la posición.
             steps={
                 str(p.get("name") or ""): str(p.get("instruction") or "")
                 for p in participants
+            },
+            # handoff: el subconjunto autónomo lo decide el dueño por
+            # participante, como el roster decide quiénes existen.
+            autonomous={
+                str(p.get("name") or "")
+                for p in participants
+                if p.get("autonomous") is True
             },
         ):
             yield event

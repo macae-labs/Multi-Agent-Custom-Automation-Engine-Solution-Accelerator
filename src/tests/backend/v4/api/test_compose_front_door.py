@@ -53,15 +53,15 @@ def _fake_openai(reply):
             self.kwargs = kwargs
             self.closed = False
             self.create_kwargs = None
-            # Un turno hace más de una llamada (compositor + evaluador).
-            # calls guarda todas; create_kwargs se queda con la PRIMERA,
-            # la del compositor, que es la oferta del turno.
+            # Un turno hace más de una llamada (contrato + compositor +
+            # evaluador). calls guarda todas; create_kwargs se queda con la
+            # del COMPOSITOR (la que ofrece tools), que es la oferta del turno.
             self.calls: list = []
             _Fake.instances.append(self)
 
             async def create(**kw):
                 self.calls.append(kw)
-                if self.create_kwargs is None:
+                if self.create_kwargs is None and "tools" in kw:
                     self.create_kwargs = kw
                 return reply
 
@@ -275,32 +275,44 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
     assert client.composition == ("concurrent", "Compare", ROSTER)
 
 
-def test_each_participant_receives_its_own_step_in_the_run_message():
-    # Rol reutilizable en la definición publicada; el paso de ESTA tarea en el
-    # mensaje de la corrida. Sin reparto, dos especialistas en secuencia hacían
-    # la tarea entera cada uno y repetían la misma respuesta (medido).
+@pytest.mark.asyncio
+async def test_each_participant_carries_its_own_step_in_its_definition_and_the_input_is_shared():
+    # Como define el framework concurrent (doc oficial): el ángulo de cada
+    # agente vive en SU definición y la entrada es la misma para todos.
+    # Medido 2026-10-04 con el reparto en el mensaje compartido: cada
+    # especialista hizo el trabajo de los dos.
     participants = [
         {
             "name": "SrcAgent",
-            "system_message": "rol",
+            "description": "d",
+            "system_message": "rol A",
             "instruction": "listar pyproject bajo src/",
         },
         {
             "name": "RuffAgent",
-            "system_message": "rol",
+            "description": "d",
+            "system_message": "rol B",
             "instruction": "correr ruff en cada uno",
         },
     ]
-    text = router._composed_task("Auditar ruff", participants)
-    assert text.startswith("Auditar ruff\n\nReparto de este trabajo")
-    assert "- SrcAgent: listar pyproject bajo src/" in text
-    assert "- RuffAgent: correr ruff en cada uno" in text
-    assert text.index("SrcAgent") < text.index("RuffAgent")
-    # Sin pasos, el mensaje es el objetivo tal cual.
-    assert (
-        router._composed_task("Auditar ruff", [{"name": "X", "system_message": "rol"}])
-        == "Auditar ruff"
+
+    class _Store:
+        async def get_team(self, _):
+            return None
+
+        async def add_team(self, _):
+            pass
+
+        async def update_team(self, _):
+            pass
+
+    team = await router._team_from_router_roster(
+        participants, "Auditar ruff", "u1", _Store(), None, with_proxy=False
     )
+    by_name = {a.name: a.system_message for a in team.agents}
+    assert by_name["SrcAgent"] == "rol A\n\nYour step in this task: listar pyproject bajo src/"
+    assert by_name["RuffAgent"] == "rol B\n\nYour step in this task: correr ruff en cada uno"
+    assert "RuffAgent" not in by_name["SrcAgent"]
     assert "instruction" in router._PARTICIPANT_SCHEMA["items"]["required"]
 
 

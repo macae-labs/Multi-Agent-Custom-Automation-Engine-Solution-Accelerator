@@ -16,7 +16,7 @@ class HRService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         """Register HR tools with the MCP server."""
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def employee_onboarding_blueprint_flat(
             employee_name: str | None = None,
             start_date: str | None = None,
@@ -181,7 +181,7 @@ class HRService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="registering for benefits")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def provide_employee_handbook(employee_name: str) -> str:
             """Provide the employee handbook to a new employee."""
             try:

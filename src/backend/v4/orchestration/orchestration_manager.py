@@ -6,6 +6,7 @@ import logging
 import re
 import time as _time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from agent_framework import (
@@ -179,6 +180,20 @@ async def _materialize_hosted_file_to_workspace(
             file_id,
             exc,
         )
+
+
+def _user_response(data: Any, answer: str, decision: str = "") -> Any:
+    """La respuesta del usuario en el tipo que la solicitud espera (doc): una
+    aprobación de tool, ``to_function_approval_response(approved=...)``; un
+    handoff, ``HandoffAgentUserRequest.create_response``; el resto, la
+    conversación con el mensaje del usuario."""
+    from agent_framework_orchestrations import HandoffAgentUserRequest
+
+    if isinstance(data, Content) and data.type == "function_approval_request":
+        return data.to_function_approval_response(approved=decision == "approved")
+    if isinstance(data, HandoffAgentUserRequest):
+        return HandoffAgentUserRequest.create_response(answer)
+    return [Message(role="user", text=answer)]
 
 
 def _participant_name(agent: Any) -> str:
@@ -442,6 +457,7 @@ class OrchestrationManager:
         durable: bool = False,
         steps: dict[str, str] | None = None,
         orchestrator: Any | None = None,
+        autonomous: set[str] | None = None,
     ) -> tuple[Any, list[Any]]:
         """Build the framework workflow of a composed chat-turn orchestration.
 
@@ -457,9 +473,11 @@ class OrchestrationManager:
           (``CHAT_ORCHESTRATOR_MODEL``) selects the speaker from the
           conversation; ``max_rounds`` is the same ceiling as the plan lane
           (without it the framework runs indefinitely).
-        * ``handoff``: the first participant starts and every participant can
-          hand off to every other; without autonomous mode the framework hands
-          control back to the user after a response without handoff.
+        * ``handoff``: the documented topology — the first participant is the
+          triage that routes to every specialist and every specialist hands
+          back to the triage; autonomous mode on, so an agent that answers
+          without handing off keeps working instead of returning control to
+          a user who is not at a prompt (a chat turn or a plan step).
 
         ``durable=True`` wires the SAME Cosmos checkpoint storage as magentic
         (the four builders accept ``checkpoint_storage``, verified against
@@ -550,13 +568,29 @@ class OrchestrationManager:
             # the caller to close when the workflow ends.
             return workflow, ([orchestrator] if created else [])
         if pattern == "handoff":
+            # Sin autoridad central (doc: "no existe una autoridad central que
+            # gestione el flujo"): el primero recibe el pedido y, sin
+            # add_handoff, el framework arma la malla — cada agente traspasa a
+            # cualquier otro según la conversación compartida. Restringir los
+            # especialistas a devolver al triage era un hub central (agente como
+            # herramienta), no handoff. Modo por defecto (human-in-loop): cuando
+            # un agente responde sin traspasar, el flujo pide al usuario
+            # (``request_info``) y el chat aparca el workflow hasta el siguiente
+            # mensaje (``run_pattern(on_park=, resume=)``).
             builder = HandoffBuilder(
                 participants=participants, checkpoint_storage=storage
             ).with_start_agent(participants[0])
-            for source in participants:
-                targets = [p for p in participants if p is not source]
-                if targets:
-                    builder.add_handoff(source, targets)
+            # Subconjunto autónomo (doc: ``with_autonomous_mode(agents=[...])``):
+            # lo decide el dueño por participante. Los demás devuelven la
+            # conversación al usuario cuando no traspasan.
+            names = [_participant_name(ag) for ag in agents]
+            chosen = [
+                p
+                for p, name in zip(participants, names, strict=False)
+                if name in (autonomous or set())
+            ]
+            if chosen:
+                builder = builder.with_autonomous_mode(agents=chosen)
             return builder.build(), []
         raise ValueError(f"unknown orchestration pattern '{pattern}'")
 
@@ -571,8 +605,19 @@ class OrchestrationManager:
         plan_id: str | None = None,
         workspace_id: str | None = None,
         steps: dict[str, str] | None = None,
+        autonomous: set[str] | None = None,
+        on_park: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        resume: dict[str, Any] | None = None,
     ):
         """Run a composed (non-magentic) pattern owning its full lifecycle.
+
+        ``on_park`` / ``resume`` give a chat turn the durable identity the
+        framework documents for handoff and any participant that asks the user
+        (Learn, "checkpoints for durable workflows"): on ``request_info`` the
+        workflow's checkpoint and pending request are handed to ``on_park``;
+        the next message resumes with ``resume={"checkpoint_id", "answer"}``:
+        step 1 restores the checkpoint (reloading the pending requests), step 2
+        sends the user's answer as the responses.
 
         This is the single authority for what happens to a composed run —
         the front door decides *what* (pattern, participants, task) and this
@@ -594,12 +639,48 @@ class OrchestrationManager:
         ephemeral turn must not shed durable checkpoints no identity
         references and no purge will ever collect.
         """
+        resumable = on_park is not None or resume is not None
         workflow, closables = self.build_pattern_workflow(
-            pattern, agents, durable=bool(plan_id), steps=steps
+            pattern,
+            agents,
+            durable=bool(plan_id) or resumable,
+            steps=steps,
+            autonomous=autonomous,
         )
         try:
-            async for event in workflow.run(messages, stream=True):
+            if resume is not None:
+                # Paso 1 (doc): restaurar el checkpoint recarga las solicitudes
+                # pendientes. Paso 2: responderlas con lo que dijo el usuario.
+                restored = []
+                async for event in workflow.run(
+                    checkpoint_id=resume["checkpoint_id"], stream=True
+                ):
+                    if getattr(event, "type", None) == "request_info":
+                        restored.append(event)
+                if not restored:
+                    raise RuntimeError(
+                        f"checkpoint {resume['checkpoint_id']} sin solicitud pendiente"
+                    )
+                responses = {
+                    req.request_id: _user_response(
+                        req.data,
+                        str(resume.get("answer") or ""),
+                        str(resume.get("decision") or ""),
+                    )
+                    for req in restored
+                }
+                event_stream = workflow.run(responses=responses, stream=True)
+            else:
+                event_stream = workflow.run(messages, stream=True)
+            pending_for_user: Any = None
+            async for event in event_stream:
                 if getattr(event, "type", None) == "request_info":
+                    if on_park is not None and not plan_id:
+                        # El checkpoint que conserva la solicitud se escribe al
+                        # CERRAR el superstep: se aparca cuando el stream
+                        # termina, como el carril de plan.
+                        pending_for_user = event
+                        continue
                     if plan_id:
                         await self._park_on_request_info(
                             workflow=workflow,
@@ -617,6 +698,43 @@ class OrchestrationManager:
                         )
                     return
                 yield event
+            if pending_for_user is not None and on_park is not None:
+                storage = get_checkpoint_storage()
+                latest = await storage.get_latest(workflow_name=workflow.name)
+                if (
+                    latest is None
+                    or pending_for_user.request_id
+                    not in latest.pending_request_info_events
+                ):
+                    raise RuntimeError(
+                        f"request_info {pending_for_user.request_id} sin checkpoint "
+                        f"que lo conserve (workflow {workflow.name})"
+                    )
+                data = pending_for_user.data
+                approval: dict[str, Any] | None = None
+                if (
+                    isinstance(data, Content)
+                    and data.type == "function_approval_request"
+                ):
+                    call = data.function_call
+                    approval = {
+                        "tool": str(getattr(call, "name", "") or ""),
+                        "arguments": str(getattr(call, "arguments", "") or "")[:2000],
+                    }
+                await on_park(
+                    {
+                        "request_id": pending_for_user.request_id,
+                        "checkpoint_id": latest.checkpoint_id,
+                        "workflow_name": workflow.name,
+                        "kind": "function_approval_request"
+                        if approval
+                        else type(data).__name__,
+                        "approval": approval,
+                        "executor_id": str(
+                            getattr(pending_for_user, "source_executor_id", "") or ""
+                        ),
+                    }
+                )
         finally:
             for resource in closables:
                 try:

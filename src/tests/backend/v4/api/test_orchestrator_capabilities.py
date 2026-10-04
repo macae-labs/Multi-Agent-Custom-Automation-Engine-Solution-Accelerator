@@ -251,6 +251,9 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
     calls = fake.instances[-1].calls
     assert len(calls) == 2
     verdict_input = calls[1]["input"][0]["content"]
+    # El objetivo que se juzga es el ``task`` que el modelo compuso (el
+    # pedido enriquecido con la conversación), no la prosa del usuario.
+    assert "OBJETIVO:\npyproject bajo src/" in verdict_input
     assert "sequential con SrcAgent" in verdict_input
     assert "workspace_search_files" in verdict_input
     assert "Encontré src/backend/pyproject.toml" in verdict_input

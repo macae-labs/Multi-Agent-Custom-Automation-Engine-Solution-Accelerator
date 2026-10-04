@@ -259,33 +259,247 @@ async def test_group_chat_the_orchestrator_picks_who_speaks_and_everyone_sees_th
 
 
 @pytest.mark.asyncio
-async def test_handoff_the_first_agent_hands_the_conversation_to_the_second_then_asks_the_user():
-    # A arranca, llama a la tool de handoff hacia B; el framework la intercepta,
-    # B responde, y sin otro handoff el control vuelve al usuario (request_info).
-    a_client = ScriptedClient(
-        "A",
+async def test_handoff_triage_routes_to_the_specialist_who_answers_and_the_user_is_asked():
+    # Topología documentada: triage al frente, especialistas que devuelven al
+    # triage, modo por defecto (human-in-loop). Un handoff es texto + tool call
+    # en el mismo turno (Sample Interaction). Triage deriva a B; B responde sin
+    # delegar y el flujo pide al usuario: el turno termina ahí.
+    triage_client = ScriptedClient(
+        "T",
         [
-            [Content.from_function_call("c1", "handoff_to_RuffAgent", arguments="{}")],
-            "A entregó a RuffAgent",
+            [
+                Content.from_text("Derivé a RuffAgent"),
+                Content.from_function_call(
+                    "c1", "handoff_to_RuffAgent", arguments="{}"
+                ),
+            ],
         ],
     )
-    b_client = EchoClient("B")
-    a = Agent(client=a_client, name="SrcAgent")
+    b_client = ScriptedClient("B", ["Auditoría hecha"])
+    triage = Agent(client=triage_client, name="TriageAgent")
     b = Agent(client=b_client, name="RuffAgent")
-    workflow, closables = OrchestrationManager.build_pattern_workflow("handoff", [a, b])
+    workflow, closables = OrchestrationManager.build_pattern_workflow(
+        "handoff", [triage, b]
+    )
     assert closables == []
 
     events = await _run(workflow, "Auditar ruff")
 
-    # A recibió la tarea y la tool de handoff hacia B estaba en su oferta.
-    assert a_client.seen[0] == ["user:Auditar ruff"]
-    assert any("handoff_to_RuffAgent" in t for t in a_client.tools_seen[0])
-    # B habló después de A, con la conversación de A.
-    speakers = [s for s, _ in _spoken(events)]
-    assert "RuffAgent" in speakers
+    # Enrutamiento según la doc: triage→especialista, especialista→triage.
+    assert any("handoff_to_RuffAgent" in t for t in triage_client.tools_seen[0])
+    assert any("handoff_to_TriageAgent" in t for t in b_client.tools_seen[0])
+    assert not any("handoff_to_RuffAgent" in t for t in b_client.tools_seen[0])
+    # B recibió la conversación entera (tarea + lo dicho por el triage).
     assert any("user:Auditar ruff" in t for t in b_client.seen[0])
-    # Sin otro handoff, el framework pide al usuario: el turno del chat termina ahí
-    # (run_pattern sin plan_id) y el carril de plan aparca.
+    speakers = [s for s, _ in _spoken(events)]
+    assert speakers.index("TriageAgent") < speakers.index("RuffAgent")
+    assert speakers[-1] == "RuffAgent"
+    assert any("Auditoría hecha" in t for _, t in _spoken(events))
+    # Modo por defecto: B respondió sin delegar → el flujo pide al usuario.
+    assert len(b_client.seen) == 1
     assert any(
         isinstance(e, WorkflowEvent) and e.type == "request_info" for e in events
     )
+
+
+@pytest.mark.asyncio
+async def test_handoff_parks_on_the_user_and_the_next_message_resumes_the_same_workflow(
+    monkeypatch,
+):
+    # El ejemplo de Learn entre DOS mensajes del chat: el especialista pregunta,
+    # el workflow se aparca en su checkpoint y el siguiente mensaje lo reanuda
+    # (paso 1 restaurar, paso 2 responder) en un workflow construido de nuevo.
+    from agent_framework import InMemoryCheckpointStorage
+
+    import v4.orchestration.orchestration_manager as om
+
+    storage = InMemoryCheckpointStorage()
+    monkeypatch.setattr(om, "get_checkpoint_storage", lambda: storage)
+
+    def _team(triage_script, support_script):
+        triage_client = ScriptedClient("T", triage_script)
+        support_client = ScriptedClient("S", support_script)
+        refund_client = EchoClient("R")
+        agents = [
+            Agent(client=triage_client, name="TriageAgent"),
+            Agent(client=support_client, name="SupportAgent"),
+            Agent(client=refund_client, name="RefundAgent"),
+        ]
+        return agents, triage_client, support_client, refund_client
+
+    parked: list[dict] = []
+
+    async def _park(info):
+        parked.append(info)
+
+    agents, _t, support, _r = _team(
+        [
+            [
+                Content.from_function_call(
+                    "c1", "handoff_to_SupportAgent", arguments="{}"
+                )
+            ],
+            "derivo a soporte",
+        ],
+        ["¿Preferís reemplazo o reembolso?"],
+    )
+    first = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            agents,
+            [Message(role="user", text="Mi pedido 1234 llegó roto")],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+        )
+    ]
+    assert [s for s, _ in _spoken(first)][-1] == "SupportAgent"
+    assert len(parked) == 1 and parked[0]["kind"] == "HandoffAgentUserRequest"
+
+    # Segundo mensaje: workflow NUEVO (otros objetos), mismo checkpoint. La
+    # respuesta vuelve al que preguntó (SupportAgent), que con la conversación
+    # completa traspasa directo a RefundAgent: malla, sin autoridad central.
+    agents2, triage2, _s2, refund2 = _team(
+        ["sin uso"],
+        [
+            [
+                Content.from_function_call(
+                    "c2", "handoff_to_RefundAgent", arguments="{}"
+                )
+            ],
+            "paso a reembolsos",
+        ],
+    )
+    second = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            agents2,
+            [],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+            resume={
+                "checkpoint_id": parked[0]["checkpoint_id"],
+                "answer": "Quiero reembolso",
+            },
+        )
+    ]
+    speakers = [s for s, _ in _spoken(second)]
+    assert "RefundAgent" in speakers
+    # Nadie volvió a pasar por el triage: el traspaso lo decidió el especialista.
+    assert triage2.seen == []
+    # La respuesta del usuario llegó al workflow, con el contexto previo.
+    assert any("Quiero reembolso" in t for seen in refund2.seen for t in seen)
+
+
+@pytest.mark.asyncio
+async def test_handoff_only_the_participants_the_owner_marked_autonomous_continue_alone():
+    # El dueño decide por participante (doc: with_autonomous_mode(agents=[...])).
+    # El autónomo, si no traspasa, recibe la continuación del framework; el
+    # resto devuelve al usuario.
+    a_client = ScriptedClient(
+        "A",
+        [
+            [Content.from_function_call("c1", "handoff_to_RuffAgent", arguments="{}")],
+            "a",
+        ],
+    )
+    b_client = ScriptedClient(
+        "B",
+        [
+            "primera parte",
+            [Content.from_function_call("c2", "handoff_to_SrcAgent", arguments="{}")],
+            "b",
+        ],
+    )
+    a = Agent(client=a_client, name="SrcAgent")
+    b = Agent(client=b_client, name="RuffAgent")
+    workflow, _ = OrchestrationManager.build_pattern_workflow(
+        "handoff", [a, b], autonomous={"RuffAgent"}
+    )
+    await _run(workflow, "Auditar ruff")
+
+    # RuffAgent respondió sin traspasar y, por ser autónomo, el framework lo
+    # volvió a invocar con su continuación en vez de pedir al usuario.
+    assert len(b_client.seen) >= 2
+    assert any("Continue assisting autonomously" in t for t in b_client.seen[1])
+
+
+@pytest.mark.asyncio
+async def test_a_tool_that_needs_approval_parks_and_the_decision_resumes_it(
+    monkeypatch,
+):
+    # Doc: una tool que requiere aprobación emite function_approval_request; la
+    # decisión vuelve con to_function_approval_response sobre el checkpoint.
+    from agent_framework import FunctionTool, InMemoryCheckpointStorage
+
+    import v4.orchestration.orchestration_manager as om
+
+    storage = InMemoryCheckpointStorage()
+    monkeypatch.setattr(om, "get_checkpoint_storage", lambda: storage)
+    executed: list[str] = []
+
+    def _publish(branch: str) -> str:
+        executed.append(branch)
+        return f"publicado {branch}"
+
+    def _team():
+        tool = FunctionTool(
+            func=_publish,
+            name="workspace_publish",
+            description="publica",
+            approval_mode="always_require",
+        )
+        client = ScriptedClient(
+            "P",
+            [
+                [
+                    Content.from_function_call(
+                        "t1", "workspace_publish", arguments='{"branch": "main"}'
+                    )
+                ],
+                "listo, publicado",
+            ],
+        )
+        agent = Agent(client=client, name="PublisherAgent", tools=[tool])
+        return [agent]
+
+    parked: list[dict] = []
+
+    async def _park(info):
+        parked.append(info)
+
+    _ = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            _team(),
+            [Message(role="user", text="publicá")],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+        )
+    ]
+    assert parked and parked[0]["kind"] == "function_approval_request"
+    assert parked[0]["approval"]["tool"] == "workspace_publish"
+    assert executed == []  # nada corre sin la decisión
+
+    _ = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            _team(),
+            [],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+            resume={
+                "checkpoint_id": parked[0]["checkpoint_id"],
+                "answer": "",
+                "decision": "approved",
+            },
+        )
+    ]
+    assert executed == ["main"]

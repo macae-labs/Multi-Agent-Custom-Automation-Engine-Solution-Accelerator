@@ -16,7 +16,7 @@ class GeneralService(MCPToolBase):
     def register_tools(self, mcp) -> None:
         """Register general tools with the MCP server."""
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         def greet_test(name: str) -> str:
             """Test for MCP - Greets the user with the provided name."""
             try:
@@ -31,7 +31,7 @@ class GeneralService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="greeting user")
 
-        @mcp.tool(tags={self.domain.value})
+        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
         async def get_server_status() -> str:
             """Get the current server status and information."""
             try:

@@ -47,7 +47,9 @@ def fake_clone(monkeypatch) -> list[tuple[Path, str]]:
     """Doble de ``_clone_into``: deja un repo con un archivo, como un clon real."""
     calls: list[tuple[Path, str, str | None]] = []
 
-    def _clone(ws: Path, url: str, token: str | None, branch: str | None = None) -> None:
+    def _clone(
+        ws: Path, url: str, token: str | None, branch: str | None = None
+    ) -> None:
         calls.append((ws, url, branch))
         ws.mkdir(parents=True, exist_ok=True)
         init = ["git", "init", "-q"] + (["-b", branch] if branch else [])
@@ -130,7 +132,9 @@ def test_the_leftovers_of_a_failed_removal_are_not_a_second_registry(root, monke
     assert wc.discover() is None
 
 
-def test_the_declared_branch_is_cloned_and_recorded_in_the_workspace_meta(root, monkeypatch):
+def test_the_declared_branch_is_cloned_and_recorded_in_the_workspace_meta(
+    root, monkeypatch
+):
     """La rama es intención del usuario al montar y parte del contrato del
     workspace: el clon nace en ella y queda en el meta, que es de donde parten
     el sandbox del MCP (`upstream`, `--branch`, publish) y el fast-forward del
@@ -145,7 +149,9 @@ def test_the_declared_branch_is_cloned_and_recorded_in_the_workspace_meta(root, 
     assert meta["branch"] == "stable/v4-baseline"
 
 
-def test_without_a_declared_branch_the_resolved_one_is_still_recorded(root, monkeypatch):
+def test_without_a_declared_branch_the_resolved_one_is_still_recorded(
+    root, monkeypatch
+):
     fake_clone(monkeypatch)
 
     create()
