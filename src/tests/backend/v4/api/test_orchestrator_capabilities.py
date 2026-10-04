@@ -184,7 +184,8 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
         {"status": "success", "details": {"matches": ["src/backend/pyproject.toml"]}}
     )
 
-    async def _run_pattern(pattern, task, participants, history):
+    async def _run_pattern(pattern, task, participants, history, *, resume=None):
+        assert resume is None
         yield WorkflowEvent(
             "output",
             data=AgentResponseUpdate(
@@ -295,7 +296,8 @@ async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
     fake = _fake_openai(_Stream([_done(call)]), _verdict(False, "faltan datos"))
     client = _client()
 
-    async def _run_pattern(pattern, task, participants, history):
+    async def _run_pattern(pattern, task, participants, history, *, resume=None):
+        assert resume is None
         for content in (
             Content.from_mcp_server_tool_result("m1", output="mcp evidence"),
             Content.from_code_interpreter_tool_result(
@@ -842,7 +844,7 @@ async def test_workspace_tool_results_are_serialized_when_not_text_chunks():
 
 
 @pytest.mark.asyncio
-async def test_a_capability_only_success_emits_a_brief_final_text():
+async def test_a_generated_artifact_ends_the_turn_without_a_text_verdict(_ledger_store):
     class _Store:
         async def save(self, file_id, filename, data):
             return True
@@ -860,7 +862,13 @@ async def test_a_capability_only_success_emits_a_brief_final_text():
     ):
         updates = await _collect(_client())
 
-    assert "".join((x.text or "") for u in updates for x in u.contents) == "Listo."
+    (content,) = [x for u in updates for x in u.contents]
+    assert content.type == "hosted_file"
+    assert len(fake.instances[-1].calls) == 1
+    events = await _ledger_store.history("t1")
+    assert not any(e["kind"] == "verdict" for e in events)
+    closed = next(e for e in events if e["identity"] == "t1:closed")
+    assert closed["payload"]["status"] == "done"
 
 
 @pytest.mark.asyncio

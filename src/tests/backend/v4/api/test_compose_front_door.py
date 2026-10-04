@@ -42,9 +42,10 @@ class _Stream:
         return self._events.pop(0)
 
 
-def _fake_openai(reply):
-    """Sustituto de AsyncOpenAI: responses.create devuelve `reply` (respuesta
-    no stream, o un _Stream). Guarda los kwargs de construcción y de llamada."""
+def _fake_openai(*replies):
+    """Sustituto de AsyncOpenAI: consume las respuestas en orden y repite la
+    última. Guarda los kwargs de construcción y de llamada."""
+    queue = list(replies)
 
     class _Fake:
         instances: list = []
@@ -63,7 +64,7 @@ def _fake_openai(reply):
                 self.calls.append(kw)
                 if self.create_kwargs is None and "tools" in kw:
                     self.create_kwargs = kw
-                return reply
+                return queue.pop(0) if len(queue) > 1 else queue[0]
 
             self.responses = SimpleNamespace(create=create)
 
@@ -178,10 +179,19 @@ async def test_chat_position_answer_is_a_framework_update():
     fake = _fake_openai(
         _Stream(
             [
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=_compose_item(pattern="direct", task="hola", participants=[]),
+                )
+            ]
+        ),
+        _Stream(
+            [
                 SimpleNamespace(type="response.output_text.delta", delta="Hola, "),
                 SimpleNamespace(type="response.output_text.delta", delta="¿qué hay?"),
             ]
-        )
+        ),
+        SimpleNamespace(output_text=json.dumps({"goal_met": True})),
     )
     client = _client()
     with patch("openai.AsyncOpenAI", fake):
@@ -192,7 +202,7 @@ async def test_chat_position_answer_is_a_framework_update():
     assert updates[0].author_name == "Composer"
     assert client.composition is None
     call = fake.instances[-1].create_kwargs
-    assert call["tool_choice"] == "auto"
+    assert call["tool_choice"] == {"type": "function", "name": "compose"}
     assert call["stream"] is True and call["store"] is False
     # El turno ofrece ``compose`` (la decisión de la semántica es del dueño)
     # junto a las capacidades PROPIAS del orquestador.
@@ -200,6 +210,9 @@ async def test_chat_position_answer_is_a_framework_update():
     assert {"image_generation", "web_search", "code_interpreter"} <= {
         t["type"] for t in call["tools"][1:]
     }
+    execution = fake.instances[-1].calls[1]
+    assert execution["tool_choice"] == "auto"
+    assert all(t.get("name") != "compose" for t in execution["tools"])
 
 
 @pytest.mark.asyncio
@@ -261,7 +274,8 @@ async def test_chat_position_other_pattern_runs_in_the_turn_and_yields_workflow_
     client = _client(memory_store=object())
     ran: list = []
 
-    async def _run_pattern(pattern, task, participants, history):
+    async def _run_pattern(pattern, task, participants, history, *, resume=None):
+        assert resume is None
         ran.append((pattern, task, participants, history))
         yield WorkflowEvent("output", data="x", executor_id="RepoAgent")
 
