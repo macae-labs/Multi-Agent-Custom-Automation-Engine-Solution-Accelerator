@@ -2315,6 +2315,7 @@ def _read_composition(
 
 class _RouterChatClient:
     approval_request: dict[str, Any] | None = None
+    clarification_request: dict[str, Any] | None = None
     _parked_now: bool = False
     _pending_approval_payload: dict[str, Any] | None = None
     _turn_id: str = ""
@@ -2379,6 +2380,10 @@ class _RouterChatClient:
         # Solicitud de autorización humana emitida en este turno (None si no
         # hubo): el manejador SSE la publica como ``approval_request``.
         self.approval_request: dict[str, Any] | None = None
+        # Pregunta de clarificación aparcada en este turno (None si no hubo): el
+        # manejador SSE publica su ``request_id`` para que el cliente lo devuelva
+        # (``clarification_request_id``) y así reanudar el workflow correcto.
+        self.clarification_request: dict[str, Any] | None = None
         # Cliente del ca-mcp del entorno: las tools del workspace las ejecuta
         # ESTE proceso. Un attach hosted lo conectaría el servicio del modelo,
         # que no alcanza ni el ca-mcp local ni el disco donde vive el workspace.
@@ -2832,6 +2837,13 @@ class _RouterChatClient:
                     "por el servidor MCP (readOnlyHint): requiere aprobación humana."
                 ),
             }
+        else:
+            # Una pregunta de clarificación: el cliente debe devolver este
+            # ``request_id`` como ``clarification_request_id`` para reanudar.
+            self.clarification_request = {
+                "request_id": info["request_id"],
+                "turn_id": self._turn_id,
+            }
         logger.info(
             "Workflow %s aparcado en request_info %s (%s, sesión %s)",
             pattern,
@@ -2848,7 +2860,11 @@ class _RouterChatClient:
 
         Una aprobación de tool pendiente sólo la resuelve una decisión
         (``with_decision``): un mensaje de texto no la consume (medido
-        2026-10-04: un seguimiento escrito la resolvía como rechazo)."""
+        2026-10-04: un seguimiento escrito la resolvía como rechazo). Una
+        pregunta de clarificación sólo se reanuda cuando la llamada nombra su
+        ``request_id``: sin esa identidad explícita (``clarification_request_id``
+        del cliente) un texto cualquiera no es "la respuesta" a una pregunta que
+        el usuario no vio."""
         if not self._session_id or not self._user_id:
             return None
         try:
@@ -2886,6 +2902,10 @@ class _RouterChatClient:
         if is_approval and not with_decision:
             # Sigue pendiente: se vuelve a mostrar la solicitud.
             self._pending_approval_payload = dict(parked["payload"])
+            return None
+        if request_id is None:
+            # Clarificación sin identidad explícita: no se reanuda. El mensaje
+            # es una tarea nueva, aunque la sesión tenga este workflow aparcado.
             return None
         took = await self._ledger(
             "fact",
@@ -3002,6 +3022,7 @@ class _RouterChatClient:
         allow_plan: bool = True,
         file_ids: list[str] | None = None,
         approval: dict[str, str] | None = None,
+        clarification_request_id: str | None = None,
         **_ignored,
     ):
         """Chat position: the composer answers, or composes and runs.
@@ -3106,12 +3127,21 @@ class _RouterChatClient:
         turn_evidence: list[str] = []
         since_eval: list[str] = []
         # Si la sesión tiene un workflow compuesto aparcado (un agente le
-        # preguntó al usuario), este mensaje es la respuesta: se reanuda ese
-        # workflow en vez de decidir de nuevo (doc de handoff).
+        # preguntó al usuario), sólo se reanuda cuando ESTE mensaje nombra la
+        # solicitud (``clarification_request_id``). Sin esa identidad explícita
+        # el mensaje es una tarea nueva: adivinar por sesión que "este texto es
+        # la respuesta" tragaba tareas nuevas como respuestas a preguntas que el
+        # usuario nunca vio (mismo contrato que ``_clarification_answer_target``,
+        # messages_af.py:358-362). Una aprobación pendiente sí se vuelve a
+        # mostrar (no se consume) para no perder su tarjeta.
         resume: dict[str, Any] | None = None
         self._parked_now = False
         self._pending_approval_payload = None
-        parked = parked_by_decision or await self._resume_parked_composition()
+        parked = parked_by_decision
+        if parked is None:
+            parked = await self._resume_parked_composition(
+                str(clarification_request_id) if clarification_request_id else None
+            )
         pending_approval = self._pending_approval_payload
         if parked is None and pending_approval is not None:
             tool = (pending_approval.get("approval") or {}).get("tool") or "una tool"
@@ -4436,6 +4466,10 @@ async def chat_message_stream(
                     if chat_request.approval_request_id
                     else None
                 ),
+                # Identidad de la clarificación que este mensaje responde. Sin
+                # ella el mensaje es una tarea nueva, aunque la sesión tenga un
+                # workflow compuesto aparcado.
+                "clarification_request_id": chat_request.clarification_request_id,
             }
 
             async for update in agent.invoke(
@@ -4865,6 +4899,21 @@ async def chat_message_stream(
                     {
                         "type": "approval_request",
                         **_approval,
+                        "session_id": chat_request.session_id,
+                    }
+                )
+
+            _clarification = getattr(agent, "clarification_request", None)
+            if _clarification:
+                # Un participante preguntó al usuario: se publica el
+                # ``request_id`` para que la respuesta lo devuelva como
+                # ``clarification_request_id`` y reanude ESTE workflow (sin eso
+                # el backend nunca adivina por sesión que un texto es la
+                # respuesta).
+                yield _sse_event(
+                    {
+                        "type": "clarification_request",
+                        **_clarification,
                         "session_id": chat_request.session_id,
                     }
                 )
