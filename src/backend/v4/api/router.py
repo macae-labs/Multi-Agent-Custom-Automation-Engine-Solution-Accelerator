@@ -3351,7 +3351,7 @@ class _RouterChatClient:
                                 tool = getattr(content, "name", None) or call_names.get(
                                     str(content.call_id), "unknown"
                                 )
-failed = content.exception is not None
+                                failed = content.exception is not None
                                 result = _observed_text(content.result)
                                 if failed and not result:
                                     result = (
