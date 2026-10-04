@@ -181,7 +181,7 @@ class HRService(MCPToolBase):
             except Exception as e:
                 return format_error_response(error_message=str(e), context="registering for benefits")
 
-        @mcp.tool(tags={self.domain.value}, annotations={"readOnlyHint": True})
+        @mcp.tool(tags={self.domain.value})
         async def provide_employee_handbook(employee_name: str) -> str:
             """Provide the employee handbook to a new employee."""
             try:
