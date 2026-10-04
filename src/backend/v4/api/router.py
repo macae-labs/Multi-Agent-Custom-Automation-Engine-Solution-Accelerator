@@ -3026,7 +3026,12 @@ class _RouterChatClient:
         # ese workflow (to_function_approval_response); no es una autorización
         # del dueño.
         parked_by_decision = None
-        if approval and approval.get("request_id"):
+        if (
+            approval
+            and approval.get("request_id")
+            and str(approval.get("decision") or "").strip().lower()
+            in ("approved", "rejected")
+        ):
             parked_by_decision = await self._resume_parked_composition(
                 str(approval.get("request_id") or ""), with_decision=True
             )
