@@ -3168,6 +3168,7 @@ class _RouterChatClient:
                 str(parked.get("task") or ""),
                 list(parked.get("participants") or []),
             )
+            objective = composition[1] or objective
             resume = {
                 "checkpoint_id": parked["checkpoint_id"],
                 "answer": prompt,
