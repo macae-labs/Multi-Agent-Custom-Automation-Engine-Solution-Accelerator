@@ -634,12 +634,23 @@ class OrchestrationManager:
           the turn's agents are closed here, deterministically, in a finally.
 
         Durability follows the identity: with a ``plan_id`` the workflow
-        builds WITH checkpoint storage (parkable, purgeable via
-        ``plan.workflow_names``); without one it builds with none — an
-        ephemeral turn must not shed durable checkpoints no identity
-        references and no purge will ever collect.
+        builds WITH checkpoint storage parkable and purgeable via
+        ``plan.workflow_names``. A composed chat turn (``on_park``/``resume``,
+        no ``plan_id``) also builds WITH storage so a participant can park on
+        the session, but nothing lists it in ``plan.workflow_names``; this
+        method is therefore its only purge path — it keeps a lineage that
+        parked a request the user can resume and drops every other (the turn
+        that finished or was abandoned, and the checkpoint it resumed from).
+        A truly ephemeral turn (no ``on_park`` and no ``resume``) builds with
+        none — it must not shed durable checkpoints no identity references.
         """
         resumable = on_park is not None or resume is not None
+        # Un turno compuesto de chat (sin ``plan_id``) construye con storage
+        # durable para poder aparcarse, pero su ``workflow_name`` nunca entra en
+        # ``plan.workflow_names`` — el único recorrido de purga. Sin limpieza
+        # terminal aquí sus checkpoints quedan huérfanos en Cosmos para siempre;
+        # la durabilidad sigue a la identidad aparcada, no al turno.
+        durable_chat = resumable and not plan_id
         workflow, closables = self.build_pattern_workflow(
             pattern,
             agents,
@@ -647,6 +658,7 @@ class OrchestrationManager:
             steps=steps,
             autonomous=autonomous,
         )
+        parked = False
         try:
             if resume is not None:
                 # Paso 1 (doc): restaurar el checkpoint recarga las solicitudes
@@ -735,7 +747,10 @@ class OrchestrationManager:
                         ),
                     }
                 )
+                parked = True
         finally:
+            if durable_chat:
+                await self._purge_composed_turn(workflow, resume, parked)
             for resource in closables:
                 try:
                     close_method = getattr(resource, "close", None)
@@ -1018,6 +1033,47 @@ class OrchestrationManager:
         self.logger.info(
             "Checkpoints purged for plan %s (%d segments)", plan.plan_id, len(names)
         )
+
+    async def _purge_composed_turn(
+        self, workflow: Any, resume: dict[str, Any] | None, parked: bool
+    ) -> None:
+        """Limpieza terminal del linaje durable de un turno compuesto de chat.
+
+        Un turno compuesto no se referencia desde ``plan.workflow_names``, así
+        que ``_purge_checkpoint_lineage`` nunca lo recoge. La durabilidad sigue a
+        la identidad aparcada: se conserva SÓLO el linaje que dejó una solicitud
+        que el usuario puede reanudar (``parked``); cualquier otro —el turno que
+        terminó o se abandonó, y el checkpoint del que se reanudó, ya consumido—
+        es un huérfano que se borra aquí. La unidad es el ``workflow_name``: la
+        cadena ``previous_checkpoint_id`` no cruza una reanudación."""
+        storage = get_checkpoint_storage()
+        names: set[str] = set()
+        if resume is not None:
+            # El checkpoint reanudado ya se consumió para restaurar este turno;
+            # su ``workflow_name`` difiere del de esta corrida, así que su linaje
+            # queda huérfano salvo que se purgue explícitamente.
+            try:
+                spent = await storage.load(resume["checkpoint_id"])
+                names.add(spent.workflow_name)
+            except Exception as e:
+                self.logger.warning(
+                    "No se pudo resolver el linaje reanudado para purgar: %s", e
+                )
+        if parked:
+            # El nuevo checkpoint aparcado se conserva; nunca se purga.
+            names.discard(workflow.name)
+        else:
+            names.add(workflow.name)
+        for name in names:
+            try:
+                for checkpoint_id in await storage.list_checkpoint_ids(
+                    workflow_name=name
+                ):
+                    await storage.delete(checkpoint_id)
+            except Exception as e:
+                self.logger.warning(
+                    "Purga de checkpoints del turno compuesto %s falló: %s", name, e
+                )
 
     async def _purge_checkpoint_lineage_by_id(self, user_id: str, plan_id: str) -> None:
         from common.database.database_factory import DatabaseFactory

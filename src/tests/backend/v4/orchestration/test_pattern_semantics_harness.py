@@ -503,3 +503,131 @@ async def test_a_tool_that_needs_approval_parks_and_the_decision_resumes_it(
         )
     ]
     assert executed == ["main"]
+
+
+@pytest.mark.asyncio
+async def test_a_composed_chat_turn_that_ends_without_parking_purges_its_checkpoints(
+    monkeypatch,
+):
+    # Un turno compuesto construye con storage durable para poder aparcarse, pero
+    # su ``workflow_name`` nunca entra en ``plan.workflow_names`` (el único
+    # recorrido de purga de planes). Si termina SIN aparcar, sus checkpoints son
+    # huérfanos que ningún plan recoge: ``run_pattern`` los borra al cerrar.
+    from agent_framework import InMemoryCheckpointStorage
+
+    import v4.orchestration.orchestration_manager as om
+
+    storage = InMemoryCheckpointStorage()
+    monkeypatch.setattr(om, "get_checkpoint_storage", lambda: storage)
+
+    agents = [
+        Agent(client=EchoClient("A"), name="SrcAgent"),
+        Agent(client=EchoClient("B"), name="RuffAgent"),
+    ]
+
+    async def _park(info):  # nunca se llama: el turno no pregunta al usuario
+        raise AssertionError("un turno sin request_info no debe aparcar")
+
+    _ = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "sequential",
+            agents,
+            [Message(role="user", text="Auditar ruff")],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+        )
+    ]
+    # El turno terminó sin aparcar: nada que reanudar, ningún checkpoint queda.
+    assert storage._checkpoints == {}
+
+
+@pytest.mark.asyncio
+async def test_a_parked_chat_turn_retains_its_checkpoint_and_a_resume_purges_the_spent_one(
+    monkeypatch,
+):
+    # Lo contrario del anterior: un turno que SÍ aparca conserva su checkpoint
+    # (es la identidad que el usuario puede reanudar). Al reanudarlo, el linaje
+    # del que se reanudó queda consumido y se purga, mientras el nuevo aparcado
+    # se conserva — la durabilidad sigue a la identidad vigente, no acumula.
+    from agent_framework import InMemoryCheckpointStorage
+
+    import v4.orchestration.orchestration_manager as om
+
+    storage = InMemoryCheckpointStorage()
+    monkeypatch.setattr(om, "get_checkpoint_storage", lambda: storage)
+
+    parked: list[dict] = []
+
+    async def _park(info):
+        parked.append(info)
+
+    def _team(triage_script, support_script):
+        return [
+            Agent(client=ScriptedClient("T", triage_script), name="TriageAgent"),
+            Agent(client=ScriptedClient("S", support_script), name="SupportAgent"),
+            Agent(client=EchoClient("R"), name="RefundAgent"),
+        ]
+
+    first_team = _team(
+        [
+            [
+                Content.from_function_call(
+                    "c1", "handoff_to_SupportAgent", arguments="{}"
+                )
+            ],
+            "derivo a soporte",
+        ],
+        ["¿Preferís reemplazo o reembolso?"],
+    )
+    _ = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            first_team,
+            [Message(role="user", text="Mi pedido 1234 llegó roto")],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+        )
+    ]
+    # Aparcado: el checkpoint que conserva la solicitud sigue en el storage.
+    assert len(parked) == 1
+    assert any(
+        cp.checkpoint_id == parked[0]["checkpoint_id"]
+        for cp in storage._checkpoints.values()
+    )
+
+    second_team = _team(
+        ["sin uso"],
+        [
+            [
+                Content.from_function_call(
+                    "c2", "handoff_to_RefundAgent", arguments="{}"
+                )
+            ],
+            "paso a reembolsos",
+        ],
+    )
+    _ = [
+        e
+        async for e in OrchestrationManager().run_pattern(
+            "handoff",
+            second_team,
+            [],
+            user_id="u1",
+            session_id="s1",
+            on_park=_park,
+            resume={
+                "checkpoint_id": parked[0]["checkpoint_id"],
+                "answer": "Quiero reembolso",
+            },
+        )
+    ]
+    # La reanudación volvió a aparcar (handoff devuelve al usuario): el linaje
+    # del que se reanudó ya está consumido y se purgó; sólo queda el nuevo.
+    assert len(parked) == 2
+    present = {cp.checkpoint_id for cp in storage._checkpoints.values()}
+    assert parked[0]["checkpoint_id"] not in present
+    assert parked[1]["checkpoint_id"] in present
