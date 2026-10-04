@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 T0 = time.monotonic()
 
@@ -129,8 +129,8 @@ with sync_playwright() as p:
             # La tarjeta se monta después del cierre del stream: se la espera
             # antes de escribir, o el texto respondería por ella.
             approve.first.wait_for(timeout=20000)
-        except Exception:
-            pass
+        except PlaywrightTimeoutError:
+            log("tarjeta de autorización no apareció dentro de 20s; se continúa con flujo normal")
         if approve.count():
             log("tarjeta de autorización visible: Aprobar")
             approve.first.click()
