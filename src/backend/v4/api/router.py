@@ -3351,8 +3351,13 @@ class _RouterChatClient:
                                 tool = getattr(content, "name", None) or call_names.get(
                                     str(content.call_id), "unknown"
                                 )
+failed = content.exception is not None
                                 result = _observed_text(content.result)
-                                failed = content.exception is not None
+                                if failed and not result:
+                                    result = (
+                                        str(content.exception)
+                                        or type(content.exception).__name__
+                                    )
                             elif content.type == "mcp_server_tool_result":
                                 tool = getattr(
                                     content, "tool_name", None
