@@ -2956,11 +2956,13 @@ class _RouterChatClient:
         bearer = await self._bearer()
         client = self._responses_client(bearer)
         composition: tuple[str, str, list[dict]] | None = None
-        # El turno no termina en la primera pasada. Cada vuelta acumula lo que
+        # El turno no termina en la primera pasada: cada vuelta acumula lo que
         # realmente ocurrió (capacidades usadas, su resultado, la respuesta) y
-        # el evaluador decide si el objetivo se cumplió. Sin contador de
-        # vueltas: se sale cuando se cumple, cuando no hay progreso (el
-        # evaluador repite el mismo motivo) o cuando el usuario aborta.
+        # se sigue hasta que hay salida para el humano. En el chat NO hay
+        # re-juicio interno —el criterio de cierre es trivial (se produjo
+        # salida) y el "¿otra vuelta?" lo decide el próximo mensaje del usuario,
+        # no un evaluador que juzgue, corrija o mida "sin progreso". Ese
+        # juez-LLM pertenece sólo al carril autónomo.
         conversation: list = self._composer_input(prompt, history)
         # Una decisión sobre una tool de un workflow compuesto aparcado reanuda
         # ese workflow (to_function_approval_response); no es una autorización
