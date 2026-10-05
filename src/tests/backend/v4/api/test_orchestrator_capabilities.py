@@ -163,8 +163,9 @@ async def test_a_composed_run_leaves_facts_without_a_verdict(
     _ledger_store, monkeypatch
 ):
     # La orquestación elegida corre dentro del turno y bajo la misma ley: lo
-    # que cada participante observó son hechos del turno y el veredicto juzga
-    # su resultado. Lo que dijeron ya salió por sus eventos: no se repite.
+    # que cada participante observó son hechos del turno que quedan en el
+    # ledger, sin veredicto que los juzgue. Lo que dijeron ya salió por sus
+    # eventos: no se repite.
     call = SimpleNamespace(
         type="function_call",
         name="compose",
