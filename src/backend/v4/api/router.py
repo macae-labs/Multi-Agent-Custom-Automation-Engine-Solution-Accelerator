@@ -1614,24 +1614,6 @@ def _to_safe_dict(value: Any, max_depth: int = 4, _depth: int = 0) -> Any:
 _fact_key = fact_key
 
 
-def _describe_execution(item: Any) -> str:
-    """Una línea de lo que una capacidad HIZO, tomada del item, no de la prosa.
-
-    El item lleva su propio ``status`` y su ``error``; el texto de la respuesta
-    es lo que el modelo *dice* que pasó. El evaluador juzga contra esto, que es
-    la diferencia entre verificar y creerle.
-    """
-    kind = str(getattr(item, "type", "") or "desconocido")
-    status = str(getattr(item, "status", "") or "")
-    error = getattr(item, "error", None)
-    if error is not None:
-        code = str(getattr(error, "code", "") or getattr(error, "type", "") or "error")
-        detail = str(getattr(error, "message", "") or error)[:300]
-        return f"- {kind}: FALLÓ ({code}) {detail}"
-    name = str(getattr(item, "name", "") or getattr(item, "server_label", "") or "")
-    return f"- {kind}{f' [{name}]' if name else ''}: {status or 'ok'}"
-
-
 def _extract_function_result_payload(item: Any) -> dict[str, Any]:
     """Extract rich tool-result payload from response output items."""
     safe_item = _to_safe_dict(item)
@@ -3058,10 +3040,6 @@ class _RouterChatClient:
                 "workspace_id": self._workspace_id or "",
             },
         )
-        # Evidencia del TURNO: el evaluador juzga contra todo lo ejecutado, no
-        # contra la última pasada (que suele ser la síntesis, sin tools).
-        turn_evidence: list[str] = []
-        since_eval: list[str] = []
         # Si la sesión tiene un workflow compuesto aparcado (un agente le
         # preguntó al usuario), sólo se reanuda cuando ESTE mensaje nombra la
         # solicitud (``clarification_request_id``). Sin esa identidad explícita
@@ -3130,7 +3108,6 @@ class _RouterChatClient:
                 # volvía como "(sin respuesta)": se le borraban sus palabras
                 # del historial y dejaba de comentar.
                 said = ""
-                evidence: list[str] = []
                 executed: list[tuple[dict, dict]] = []
                 restated = False
                 # Un artefacto generado (imagen/archivo) es el entregable
@@ -3208,8 +3185,6 @@ class _RouterChatClient:
                                 yield self._progress(answer.strip())
                                 answer = ""
                         if itype == "image_generation_call":
-                            evidence.append(_describe_execution(item))
-                            since_eval.append(str(itype))
                             generated = False
                             async for _img in self._image_as_generated_file(item):
                                 generated = True
@@ -3298,11 +3273,7 @@ class _RouterChatClient:
                             )
                             _fail = _out.startswith("ERROR") or '"error"' in _out[:200]
                             _identity = f"{self._turn_id}:{_fn}:{_fact_key(_out)}"
-                            if _identity not in seen_facts:
-                                seen_facts.add(_identity)
-                                since_eval.append(
-                                    f"{_identity}{':FAIL' if _fail else ''}"
-                                )
+                            seen_facts.add(_identity)
                             await self._ledger(
                                 "fact",
                                 _identity,
@@ -3312,10 +3283,6 @@ class _RouterChatClient:
                                     "failed": _fail,
                                     "output": _out[:1000],
                                 },
-                            )
-                            evidence.append(
-                                f"- {_fn} args={_args or '{}'} -> "
-                                f"({len(_out)} chars, completo)\n{_out}"
                             )
                             _cid = _cid0
                             executed.append(
@@ -3333,9 +3300,6 @@ class _RouterChatClient:
                                     },
                                 )
                             )
-                        elif itype and itype not in ("message", "reasoning"):
-                            evidence.append(_describe_execution(item))
-                            since_eval.append(str(itype))
 
                 if pending and not marker_blocked:
                     answer += pending
@@ -3381,7 +3345,6 @@ class _RouterChatClient:
                     break
                 if composition is not None:
                     break
-                turn_evidence.extend(evidence)
 
                 # El artefacto es el entregable: se emitió al usuario en esta
                 # misma pasada. El juez de texto no puede verificar sus píxeles,
@@ -3434,7 +3397,6 @@ class _RouterChatClient:
                 self.composition = (pattern, task, participants)
                 if pattern != "magentic":
                     names = ", ".join(p.get("name", "") for p in participants)
-                    turn_evidence.append(f"Orquestación: {pattern} con {names}")
                     # La decisión del dueño es un hecho del turno: qué semántica
                     # corrió y con quién. Sin esto el ledger mostraba a los
                     # participantes pero no el patrón elegido.
@@ -3531,9 +3493,7 @@ class _RouterChatClient:
                                 continue
                             if result:
                                 identity = f"{self._turn_id}:{speaker}:{tool}:{_fact_key(result)}"
-                                if identity not in seen_facts:
-                                    seen_facts.add(identity)
-                                    since_eval.append(identity)
+                                seen_facts.add(identity)
                                 await self._ledger(
                                     "fact",
                                     identity,
@@ -3542,9 +3502,6 @@ class _RouterChatClient:
                                         "failed": failed,
                                         "output": result[:1000],
                                     },
-                                )
-                                turn_evidence.append(
-                                    f"- {speaker}: {tool}{' (falló)' if failed else ''} -> {result}"
                                 )
                     TOOL_OBSERVER.reset(observer_token)
                     streamed_keys = {i.rsplit(":", 1)[-1] for i in seen_facts}
@@ -3555,9 +3512,7 @@ class _RouterChatClient:
                             continue
                         streamed_keys.add(key)
                         identity = f"{self._turn_id}:executed:{name}:{key}"
-                        if identity not in seen_facts:
-                            seen_facts.add(identity)
-                            since_eval.append(identity)
+                        seen_facts.add(identity)
                         await self._ledger(
                             "fact",
                             identity,
@@ -3570,13 +3525,10 @@ class _RouterChatClient:
                                 "output": out[:1000],
                             },
                         )
-                        turn_evidence.append(f"- {name} (ejecutada) -> {out}")
                     answer = "".join(answer_parts)
                     if answer:
                         identity = f"{self._turn_id}:{pattern}:{_fact_key(answer)}"
-                        if identity not in seen_facts:
-                            seen_facts.add(identity)
-                            since_eval.append(identity)
+                        seen_facts.add(identity)
                         await self._ledger("fact", identity, {"output": answer[:1000]})
                     # Carril interactivo sin juez: la corrida compuesta deja sus
                     # hechos en el ledger y el turno cierra con lo que pasó. Si
