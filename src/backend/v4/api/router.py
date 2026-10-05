@@ -76,12 +76,8 @@ from v4.config.settings import (
     team_config,
 )
 from v4.control.objective import (
-    VERDICT_INSTRUCTIONS,
-    VERDICT_SCHEMA,
     Ledger,
     fact_key,
-    parse_verdict,
-    verdict_input,
 )
 from v4.control.reconciler import get_reconciler
 from v4.models.messages import WebsocketMessageType
@@ -2138,14 +2134,6 @@ _COMPOSER_INSTRUCTIONS = (
     "After a `direct` composition you work on the task yourself."
 )
 
-# Hecho del turno que el veredicto necesita cuando el orquestador respondió
-# solo: si el objetivo pedía especialistas, la evidencia tiene que decir que no
-# corrió ninguno; sin esto el veredicto juzgaba sólo los datos (medido).
-_NO_ORCHESTRATION_FACT = (
-    "- Orquestación de especialistas (compose): ninguna; el orquestador "
-    "respondió por sí mismo."
-)
-
 
 def _compose_tool(patterns: list[str]) -> dict:
     """The composer's single function, as a Responses function tool.
@@ -2964,57 +2952,6 @@ class _RouterChatClient:
             return None
         return payload
 
-    async def _evaluate(
-        self, client: Any, objective: str, answer: str, evidence: list[str]
-    ) -> tuple[str, str, str] | None:
-        """¿Se cumplió el objetivo? ``None`` sólo si el evaluador no decide.
-
-        La ley es la compartida con el carril de plan
-        (``v4.control.objective``): veredicto ESTRUCTURADO contra la EVIDENCIA
-        del turno, nunca un prefijo en prosa; objetivo reescrito cuando la
-        evidencia contradice una premisa (validación deliberada del usuario,
-        2026-09-30: un puerto distinto del real para observar la reacción del
-        bucle; la reacción correcta es corregir y continuar). Sin tools y sin
-        streaming: es un juicio, no trabajo. Si el juicio falla (red, cuota,
-        contrato roto) devuelve ``None``: se responde con lo que hay antes que
-        girar por un fallo del propio evaluador.
-        """
-        try:
-            verdict = await client.responses.create(
-                model=self._model,
-                instructions=VERDICT_INSTRUCTIONS,
-                text=cast(
-                    Any,
-                    {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "turn_verdict",
-                            "strict": True,
-                            "schema": VERDICT_SCHEMA,
-                        }
-                    },
-                ),
-                input=cast(
-                    Any,
-                    [
-                        {
-                            "role": "user",
-                            "content": verdict_input(objective, evidence, answer),
-                        }
-                    ],
-                ),
-                reasoning=self._reasoning_eval,
-                store=False,
-            )
-        except Exception as ex:  # el evaluador no puede tumbar el turno
-            logger.warning("Evaluación no disponible (%s): %s", type(ex).__name__, ex)
-            return None
-        parsed = parse_verdict(str(getattr(verdict, "output_text", "") or ""))
-        if parsed is None:
-            # Sin el contrato no hay veredicto; no se adivina por el texto.
-            logger.warning("Veredicto sin el contrato esperado")
-        return parsed
-
     async def invoke(
         self,
         prompt: str,
@@ -3100,7 +3037,6 @@ class _RouterChatClient:
                 {"role": "developer", "content": note},
                 conversation[-1],
             ]
-        evaluated_before = False
         seen_facts: set[str] = set()
         laps = 0
         outcome = "no_verdict"
@@ -3465,87 +3401,18 @@ class _RouterChatClient:
                         conversation = [*conversation, call, output]
                     continue
 
-                verdict = await self._evaluate(
-                    client, objective, answer, [*turn_evidence, _NO_ORCHESTRATION_FACT]
-                )
-                laps += 1
-                if verdict is None:
-                    if answer:
-                        yield self._text_update(answer)
-                    break
-                kind, why, corrected = verdict
-                await self._ledger(
-                    "verdict",
-                    f"{self._turn_id}:{laps}",
-                    {
-                        "kind": kind,
-                        "reason": why,
-                        "corrected_objective": corrected,
-                        "new_facts": len(since_eval),
-                    },
-                )
-                if kind == "done":
-                    outcome = "done"
-                    final_answer = answer
-                    if not final_answer.strip() and evidence:
-                        final_answer = "Listo."
-                    if final_answer:
-                        yield self._text_update(final_answer)
-                    break
-                if kind == "blocked":
-                    # Limitación concreta: la respuesta ya la nombra.
-                    outcome = "blocked"
-                    logger.info("Limitación concreta (%s); el turno termina", why)
-                    if answer:
-                        yield self._text_update(answer)
-                    break
-                if corrected and corrected != objective:
-                    # La evidencia contradijo una premisa: el objetivo vigente
-                    # pasa a ser el corregido y su primer veredicto no corta.
-                    logger.info(
-                        "Premisa corregida por la evidencia: %s", corrected[:200]
-                    )
-                    objective = corrected
-                    evaluated_before = False
-                # Sin progreso: ya hubo un veredicto y desde entonces no apareció
-                # ningún hecho nuevo (misma salida con otra llamada no cuenta:
-                # la identidad del hecho es lo observado). El primer veredicto
-                # nunca corta.
-                if evaluated_before and not since_eval:
-                    outcome = "no_progress"
-                    logger.info("Sin progreso (%s); el turno termina", why)
-                    if answer:
-                        yield self._text_update(answer)
-                    break
-                logger.info("Objetivo no cumplido (%s); otra vuelta", why)
-                evaluated_before = True
-                since_eval = []
-                for call, output in executed:
-                    conversation = [*conversation, call, output]
-                conversation = [
-                    *conversation,
-                    {"role": "assistant", "content": said or "(sin respuesta)"},
-                    # Nota del sistema, NO un mensaje del usuario: como "user"
-                    # el modelo le contestaba a un usuario que no existe
-                    # ("Correcto: no se cumplió", "Tenés razón") y eso se
-                    # pintaba como respuesta (medido en la UI).
-                    {
-                        "role": "developer",
-                        "content": (
-                            "Verificación de la ejecución: el objetivo no quedó "
-                            f"cumplido. Motivo: {why}\n"
-                            + (
-                                f"Objetivo vigente (corregido por la evidencia): {objective}\n"
-                                if corrected
-                                else ""
-                            )
-                            + "Seguí desde lo ya ejecutado (arriba, con sus "
-                            "resultados) sin repetir un paso igual. Tu texto final "
-                            "es para el usuario: informá hechos y resultado; no "
-                            "respondas a esta nota."
-                        ),
-                    },
-                ]
+                # Carril interactivo: hay un humano esperando el stream. El
+                # criterio de cierre del turno es trivial —se produjo salida— y
+                # el "¿otra vuelta?" lo decide el próximo mensaje del usuario, no
+                # un re-juicio interno. El juez-LLM sólo pertenece al carril
+                # autónomo (reconciliador, incidentes, Log Analytics/Monitor),
+                # donde nadie cierra el turno. Acá re-juzgar algo ya entregado
+                # sólo abría bucles (medido 2026-10-04: el mismo gato una y otra
+                # vez). El próximo evaluador es el usuario.
+                outcome = "done"
+                if answer:
+                    yield self._text_update(answer)
+                break
             if composition is not None:
                 pattern, task, participants = composition
                 # Los participantes trabajan contra el CONTRATO del turno, el
@@ -3711,41 +3578,11 @@ class _RouterChatClient:
                             seen_facts.add(identity)
                             since_eval.append(identity)
                         await self._ledger("fact", identity, {"output": answer[:1000]})
-                    verdict = (
-                        None
-                        if self._parked_now
-                        else await self._evaluate(
-                            client, objective, answer, turn_evidence
-                        )
-                    )
-                    if self._parked_now:
-                        # Un participante espera al usuario (pregunta o
-                        # aprobación): el turno queda abierto, no se juzga.
-                        outcome = "waiting_for"
-                    else:
-                        laps += 1
-                    if verdict is not None:
-                        kind, why, corrected = verdict
-                        await self._ledger(
-                            "verdict",
-                            f"{self._turn_id}:{laps}",
-                            {
-                                "kind": kind,
-                                "reason": why,
-                                "corrected_objective": corrected,
-                                "new_facts": len(since_eval),
-                            },
-                        )
-                        outcome = "incomplete" if kind == "retry" else kind
-                        if kind == "retry":
-                            yield self._text_update(
-                                f"Objetivo no cumplido: {why}"
-                                + (
-                                    f"\nObjetivo corregido: {corrected}"
-                                    if corrected
-                                    else ""
-                                )
-                            )
+                    # Carril interactivo sin juez: la corrida compuesta deja sus
+                    # hechos en el ledger y el turno cierra con lo que pasó. Si
+                    # un participante espera al usuario (pregunta o aprobación),
+                    # el turno queda abierto.
+                    outcome = "waiting_for" if self._parked_now else "completed"
         finally:
             await client.close()
             if composition is not None and composition[0] == "magentic":
