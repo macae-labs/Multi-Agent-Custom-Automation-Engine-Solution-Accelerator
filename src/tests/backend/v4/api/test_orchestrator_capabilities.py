@@ -269,6 +269,34 @@ async def test_a_composed_run_leaves_facts_without_a_verdict(
 
 
 @pytest.mark.asyncio
+async def test_a_direct_answer_closes_the_turn_without_a_verdict(_ledger_store):
+    # Carril interactivo: el dueño compone ``direct`` y contesta en la misma
+    # pasada. Lo que entrega es la respuesta; el próximo evaluador es el
+    # usuario, no un juez interno. El modelo se llama UNA vez: si volviera el
+    # evaluador directo habría una segunda llamada (el veredicto) y este
+    # conteo lo delataría —las colas de los tests de abajo le regalan un
+    # ``_verdict`` que lo dejaría pasar inadvertido.
+    call = SimpleNamespace(
+        type="function_call",
+        name="compose",
+        arguments=json.dumps({"pattern": "direct", "task": "hola", "participants": []}),
+    )
+    fake = _fake_openai(_Stream([_done(call), _text("La respuesta directa.")]))
+    client = _client()
+    with patch("openai.AsyncOpenAI", fake):
+        updates = await _collect(client, prompt="una pregunta directa")
+
+    assert "".join(c.text for u in updates for c in u.contents) == (
+        "La respuesta directa."
+    )
+    assert len(fake.instances[-1].calls) == 1
+    events = await _ledger_store.history("t1")
+    assert not any(e["kind"] == "verdict" for e in events)
+    closed = next(e for e in events if e["identity"] == "t1:closed")
+    assert closed["payload"]["status"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_the_owner_can_ask_the_human_and_the_turn_waits(_ledger_store):
     # La compuerta humana del chat: request_human_approval termina el turno en
     # waiting_for con la solicitud como hecho; el manejador SSE la publica.
