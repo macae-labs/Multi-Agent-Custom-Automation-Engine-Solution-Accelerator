@@ -159,12 +159,13 @@ async def test_the_orchestrator_offers_compose_and_its_own_capabilities():
 
 
 @pytest.mark.asyncio
-async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
+async def test_a_composed_run_leaves_facts_without_a_verdict(
     _ledger_store, monkeypatch
 ):
     # La orquestación elegida corre dentro del turno y bajo la misma ley: lo
-    # que cada participante observó son hechos del turno y el veredicto juzga
-    # su resultado. Lo que dijeron ya salió por sus eventos: no se repite.
+    # que cada participante observó son hechos del turno que quedan en el
+    # ledger, sin veredicto que los juzgue. Lo que dijeron ya salió por sus
+    # eventos: no se repite.
     call = SimpleNamespace(
         type="function_call",
         name="compose",
@@ -249,16 +250,8 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
         updates = await _collect(client, prompt="un especialista que busque pyproject")
 
     assert [type(u).__name__ for u in updates] == ["WorkflowEvent"] * 4
-    calls = fake.instances[-1].calls
-    assert len(calls) == 2
-    verdict_input = calls[1]["input"][0]["content"]
-    # El objetivo que se juzga es el ``task`` que el modelo compuso (el
-    # pedido enriquecido con la conversación), no la prosa del usuario.
-    assert "OBJETIVO:\npyproject bajo src/" in verdict_input
-    assert "sequential con SrcAgent" in verdict_input
-    assert "workspace_search_files" in verdict_input
-    assert "Encontré src/backend/pyproject.toml" in verdict_input
-    assert router._NO_ORCHESTRATION_FACT not in verdict_input
+    # Carril interactivo sin juez: una sola llamada al modelo (la que compuso).
+    assert len(fake.instances[-1].calls) == 1
     events = await _ledger_store.history("t1")
     facts = [e["identity"] for e in events if e["kind"] == "fact"]
     assert any(i.startswith("t1:SrcAgent:workspace_search_files:") for i in facts)
@@ -271,62 +264,37 @@ async def test_a_composed_run_leaves_facts_and_is_judged_by_the_verdict(
     assert '"entries": ["src"]' in hosted["payload"]["output"]
     assert "Content object" not in hosted["payload"]["output"]
     assert any(":workspace_search_files:" not in i for i in facts)
-    assert [e["identity"] for e in events if e["kind"] == "verdict"] == ["t1:1"]
+    assert [e for e in events if e["kind"] == "verdict"] == []
     closed = next(e for e in events if e["identity"] == "t1:closed")
-    assert closed["payload"]["status"] == "done"
+    assert closed["payload"]["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_composed_tool_results_are_judged_and_unmet_goal_is_reported(
-    _ledger_store, monkeypatch
-):
+async def test_a_direct_answer_closes_the_turn_without_a_verdict(_ledger_store):
+    # Carril interactivo: el dueño compone ``direct`` y contesta en la misma
+    # pasada. Lo que entrega es la respuesta; el próximo evaluador es el
+    # usuario, no un juez interno. El modelo se llama UNA vez: si volviera el
+    # evaluador directo habría una segunda llamada (el veredicto) y este
+    # conteo lo delataría —las colas de los tests de abajo le regalan un
+    # ``_verdict`` que lo dejaría pasar inadvertido.
     call = SimpleNamespace(
         type="function_call",
         name="compose",
-        arguments=json.dumps(
-            {
-                "pattern": "sequential",
-                "task": "investigate",
-                "participants": [
-                    {"name": "SrcAgent", "description": "d", "system_message": "s"}
-                ],
-            }
-        ),
+        arguments=json.dumps({"pattern": "direct", "task": "hola", "participants": []}),
     )
-    fake = _fake_openai(_Stream([_done(call)]), _verdict(False, "faltan datos"))
+    fake = _fake_openai(_Stream([_done(call), _text("La respuesta directa.")]))
     client = _client()
-
-    async def _run_pattern(pattern, task, participants, history, *, resume=None):
-        assert resume is None
-        for content in (
-            Content.from_mcp_server_tool_result("m1", output="mcp evidence"),
-            Content.from_code_interpreter_tool_result(
-                outputs=[Content.from_text("code evidence")]
-            ),
-        ):
-            yield WorkflowEvent(
-                "output",
-                data=AgentResponseUpdate(contents=[content], role="assistant"),
-                executor_id="SrcAgent",
-            )
-
-    monkeypatch.setattr(client, "_run_pattern", _run_pattern)
     with patch("openai.AsyncOpenAI", fake):
-        updates = await _collect(client)
+        updates = await _collect(client, prompt="una pregunta directa")
 
-    assert "Objetivo no cumplido: faltan datos" in str(updates[-1].contents[0].text)
-    evidence = fake.instances[-1].calls[1]["input"][0]["content"]
-    assert "mcp evidence" in evidence
-    assert "code evidence" in evidence
+    assert "".join(c.text for u in updates for c in u.contents) == (
+        "La respuesta directa."
+    )
+    assert len(fake.instances[-1].calls) == 1
     events = await _ledger_store.history("t1")
-    facts = [e for e in events if e["kind"] == "fact"]
-    # La semántica elegida también es un hecho del turno.
-    assert [e["identity"] for e in facts if ":compose:" in e["identity"]] == [
-        "t1:compose:sequential"
-    ]
-    assert len([e for e in facts if ":compose:" not in e["identity"]]) == 2
+    assert not any(e["kind"] == "verdict" for e in events)
     closed = next(e for e in events if e["identity"] == "t1:closed")
-    assert closed["payload"]["status"] == "incomplete"
+    assert closed["payload"]["status"] == "done"
 
 
 @pytest.mark.asyncio
@@ -511,18 +479,6 @@ async def _collect_with(client, prompt, **kw):
     return [u async for u in client.invoke(prompt, history=[], **kw)]
 
 
-@pytest.mark.asyncio
-async def test_a_direct_answer_tells_the_verdict_that_no_specialists_ran():
-    # Si el objetivo pedía especialistas y el orquestador respondió solo, el
-    # veredicto tiene que verlo como hecho del turno, no adivinarlo.
-    fake = _fake_openai(_Stream([_text("hecho")]), _verdict(True))
-    with patch("openai.AsyncOpenAI", fake):
-        await _collect(_client(), prompt="dos especialistas en secuencia")
-    calls = fake.instances[-1].calls
-    assert len(calls) == 2
-    assert router._NO_ORCHESTRATION_FACT in calls[1]["input"][0]["content"]
-
-
 # ── el libro de evidencia es del TURNO ───────────────────────────────────────
 
 
@@ -566,106 +522,6 @@ def test_a_fact_is_what_the_tool_observed_not_how_it_was_called():
     assert same_a == same_b != other
     assert router._fact_key("texto plano") == router._fact_key("texto plano")
     assert router._fact_key("texto plano") != router._fact_key("otro texto")
-
-
-@pytest.mark.asyncio
-async def test_the_turn_stops_when_a_pass_adds_no_new_fact(_ledger_store):
-    """Medido: tres vueltas más reescribiendo el mismo listado. Volver a
-    obtener el MISMO dato con otra llamada no es progreso: el turno termina
-    tras el segundo veredicto en vez de girar."""
-    call_1 = SimpleNamespace(
-        type="function_call",
-        name="workspace_exec",
-        call_id="c1",
-        arguments='{"command":"ls"}',
-    )
-    call_2 = SimpleNamespace(
-        type="function_call",
-        name="workspace_exec",
-        call_id="c2",
-        arguments='{"command":"ls -1 | cat"}',
-    )
-    fake = _fake_openai(
-        _Stream([_done(call_1), _text("informe 1")]),
-        _verdict(False, "falta"),
-        _Stream([_done(call_2), _text("informe 2")]),
-        _verdict(False, "sigue faltando"),
-    )
-    c = _client()
-    c._ws_names = {"workspace_exec"}
-    c._call_workspace_tool = AsyncMock(
-        side_effect=[_exec_output("ls", "a\nb"), _exec_output("ls -1 | cat", "a\nb")]
-    )
-    with patch("openai.AsyncOpenAI", fake):
-        updates = await _collect(c)
-
-    calls = fake.instances[-1].calls
-    assert len(calls) == 4, "pasada, veredicto, pasada sin dato nuevo, veredicto: fin"
-    assert "".join((x.text or "") for u in updates for x in u.contents) == "informe 2"
-    # El dueño del objetivo dejó su historial fuera del request: un objetivo,
-    # UN hecho (el segundo era el mismo dato: duplicado por identidad), dos
-    # veredictos y el cierre con el motivo.
-    ledger = await _ledger_store.history("t1")
-    kinds = [(e["kind"], e["identity"]) for e in ledger]
-    assert kinds[0] == ("objective", "t1")
-    assert [k for k, _ in kinds].count("fact") == 1
-    assert [k for k, _ in kinds].count("verdict") == 2
-    closed = next(e for e in ledger if e["identity"] == "t1:closed")
-    assert closed["payload"] == {"status": "no_progress", "laps": 2, "facts": 1}
-
-
-@pytest.mark.asyncio
-async def test_a_false_premise_is_corrected_and_the_turn_continues_with_the_corrected_objective(
-    _ledger_store,
-):
-    """Validación deliberada del usuario (2026-09-30): la tarea nombra el puerto
-    9124 sabiendo que el backend escucha en 8000, para observar la reacción del
-    bucle. La reacción correcta es corregir la premisa con el hecho medido y
-    continuar: la vuelta siguiente y su veredicto juzgan el objetivo vigente, y
-    la verificación llega como nota del sistema, nunca como un mensaje del
-    usuario al que el modelo le conteste."""
-    call_1 = SimpleNamespace(
-        type="function_call",
-        name="workspace_exec",
-        call_id="c1",
-        arguments='{"command":"ss -ltn"}',
-    )
-    fake = _fake_openai(
-        _Stream([_done(call_1), _text("escucha en 8000")]),
-        _verdict(False, "dice 9124", corrected="Validá el backend en el puerto 8000"),
-        _Stream([_text("validado en 8000")]),
-        _verdict(True),
-    )
-    c = _client()
-    c._ws_names = {"workspace_exec"}
-    c._call_workspace_tool = AsyncMock(return_value=_exec_output("ss -ltn", ":8000"))
-    with patch("openai.AsyncOpenAI", fake):
-        updates = await _collect(c, prompt="Validá el backend en el puerto 9124")
-
-    calls = fake.instances[-1].calls
-    assert len(calls) == 4
-    second_verdict_input = calls[3]["input"][0]["content"]
-    assert "OBJETIVO:\nValidá el backend en el puerto 8000" in second_verdict_input
-    notes = [
-        i
-        for i in calls[2]["input"]
-        if isinstance(i, dict) and "Verificación" in str(i.get("content", ""))
-    ]
-    assert notes and all(n["role"] == "developer" for n in notes)
-    assert "puerto 8000" in notes[0]["content"]
-    assert "".join((x.text or "") for u in updates for x in u.contents).endswith(
-        "validado en 8000"
-    )
-    ledger = await _ledger_store.history("t1")
-    first_verdict = next(e for e in ledger if e["identity"] == "t1:1")
-    assert (
-        first_verdict["payload"]["corrected_objective"]
-        == "Validá el backend en el puerto 8000"
-    )
-    assert (
-        next(e for e in ledger if e["identity"] == "t1:closed")["payload"]["status"]
-        == "done"
-    )
 
 
 @pytest.mark.asyncio
@@ -717,47 +573,6 @@ async def test_a_plan_id_resolves_to_the_ledger_of_its_magentic_plan(
     assert body["owner"] == "plan:m1"
     assert [e["identity"] for e in body["events"]] == ["plan:m1", "plan:m1:1"]
     store.get_plan.assert_awaited_once_with("p-ui")
-
-
-@pytest.mark.asyncio
-async def test_the_evaluator_sees_the_tools_of_earlier_passes():
-    # Medido: 20 tools en 16 pasadas y el evaluador vio sólo la última (la
-    # síntesis, 0 tools) → "sin respaldo de herramientas" sobre un informe
-    # con 20 respaldos → reentrada inútil → "no pude cumplirlo" pegado a un
-    # informe cumplido. La evidencia se acumula por turno.
-    tool_call = SimpleNamespace(
-        type="function_call", name="workspace_exec", call_id="c1", arguments="{}"
-    )
-    fake = _fake_openai(
-        _Stream([_done(tool_call)]),  # pasada 1: sólo ejecuta
-        _Stream([_text("dictamen")]),  # pasada 2: sólo redacta
-        _verdict(True),  # el evaluador acepta
-    )
-    c = _client()
-    c._ws_names = {"workspace_exec"}
-    c._call_workspace_tool = AsyncMock(return_value='{"status": "success"}')
-    with patch("openai.AsyncOpenAI", fake):
-        updates = await _collect(c)
-
-    assert "".join((x.text or "") for u in updates for x in u.contents) == "dictamen"
-    calls = fake.instances[-1].calls
-    assert len(calls) == 3, "ejecución, síntesis, veredicto"
-    # La salida de la tool volvió por el protocolo, con su call_id…
-    assert {
-        "type": "function_call_output",
-        "call_id": "c1",
-        "output": '{"status": "success"}',
-    } in [i for i in calls[1]["input"] if isinstance(i, dict)]
-    # …y el evaluador juzgó la síntesis CON la evidencia de la pasada anterior.
-    assert "workspace_exec" in calls[2]["input"][0]["content"]
-    # Contrato efectivo de inferencia en CADA llamada: el loop streamed lleva
-    # el reasoning del orquestador y el veredicto el del evaluador; ninguna
-    # lleva temperature ni top_p (el control que cambia el comportamiento es
-    # reasoning.effort: medido low → 0 tokens de razonamiento, medium → 25).
-    assert calls[0]["reasoning"] == {"effort": "medium"} and calls[0]["stream"] is True
-    assert calls[2]["reasoning"] == {"effort": "low"}
-    assert all("temperature" not in c and "top_p" not in c for c in calls)
-    assert calls[0]["model"] == calls[2]["model"] == "gpt-5.4-mini"
 
 
 @pytest.mark.asyncio

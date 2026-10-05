@@ -1,8 +1,8 @@
 """La ley del dueño del objetivo, compartida por el chat y por el carril de plan.
 
-Un objetivo tiene un dueño que ejecuta, observa, juzga y continúa hasta un
+Un objetivo tiene un dueño que ejecuta, observa, registra y continúa hasta un
 estado terminal. Hasta aquí había dos dueños con dos leyes: el turno del chat
-(``_RouterChatClient``: objetivo, ledger, veredicto) y el manager Magentic del
+(``_RouterChatClient``: objetivo, ledger) y el manager Magentic del
 plan (prompts propios de hechos, plan, progreso y respuesta final). Este
 módulo es la ley única que ambos aplican:
 
@@ -11,7 +11,10 @@ módulo es la ley única que ambos aplican:
   prefijo en prosa. Si la evidencia contradice una premisa del objetivo, el
   veredicto devuelve el objetivo reescrito con el hecho medido y el dueño
   sigue con ése (medido 2026-09-30: una tarea con un puerto deliberadamente
-  distinto del real, validación del usuario de la reacción del bucle).
+  distinto del real, validación del usuario de la reacción del bucle). Sólo lo
+  aplica el carril autónomo (plan, reconciliador, incidentes), donde nadie
+  cierra el turno; el chat interactivo NO re-juzga —no evalúa, corrige ni mide
+  "sin progreso"—, el próximo evaluador es el usuario.
 - **Hecho**: la identidad de un dato observado es LO OBSERVADO, no cómo se
   obtuvo. Dos llamadas distintas que devuelven lo mismo son el mismo hecho;
   volver a obtenerlo no es progreso.
