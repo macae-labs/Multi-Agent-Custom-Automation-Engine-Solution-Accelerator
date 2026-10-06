@@ -6,7 +6,7 @@ import logging
 import re
 import time as _time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from agent_framework import (
@@ -21,6 +21,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_azure_ai import AzureAIClient, AzureAIProjectAgentOptions
 from agent_framework_orchestrations import (
+    AgentBasedGroupChatOrchestrator,
     ConcurrentBuilder,
     GroupChatBuilder,
     HandoffBuilder,
@@ -30,6 +31,7 @@ from agent_framework_orchestrations import (
 from agent_framework_orchestrations._base_group_chat_orchestrator import (
     GroupChatRequestSentEvent,
     GroupChatResponseReceivedEvent,
+    ParticipantRegistry,
 )
 from agent_framework_orchestrations._magentic import (
     MagenticPlanReviewRequest,
@@ -240,6 +242,45 @@ def _stage_context(predecessor: str, step: str):
         return prior
 
     return _filter
+
+
+class _SteeredGroupChatOrchestrator(AgentBasedGroupChatOrchestrator):
+    """El orquestador por agente del framework, entregando al elegido el paso
+    que el dueño compuso para él.
+
+    Lo único que hace: ``compose`` escribe por participante su parte propia en
+    ESTA petición (``instruction``). En group_chat el framework ya envía con
+    cada petición un mensaje de steering (``additional_instruction``, el mismo
+    que usa su Magentic) y su orquestador lo manda vacío; acá va
+    ``steps[target]`` cada vez que le toca hablar. Un participante sin paso
+    recibe exactamente lo nativo: no se inventa instrucción alguna y no se
+    tocan la difusión, la caché del executor, la selección ni la terminación.
+
+    Medido 2026-10-06 (prod 19:45) sin el paso: con la tarea "que las tres
+    miradas discutan hasta converger", cada participante simuló el debate
+    entero solo (tres agentes, cada uno imitando a los otros dos).
+    """
+
+    def __init__(
+        self, *args: Any, steps: Mapping[str, str] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._steps = {name: step for name, step in (steps or {}).items() if step}
+
+    async def _send_request_to_participant(
+        self,
+        target: str,
+        ctx: Any,
+        *,
+        additional_instruction: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await super()._send_request_to_participant(
+            target,
+            ctx,
+            additional_instruction=additional_instruction or self._steps.get(target),
+            metadata=metadata,
+        )
 
 
 class OrchestrationManager:
@@ -557,10 +598,22 @@ class OrchestrationManager:
                     ),
                     name="GroupChatOrchestrator",
                 )
-            workflow = GroupChatBuilder(
-                participants=participants,
-                orchestrator_agent=orchestrator,
+            # Los participantes se envuelven acá (el builder respeta Executors
+            # ya construidos) para que el registro del orquestador sea el mismo
+            # que armaría el builder; el orquestador es el del framework más el
+            # paso propio de cada participante (``steps``, por nombre). Con un
+            # orquestador ya construido el builder ignora ``max_rounds``: va en
+            # el constructor del orquestador.
+            members = [AgentExecutor(p) for p in participants]
+            manager = _SteeredGroupChatOrchestrator(
+                agent=orchestrator,
+                participant_registry=ParticipantRegistry(members),
                 max_rounds=orchestration_config.max_rounds,
+                steps=steps,
+            )
+            workflow = GroupChatBuilder(
+                participants=members,
+                orchestrator=manager,
                 intermediate_outputs=True,
                 checkpoint_storage=storage,
             ).build()
