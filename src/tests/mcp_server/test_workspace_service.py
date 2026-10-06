@@ -171,7 +171,8 @@ class TestWorkspaceToolService:
         # Se commitea en el sandbox y se PUBLICA al share: lo que el usuario ve.
         assert details["committed"] is True and details["published"] is True
         assert details["publish_detail"].startswith("published to '")
-        assert payload["summary"].startswith("Wrote 5 bytes to 'notes.txt'; published to '")
+        assert payload["summary"].startswith(
+            "Wrote 5 bytes to 'notes.txt'; published to '")
         assert (workspace / "notes.txt").read_text(encoding="utf-8") == "hello"
         assert status.stdout.strip() == ""
         assert commit_message.stdout.strip() == "agent: write notes.txt"
@@ -293,13 +294,15 @@ class TestSandboxArchitecture:
         tools, _ = workspace_tools
         share, uid, wid = self._share(workspace_root)
 
-        out = loads(tools["workspace_exec"](uid, wid, "pwd && python3 -m venv .venv && ls .venv/bin/python"))
+        out = loads(tools["workspace_exec"](
+            uid, wid, "pwd && python3 -m venv .venv && ls .venv/bin/python"))
 
         assert out["details"]["exit_code"] == 0, out["details"]
         cwd = out["details"]["stdout"].splitlines()[0]
         assert cwd.startswith(str(workspace_service.SANDBOX_ROOT))
         assert not str(cwd).startswith(str(workspace_root))
-        assert (workspace_service._sandbox_path(uid, wid) / ".venv" / "bin" / "python").exists()
+        assert (workspace_service._sandbox_path(uid, wid)
+                / ".venv" / "bin" / "python").exists()
         assert not (share / ".venv").exists(), "la computación no toca el share"
 
     def test_uncommitted_exec_output_is_ephemeral_until_published(
@@ -308,7 +311,8 @@ class TestSandboxArchitecture:
         tools, _ = workspace_tools
         share, uid, wid = self._share(workspace_root)
 
-        assert loads(tools["workspace_exec"](uid, wid, "echo hola > generado.txt"))["details"]["exit_code"] == 0
+        assert loads(tools["workspace_exec"](uid, wid, "echo hola > generado.txt"))[
+            "details"]["exit_code"] == 0
         assert not (share / "generado.txt").exists()
 
         pub = loads(tools["workspace_publish"](uid, wid, "guardar lo generado"))
@@ -397,7 +401,8 @@ class TestSandboxArchitecture:
 
         sandbox = workspace_service._sandbox_path(uid, wid)
         assert _git_out(sandbox, "remote", "get-url", "origin") == str(share)
-        assert _git_out(sandbox, "remote", "get-url", "upstream") == "https://github.com/macae-labs/repo.git"
+        assert _git_out(sandbox, "remote", "get-url",
+                        "upstream") == "https://github.com/macae-labs/repo.git"
         assert _git_out(share, "config", "receive.denyCurrentBranch") == "updateInstead"
 
     def test_a_workspace_without_a_declared_repository_gets_no_upstream(
@@ -426,7 +431,8 @@ class TestSandboxArchitecture:
         en el clon del sandbox y en el destino del publish."""
         tools, _ = workspace_tools
         share, uid, wid = self._share(workspace_root)
-        subprocess.run(["git", "branch", "stable/v4-baseline"], cwd=share, check=True, capture_output=True)
+        subprocess.run(["git", "branch", "stable/v4-baseline"],
+                       cwd=share, check=True, capture_output=True)
         (share / workspace_service._META_FILE).write_text(
             json.dumps({"name": "w", "branch": "stable/v4-baseline"})
         )
@@ -435,10 +441,13 @@ class TestSandboxArchitecture:
         r = loads(tools["workspace_write_file"](uid, wid, "en_rama.txt", "x"))
 
         sandbox = workspace_service._sandbox_path(uid, wid)
-        assert _git_out(sandbox, "rev-parse", "--abbrev-ref", "HEAD") == "stable/v4-baseline"
+        assert _git_out(sandbox, "rev-parse", "--abbrev-ref",
+                        "HEAD") == "stable/v4-baseline"
         assert r["details"]["published"] is True
-        assert _git_out(share, "rev-parse", "stable/v4-baseline") == _git_out(sandbox, "rev-parse", "HEAD")
-        assert _git_out(share, "rev-parse", "master") == master_before  # la otra rama, intacta
+        assert _git_out(share, "rev-parse",
+                        "stable/v4-baseline") == _git_out(sandbox, "rev-parse", "HEAD")
+        # la otra rama, intacta
+        assert _git_out(share, "rev-parse", "master") == master_before
 
     def test_two_users_with_the_same_workspace_name_get_separate_sandboxes(
         self, workspace_tools, workspace_root
@@ -451,4 +460,5 @@ class TestSandboxArchitecture:
         r = tools["workspace_read_file"](u2, w, "quien.txt")
 
         assert loads(r)["status"] == "error"
-        assert workspace_service._sandbox_path(u1, w) != workspace_service._sandbox_path(u2, w)
+        assert workspace_service._sandbox_path(
+            u1, w) != workspace_service._sandbox_path(u2, w)
