@@ -635,6 +635,49 @@ class WorkspaceCreateRequest(BaseModel):
     local_path: str | None = None  # link an existing local folder (dev only)
 
 
+def _reconciler_owned_path() -> Path | None:
+    """Resolved physical path of the workspace the reconciler keeps current, or
+    ``None``. Quién se adelanta solo lo decide el descubrimiento por contenido,
+    no el nombre del workspace: comparar contra ``incident-registry`` decía "no"
+    en el registro que el reconciliador SÍ mantiene, porque un usuario crea el
+    workspace con un nombre y una URL y nunca lo bautiza así. Se compara la ruta
+    física para que un alias del mismo clon no cuente como otro."""
+    from v4.control.workspace_capability import discover
+
+    registry = discover()
+    return (
+        workspace_for(registry.user_id, registry.workspace_id).resolve()
+        if registry is not None
+        else None
+    )
+
+
+def _workspace_summary(entry: Path, kept_current: Path | None) -> WorkspaceSummary:
+    """Build the summary a workspace exposes, identical for create and list, so
+    the frontend sees the same shape no matter which endpoint produced it. La
+    rama se lee EN VIVO del HEAD (no del meta), para que el selector muestre
+    contra qué rama trabaja el usuario sin una segunda consulta ni poder
+    divergir del disco."""
+    meta = _read_meta(entry)
+    head = _git(entry, "symbolic-ref", "--short", "HEAD")
+    return WorkspaceSummary(
+        workspace_id=entry.name,
+        name=meta.get("name", entry.name),
+        branch=(
+            head.stdout.decode("utf-8", errors="replace").strip()
+            if head.returncode == 0
+            else ""
+        ),
+        is_incident_registry=any((entry / "docs/incidents").glob("*.json")),
+        reconciler_owned=kept_current is not None and entry.resolve() == kept_current,
+        created_at=meta.get(
+            "created_at",
+            datetime.fromtimestamp(entry.stat().st_ctime, tz=UTC).isoformat(),
+        ),
+        file_count=_count_files(entry),
+    )
+
+
 @workspaces_router.get("", response_model=WorkspaceListResponse)
 def list_workspaces(request: Request) -> WorkspaceListResponse:
     """List all workspaces owned by the authenticated user."""
@@ -642,19 +685,7 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
     results: list[WorkspaceSummary] = []
     if not user_root.exists():
         return WorkspaceListResponse(workspaces=[])
-    # Quién se adelanta solo lo decide el descubrimiento por contenido, no el
-    # nombre del workspace: comparar contra ``incident-registry`` decía "no" en
-    # el registro que el reconciliador SÍ mantiene, porque un usuario crea el
-    # workspace con un nombre y una URL y nunca lo bautiza así. Se compara la
-    # ruta física para que un alias del mismo clon no cuente como otro.
-    from v4.control.workspace_capability import discover
-
-    registry = discover()
-    kept_current = (
-        workspace_for(registry.user_id, registry.workspace_id).resolve()
-        if registry is not None
-        else None
-    )
+    kept_current = _reconciler_owned_path()
     for entry in sorted(user_root.iterdir()):
         if not entry.is_dir() or not (entry / ".git").is_dir():
             continue
@@ -663,27 +694,7 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
         # are reachable through the session fallback, never listed here.
         if not (entry / _META_FILE).exists():
             continue
-        meta = _read_meta(entry)
-        head = _git(entry, "symbolic-ref", "--short", "HEAD")
-        results.append(
-            WorkspaceSummary(
-                workspace_id=entry.name,
-                name=meta.get("name", entry.name),
-                branch=(
-                    head.stdout.decode("utf-8", errors="replace").strip()
-                    if head.returncode == 0
-                    else ""
-                ),
-                is_incident_registry=any((entry / "docs/incidents").glob("*.json")),
-                reconciler_owned=kept_current is not None
-                and entry.resolve() == kept_current,
-                created_at=meta.get(
-                    "created_at",
-                    datetime.fromtimestamp(entry.stat().st_ctime, tz=UTC).isoformat(),
-                ),
-                file_count=_count_files(entry),
-            )
-        )
+        results.append(_workspace_summary(entry, kept_current))
     return WorkspaceListResponse(workspaces=results)
 
 
@@ -767,22 +778,11 @@ def create_workspace(
         _write_meta(ws, meta)
         now_iso = meta.get("created_at", now_iso)
 
-    # Mismo summary que la lista: la rama se lee EN VIVO del HEAD (no del meta),
-    # para que el selector muestre contra qué rama trabaja el usuario ni bien el
-    # clon termina, sin una segunda consulta ni poder divergir del disco.
-    head = _git(ws, "symbolic-ref", "--short", "HEAD")
-    return WorkspaceSummary(
-        workspace_id=workspace_id,
-        name=body.name.strip(),
-        created_at=now_iso,
-        file_count=_count_files(ws),
-        branch=(
-            head.stdout.decode("utf-8", errors="replace").strip()
-            if head.returncode == 0
-            else ""
-        ),
-        is_incident_registry=any((ws / "docs/incidents").glob("*.json")),
-    )
+    # Mismo summary que la lista, vía el mismo builder: la rama se lee EN VIVO
+    # del HEAD y ``reconciler_owned`` del descubrimiento por contenido, para que
+    # la respuesta del POST que el frontend inserta en estado no diverja del GET
+    # siguiente cuando este clon es el único registro de incidentes.
+    return _workspace_summary(ws, _reconciler_owned_path())
 
 
 @workspaces_router.delete(
