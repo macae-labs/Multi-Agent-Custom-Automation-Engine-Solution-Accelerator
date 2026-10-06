@@ -259,6 +259,191 @@ async def test_group_chat_the_orchestrator_picks_who_speaks_and_everyone_sees_th
 
 
 @pytest.mark.asyncio
+async def test_group_chat_the_chosen_participant_gets_its_own_step_last_and_without_one_stays_native():
+    # El elegido ve la conversación entera Y, como último mensaje, SU paso (la
+    # parte que el dueño compuso para él). Quien no tiene paso recibe lo
+    # nativo, sin ninguna instrucción inventada.
+    a_client, b_client = EchoClient("A"), EchoClient("B")
+    a = Agent(client=a_client, name="LensA")
+    b = Agent(client=b_client, name="LensB")
+    orchestrator = Agent(
+        client=ScriptedClient(
+            "O",
+            [
+                _decision(next_speaker="LensB"),
+                _decision(next_speaker="LensA"),
+                _decision(terminate=True),
+            ],
+        ),
+        name="GroupChatOrchestrator",
+    )
+    workflow, _ = OrchestrationManager.build_pattern_workflow(
+        "group_chat",
+        [a, b],
+        orchestrator=orchestrator,
+        steps={"LensA": "Respondé como seguridad a lo dicho"},
+    )
+
+    await _run(workflow, "Debatan la propuesta")
+
+    assert b_client.seen[0] == ["user:Debatan la propuesta"]
+    assert a_client.seen[0] == [
+        "user:Debatan la propuesta",
+        "assistant:B respondió a: Debatan la propuesta",
+        "user:Respondé como seguridad a lo dicho",
+    ]
+
+
+def _responses_participant(name: str, calls: list[dict]):
+    """Un participante sobre el cliente Responses REAL del producto
+    (``AzureOpenAIResponsesClient``, el que la fábrica usa con tools en
+    runtime) con el transporte falsificado: cada ``responses.create`` queda
+    registrado en ``calls`` y devuelve una ``Response`` con id, que el turno
+    siguiente encadena por ``previous_response_id`` (``store=True``: la sesión
+    de servicio del producto). Todo lo demás —validación, armado del input,
+    instrucciones sólo en el primer turno— es el código real del cliente."""
+    from agent_framework.azure import AzureOpenAIResponsesClient
+    from openai.types.responses import (
+        Response,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+
+    client = AzureOpenAIResponsesClient(
+        deployment_name="o4-mini",
+        endpoint="https://unit.openai.azure.com",
+        api_key="unit",
+    )
+
+    async def _create(stream=False, **run_options):
+        calls.append(run_options)
+        n = len(calls)
+        return Response(
+            id=f"resp-{n}",
+            created_at=0.0,
+            model="o4-mini",
+            object="response",
+            output=[
+                ResponseOutputMessage(
+                    id=f"msg-{n}",
+                    type="message",
+                    role="assistant",
+                    status="completed",
+                    content=[
+                        ResponseOutputText(
+                            type="output_text",
+                            text=f"{name} habló ({n})",
+                            annotations=[],
+                        )
+                    ],
+                )
+            ],
+            parallel_tool_calls=False,
+            tool_choice="auto",
+            tools=[],
+        )
+
+    client.client.responses.create = _create
+    agent = Agent(
+        client=client,
+        name=name,
+        instructions=f"Sos {name}",
+        default_options={"store": True},
+    )
+    return agent, client
+
+
+def _repeat_speaker_orchestrator(name: str):
+    return Agent(
+        client=ScriptedClient(
+            "O",
+            [
+                _decision(next_speaker=name),
+                _decision(next_speaker=name),
+                _decision(terminate=True),
+            ],
+        ),
+        name="GroupChatOrchestrator",
+    )
+
+
+def _chain(exc):
+    out, seen = [], set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        out.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return out
+
+
+def _text(item: dict) -> str:
+    content = item["content"]
+    if isinstance(content, str):
+        return content
+    return "".join(part.get("text", "") for part in content)
+
+
+@pytest.mark.asyncio
+async def test_group_chat_a_repeated_speaker_on_the_real_responses_client_fails_natively_and_completes_with_its_step():
+    # Antes/después sobre el cliente Responses real, sin red. Un participante
+    # elegido dos veces seguidas no recibe difusión (se excluye al que acaba de
+    # hablar) y su executor ya vació la caché; con sesión de servicio el agente
+    # no reinyecta historial y, en un turno de continuación
+    # (previous_response_id), el cliente no antepone instrucciones.
+    from agent_framework.exceptions import ChatClientInvalidRequestException
+    from agent_framework_orchestrations import GroupChatBuilder
+
+    # Antes: el orquestador del framework tal cual lo montaba el producto —
+    # el segundo turno sale con input vacío y el cliente lo rechaza antes del
+    # transporte.
+    native_calls: list[dict] = []
+    a, client = _responses_participant("LensA", native_calls)
+    b = Agent(client=EchoClient("B"), name="LensB")
+    native = GroupChatBuilder(
+        participants=[a, b],
+        orchestrator_agent=_repeat_speaker_orchestrator("LensA"),
+        max_rounds=5,
+        intermediate_outputs=True,
+    ).build()
+    try:
+        with pytest.raises(Exception) as info:
+            await native.run([Message(role="user", text="Debatan")])
+    finally:
+        await client.client.close()
+    assert any(
+        isinstance(e, ChatClientInvalidRequestException) for e in _chain(info.value)
+    ), [repr(e) for e in _chain(info.value)]
+    assert len(native_calls) == 1
+    assert [m["role"] for m in native_calls[0]["input"]] == ["system", "user"]
+
+    # Después: el builder del producto con el paso del dueño — el elegido lo
+    # recibe como último mensaje cada vez, el segundo turno lleva input (el
+    # paso) encadenado a la sesión, y el grupo termina.
+    calls: list[dict] = []
+    a, client = _responses_participant("LensA", calls)
+    b = Agent(client=EchoClient("B"), name="LensB")
+    workflow, _ = OrchestrationManager.build_pattern_workflow(
+        "group_chat",
+        [a, b],
+        orchestrator=_repeat_speaker_orchestrator("LensA"),
+        steps={"LensA": "paso A"},
+    )
+    try:
+        result = await workflow.run([Message(role="user", text="Debatan")])
+    finally:
+        await client.client.close()
+
+    assert len(calls) == 2
+    assert [m["role"] for m in calls[0]["input"]] == ["system", "user", "user"]
+    assert _text(calls[0]["input"][-1]) == "paso A"
+    assert calls[0].get("previous_response_id") is None
+    assert [m["role"] for m in calls[1]["input"]] == ["user"]
+    assert _text(calls[1]["input"][0]) == "paso A"
+    assert calls[1]["previous_response_id"] == "resp-1"
+    assert result.get_outputs(), "el grupo no terminó"
+
+
+@pytest.mark.asyncio
 async def test_handoff_triage_routes_to_the_specialist_who_answers_and_the_user_is_asked():
     # Topología documentada: triage al frente, especialistas que devuelven al
     # triage, modo por defecto (human-in-loop). Un handoff es texto + tool call
