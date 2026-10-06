@@ -635,13 +635,6 @@ class WorkspaceCreateRequest(BaseModel):
     local_path: str | None = None  # link an existing local folder (dev only)
 
 
-class WorkspaceCreateResponse(BaseModel):
-    workspace_id: str
-    name: str
-    created_at: str
-    file_count: int
-
-
 @workspaces_router.get("", response_model=WorkspaceListResponse)
 def list_workspaces(request: Request) -> WorkspaceListResponse:
     """List all workspaces owned by the authenticated user."""
@@ -694,10 +687,10 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
     return WorkspaceListResponse(workspaces=results)
 
 
-@workspaces_router.post("", response_model=WorkspaceCreateResponse, status_code=201)
+@workspaces_router.post("", response_model=WorkspaceSummary, status_code=201)
 def create_workspace(
     request: Request, body: WorkspaceCreateRequest
-) -> WorkspaceCreateResponse:
+) -> WorkspaceSummary:
     """Create (or re-open) a named workspace."""
     user_id = _auth_user(request)
     if not _SAFE_ID.match(user_id):
@@ -774,11 +767,21 @@ def create_workspace(
         _write_meta(ws, meta)
         now_iso = meta.get("created_at", now_iso)
 
-    return WorkspaceCreateResponse(
+    # Mismo summary que la lista: la rama se lee EN VIVO del HEAD (no del meta),
+    # para que el selector muestre contra qué rama trabaja el usuario ni bien el
+    # clon termina, sin una segunda consulta ni poder divergir del disco.
+    head = _git(ws, "rev-parse", "--abbrev-ref", "HEAD")
+    return WorkspaceSummary(
         workspace_id=workspace_id,
         name=body.name.strip(),
         created_at=now_iso,
         file_count=_count_files(ws),
+        branch=(
+            head.stdout.decode("utf-8", errors="replace").strip()
+            if head.returncode == 0
+            else ""
+        ),
+        is_incident_registry=any((ws / "docs/incidents").glob("*.json")),
     )
 
 

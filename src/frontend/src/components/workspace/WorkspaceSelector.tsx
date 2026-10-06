@@ -26,6 +26,7 @@ import {
   Delete20Regular,
   FolderOpen20Regular,
   Checkmark20Regular,
+  BranchFork16Regular,
 } from '@fluentui/react-icons';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -239,6 +240,31 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
             >
               {ws.name}
             </Caption1>
+            {ws.branch && (
+              <Tooltip content={`Rama: ${ws.branch}`} relationship="label">
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    maxWidth: 110,
+                    flexShrink: 0,
+                    color: 'var(--colorNeutralForeground3)',
+                  }}
+                >
+                  <BranchFork16Regular style={{ flexShrink: 0 }} />
+                  <Caption1
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {ws.branch}
+                  </Caption1>
+                </span>
+              </Tooltip>
+            )}
             <Caption1
               style={{ color: 'var(--colorNeutralForeground3)', flexShrink: 0 }}
             >
