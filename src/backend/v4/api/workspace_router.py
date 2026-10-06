@@ -664,7 +664,7 @@ def list_workspaces(request: Request) -> WorkspaceListResponse:
         if not (entry / _META_FILE).exists():
             continue
         meta = _read_meta(entry)
-        head = _git(entry, "rev-parse", "--abbrev-ref", "HEAD")
+        head = _git(entry, "symbolic-ref", "--short", "HEAD")
         results.append(
             WorkspaceSummary(
                 workspace_id=entry.name,
@@ -770,7 +770,7 @@ def create_workspace(
     # Mismo summary que la lista: la rama se lee EN VIVO del HEAD (no del meta),
     # para que el selector muestre contra qué rama trabaja el usuario ni bien el
     # clon termina, sin una segunda consulta ni poder divergir del disco.
-    head = _git(ws, "rev-parse", "--abbrev-ref", "HEAD")
+    head = _git(ws, "symbolic-ref", "--short", "HEAD")
     return WorkspaceSummary(
         workspace_id=workspace_id,
         name=body.name.strip(),
