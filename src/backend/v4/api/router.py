@@ -3298,6 +3298,7 @@ class _RouterChatClient:
                                     # Reincidió: no insistir en bucle. El turno
                                     # degrada a ejecución directa del modelo.
                                     composed = True
+                                    restated = True
                         elif (
                             itype == "function_call"
                             and getattr(item, "name", "") in self._ws_names
