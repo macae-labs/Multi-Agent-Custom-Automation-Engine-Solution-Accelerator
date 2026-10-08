@@ -2272,15 +2272,23 @@ def _read_composition(
     if pattern not in patterns:
         raise ValueError(f"unknown orchestration pattern '{pattern}'")
     participants = args.get("participants")
-    return (
-        pattern,
-        str(args.get("task") or "").strip(),
-        [
-            p
-            for p in (participants if isinstance(participants, list) else [])
-            if isinstance(p, dict)
-        ],
-    )
+    roster = [
+        p
+        for p in (participants if isinstance(participants, list) else [])
+        if isinstance(p, dict) and str(p.get("name") or "").strip()
+    ]
+    # El único contrato del framework (agent_framework_orchestrations): los
+    # builders Sequential/Concurrent/GroupChat/Handoff hacen
+    # ``if not participants: raise ValueError("participants cannot be empty")``.
+    # ``direct`` es el único sin participantes. El modelo decide el roster y a
+    # veces (no determinista) devuelve ``[]`` con un patrón que sí los exige;
+    # se rechaza aquí, al leer, no en ``_team_from_router_roster`` con el turno
+    # ya perdido ("router roster contained no usable agents").
+    if pattern == "direct":
+        roster = []
+    elif not roster:
+        raise ValueError(f"pattern '{pattern}' requires at least one participant")
+    return (pattern, str(args.get("task") or "").strip(), roster)
 
 
 class _RouterChatClient:
@@ -3100,6 +3108,11 @@ class _RouterChatClient:
         workspace_tools = await self._workspace_tools() if self._workspace_id else []
         logger.info("Orquestador: %d tools de workspace", len(workspace_tools))
         composed = False
+        # El modelo elige el roster y, de forma no determinista, a veces
+        # devuelve participantes vacíos para un patrón que sí los exige. Se le
+        # devuelve el error (una vez) para que recomponga; si reincide, el turno
+        # degrada a ``direct`` en vez de caer en bucle de recomposición.
+        compose_retries = 0
         try:
             while resume is None:
                 pending = ""
@@ -3237,10 +3250,49 @@ class _RouterChatClient:
                                 else:
                                     composition = (_pattern, _task, _parts)
                             except ValueError as e:
-                                composed = True
                                 logger.warning(
                                     "Composer returned an unusable composition: %s", e
                                 )
+                                if compose_retries < 1:
+                                    # Devolver el error por el protocolo (no
+                                    # como prosa): el modelo ve la causa exacta
+                                    # ("participants cannot be empty") y vuelve a
+                                    # componer con un roster válido en la próxima
+                                    # pasada. Sin esto el turno se perdía al
+                                    # llegar vacío a _team_from_router_roster.
+                                    compose_retries += 1
+                                    _cid = (
+                                        getattr(item, "call_id", "")
+                                        or getattr(item, "id", "")
+                                        or uuid.uuid4().hex
+                                    )
+                                    executed.append(
+                                        (
+                                            {
+                                                "type": "function_call",
+                                                "call_id": _cid,
+                                                "name": "compose",
+                                                "arguments": getattr(
+                                                    item, "arguments", None
+                                                )
+                                                or "{}",
+                                            },
+                                            {
+                                                "type": "function_call_output",
+                                                "call_id": _cid,
+                                                "output": (
+                                                    f"ERROR: {e}. Vuelve a "
+                                                    "componer eligiendo al menos "
+                                                    "un participante para este "
+                                                    "patrón (o usa 'direct')."
+                                                ),
+                                            },
+                                        )
+                                    )
+                                else:
+                                    # Reincidió: no insistir en bucle. El turno
+                                    # degrada a ejecución directa del modelo.
+                                    composed = True
                         elif (
                             itype == "function_call"
                             and getattr(item, "name", "") in self._ws_names
