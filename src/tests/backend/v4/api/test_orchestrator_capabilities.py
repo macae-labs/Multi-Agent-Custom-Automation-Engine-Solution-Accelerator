@@ -159,6 +159,54 @@ async def test_the_orchestrator_offers_compose_and_its_own_capabilities():
 
 
 @pytest.mark.asyncio
+async def test_invalid_composition_then_direct_preserves_tool_call_history():
+    invalid = SimpleNamespace(
+        type="function_call",
+        name="compose",
+        call_id="invalid-compose",
+        arguments=json.dumps(
+            {"pattern": "sequential", "task": "retry this", "participants": []}
+        ),
+    )
+    direct = SimpleNamespace(
+        type="function_call",
+        name="compose",
+        call_id="direct-compose",
+        arguments=json.dumps(
+            {"pattern": "direct", "task": "Run this directly", "participants": []}
+        ),
+    )
+    fake = _fake_openai(
+        _Stream([_done(invalid)]),
+        _Stream([_done(direct)]),
+        _Stream([_text("Completed.")]),
+    )
+
+    with patch("openai.AsyncOpenAI", fake):
+        await _collect(_client(), prompt="Original request")
+
+    retry_input = fake.instances[-1].calls[1]["input"]
+    assert retry_input == [
+        {"role": "user", "content": "Run this directly"},
+        {
+            "type": "function_call",
+            "call_id": "invalid-compose",
+            "name": "compose",
+            "arguments": invalid.arguments,
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "invalid-compose",
+            "output": (
+                "ERROR: pattern 'sequential' requires at least one participant. "
+                "Vuelve a componer eligiendo al menos un participante para este "
+                "patrón (o usa 'direct')."
+            ),
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_composed_run_leaves_facts_without_a_verdict(
     _ledger_store, monkeypatch
 ):

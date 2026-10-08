@@ -3238,10 +3238,15 @@ class _RouterChatClient:
                                     # El salto decisión → ejecución: lo que
                                     # ejecuta Responses de aquí en más es el
                                     # task enriquecido, no la prosa del usuario.
-                                    conversation = [
-                                        *conversation[:-1],
-                                        {"role": "user", "content": objective},
-                                    ]
+                                    user_index = next(
+                                        i
+                                        for i in range(len(conversation) - 1, -1, -1)
+                                        if conversation[i].get("role") == "user"
+                                    )
+                                    conversation[user_index] = {
+                                        "role": "user",
+                                        "content": objective,
+                                    }
                                     restated = True
                                     logger.info(
                                         "Composer: pattern=direct task=%s",
