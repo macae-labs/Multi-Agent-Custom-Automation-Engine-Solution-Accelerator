@@ -256,6 +256,7 @@ def _record_tool_contents(
             "mcp_server_tool_result",
             "code_interpreter_tool_result",
         ):
+            result: Any
             if ct == "code_interpreter_tool_result":
                 stderr = getattr(c, "stderr", None)
                 result = str(
