@@ -54,7 +54,7 @@ async def test_park_persists_waiting_for_and_notifies_the_ui(parked):
     assert parked.plan.waiting_for == {
         "kind": "clarification", "request_id": "req-1", "checkpoint_id": "cp-9", "workflow_name": "wf-1",
         "question": "¿Cuál?", "content_id": "c-1", "workspace_id": "ws-1", "team_id": "t1",
-        "team_capabilities": {},
+        "team_capabilities": {}, "turn_log": [],
     }
     assert parked.store.updates == [parked.plan.waiting_for]
     # Addressed to the plan's socket, never to "the user's socket".

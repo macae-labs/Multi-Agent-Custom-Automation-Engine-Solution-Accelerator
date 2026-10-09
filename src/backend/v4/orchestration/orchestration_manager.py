@@ -1131,6 +1131,7 @@ class OrchestrationManager:
             _resume={
                 "checkpoint_id": waiting_for["checkpoint_id"],
                 "responses": {request_id: response},
+                "turn_log": waiting_for.get("turn_log") or [],
             },
         )
 
@@ -1245,6 +1246,7 @@ class OrchestrationManager:
         session_id: str,
         plan_id: str | None,
         workspace_id: str | None,
+        turn_log: list[dict] | None = None,
     ) -> None:
         """The workflow went idle on a ``request_info``: the pending request lives
         in the checkpoint that closed the superstep. Nothing waits in-process:
@@ -1277,6 +1279,9 @@ class OrchestrationManager:
             "question": question,
             "content_id": getattr(data, "id", None),
             "workspace_id": workspace_id,
+            # Deeds accumulated before the park: resume recreates the ledger,
+            # so carry the partial turn_log forward to restore and merge it.
+            "turn_log": list(turn_log or []),
         }
         mplan = None
         if is_plan_review:
@@ -1505,7 +1510,13 @@ class OrchestrationManager:
         agent_tool_logs: dict[str, list[dict]] = {}
         agent_tool_pending: dict[str, dict[str, tuple[int, str, str, Any]]] = {}
         agent_rounds: dict[str, int] = {}
-        plan_turn_log: list[dict] = []
+        # On resume the ledger is recreated, so the deeds recorded before the
+        # approval/clarification park would be lost. ``_park_on_request_info``
+        # persists the partial turn_log on the plan; seed from it here so the
+        # final turn_log spans the whole plan, not just the last superstep.
+        plan_turn_log: list[dict] = (
+            list(_resume.get("turn_log") or []) if _resume is not None else []
+        )
 
         try:
             # Execute workflow using run() with stream=True
@@ -1798,6 +1809,7 @@ class OrchestrationManager:
                     session_id=session_id,
                     plan_id=plan_id,
                     workspace_id=workspace_id,
+                    turn_log=plan_turn_log,
                 )
                 return
 
