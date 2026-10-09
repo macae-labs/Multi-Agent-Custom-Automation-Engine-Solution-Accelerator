@@ -111,6 +111,23 @@ jobs:
         run: az acr login --name boatrentalacr
 
       - name: Build & push
+        id: backend-build
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR }}/macaebackend:sha-${{ github.sha }}
+            ${{ env.ACR }}/macaebackend:latest
+
+      - name: Wait before retrying backend build
+        if: steps.backend-build.outcome == 'failure'
+        run: sleep 30
+
+      - name: Retry backend build & push
+        if: steps.backend-build.outcome == 'failure'
         uses: docker/build-push-action@v7
         with:
           context: src/backend
