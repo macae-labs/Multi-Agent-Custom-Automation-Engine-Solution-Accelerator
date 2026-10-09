@@ -198,6 +198,64 @@ def _user_response(data: Any, answer: str, decision: str = "") -> Any:
     return [Message(role="user", text=answer)]
 
 
+def _record_tool_contents(
+    log: list[dict],
+    pending: dict[str, tuple[int, str, str, Any]],
+    contents: Any,
+    agent: str,
+) -> None:
+    """Acumula las herramientas de un participante del plan como deeds
+    (misma forma que el carril chat: ``_make_deed``), para que la ejecución
+    del plan viaje en el ``metadata.turn_log`` de su resultado."""
+    from v4.api.router import _make_deed
+
+    for c in contents or []:
+        ct = getattr(c, "type", "") or ""
+        if ct in ("function_call", "mcp_server_tool_call"):
+            call_id = str(getattr(c, "call_id", ""))
+            fragment = getattr(c, "arguments", None)
+            hit = pending.get(call_id)
+            if hit is not None:
+                # En streaming la llamada llega por trozos con el mismo call_id:
+                # los argumentos se arman concatenando, no son llamadas nuevas.
+                idx, server, tool, args = hit
+                if isinstance(args, str) and isinstance(fragment, str):
+                    args = args + fragment
+                elif fragment:
+                    args = fragment
+                pending[call_id] = (idx, server, tool, args)
+                log[idx] = _make_deed(server, tool, args, "called", None, agent)
+                continue
+            tool = (
+                getattr(c, "name", None) or getattr(c, "tool_name", None) or "unknown"
+            )
+            server = getattr(c, "server_name", None) or (
+                "mcp" if ct.startswith("mcp") else "function"
+            )
+            log.append(_make_deed(server, tool, fragment, "called", None, agent))
+            pending[call_id] = (len(log) - 1, server, tool, fragment)
+        elif ct in ("function_result", "mcp_server_tool_result"):
+            exc = getattr(c, "exception", None)
+            result = (
+                str(exc)
+                if exc
+                else (
+                    getattr(c, "result", None)
+                    or getattr(c, "output", None)
+                    or getattr(c, "text", None)
+                )
+            )
+            status = "error" if exc else "success"
+            hit = pending.pop(str(getattr(c, "call_id", "")), None)
+            if hit is None:
+                log.append(
+                    _make_deed("function", "unknown", None, status, result, agent)
+                )
+            else:
+                idx, server, tool, args = hit
+                log[idx] = _make_deed(server, tool, args, status, result, agent)
+
+
 def _participant_name(agent: Any) -> str:
     """El nombre con el que el framework identifica al participante (el
     ``author_name`` de sus mensajes)."""
@@ -1399,6 +1457,13 @@ class OrchestrationManager:
         agent_stream_buffers: dict[str, str] = {}
 
         agents_actively_responding: set[str] = set()
+        # La ejecución del plan como evidencia de UN turno de la sesión: cada
+        # ronda (participante + sus herramientas) es un deed del turn_log que
+        # viaja en el metadata del resultado del plan, no como mensajes sueltos.
+        agent_tool_logs: dict[str, list[dict]] = {}
+        agent_tool_pending: dict[str, dict[str, tuple[int, str, str, Any]]] = {}
+        agent_rounds: dict[str, int] = {}
+        plan_turn_log: list[dict] = []
 
         try:
             # Execute workflow using run() with stream=True
@@ -1477,6 +1542,9 @@ class OrchestrationManager:
                             # forwarded to the UI; broadcast-sync chunks (should_respond=False)
                             # arrive outside this window and are silently discarded.
                             agent_stream_buffers.pop(agent_name, None)
+                            agent_tool_logs.pop(agent_name, None)
+                            agent_tool_pending.pop(agent_name, None)
+                            agent_rounds[agent_name] = int(event.data.round_index)
                             agents_actively_responding.add(agent_name)
 
                         elif isinstance(event.data, GroupChatResponseReceivedEvent):
@@ -1526,6 +1594,23 @@ class OrchestrationManager:
                                         agent_name=agent_name,
                                         content=cleaned,
                                         is_final=False,
+                                    )
+                                    # Ronda al turn_log: primero sus herramientas,
+                                    # después la respuesta del participante.
+                                    from v4.api.router import _make_deed
+
+                                    plan_turn_log.extend(
+                                        agent_tool_logs.pop(agent_name, [])
+                                    )
+                                    plan_turn_log.append(
+                                        _make_deed(
+                                            "magentic",
+                                            agent_name,
+                                            {"round": agent_rounds.get(agent_name)},
+                                            "success",
+                                            cleaned,
+                                            agent_name,
+                                        )
                                     )
 
                     # Handle executor completed - just log, don't send to UI
@@ -1582,6 +1667,12 @@ class OrchestrationManager:
                                         agent_stream_buffers.get(executor_id, "")
                                         + chunk_text
                                     )
+                                _record_tool_contents(
+                                    agent_tool_logs.setdefault(executor_id, []),
+                                    agent_tool_pending.setdefault(executor_id, {}),
+                                    getattr(output_data, "contents", None),
+                                    executor_id,
+                                )
                                 try:
                                     await streaming_agent_response_callback(
                                         executor_id,
@@ -1720,7 +1811,12 @@ class OrchestrationManager:
                         user_id=user_id,
                         content=final_text,
                         role="assistant",
-                        metadata={"intent": "task", "type": "plan_result"},
+                        metadata={
+                            "intent": "task",
+                            "type": "plan_result",
+                            "plan_id": plan_id,
+                            "turn_log": plan_turn_log,
+                        },
                     )
                     self.logger.info(
                         "Plan result written back to chat session %s (%d chars)",
