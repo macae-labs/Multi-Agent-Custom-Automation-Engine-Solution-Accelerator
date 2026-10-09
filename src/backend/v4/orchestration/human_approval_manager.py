@@ -84,8 +84,10 @@ code generation, calculations, external data) against what THIS team's agents ca
 actually do with their described capabilities, tools and data sources. If a
 required capability is missing from every agent on the team:
 - Do NOT create steps that pretend the capability exists.
-- State in the plan, as its first line, exactly which required capabilities this
-  team lacks: the user reads it at plan review and can revise the plan there.
+- Add a plan step as a bullet attributed to the MagenticManager that states
+  exactly which required capabilities this team lacks. Only bullet steps survive
+  into the plan the user reviews (free-text lines are dropped), so the warning
+  must be a step; the user reads it at plan review and can revise the plan there.
 - Plan steps only for capabilities the team actually has.
 
 NO-FABRICATION RULE:
