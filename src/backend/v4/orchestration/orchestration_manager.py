@@ -1132,6 +1132,7 @@ class OrchestrationManager:
                 "checkpoint_id": waiting_for["checkpoint_id"],
                 "responses": {request_id: response},
                 "turn_log": waiting_for.get("turn_log") or [],
+                "turn_log_dropped": waiting_for.get("turn_log_dropped") or 0,
             },
         )
 
@@ -1247,6 +1248,7 @@ class OrchestrationManager:
         plan_id: str | None,
         workspace_id: str | None,
         turn_log: list[dict] | None = None,
+        turn_log_dropped: int = 0,
     ) -> None:
         """The workflow went idle on a ``request_info``: the pending request lives
         in the checkpoint that closed the superstep. Nothing waits in-process:
@@ -1282,6 +1284,7 @@ class OrchestrationManager:
             # Deeds accumulated before the park: resume recreates the ledger,
             # so carry the partial turn_log forward to restore and merge it.
             "turn_log": list(turn_log or []),
+            "turn_log_dropped": int(turn_log_dropped or 0),
         }
         mplan = None
         if is_plan_review:
@@ -1517,6 +1520,23 @@ class OrchestrationManager:
         plan_turn_log: list[dict] = (
             list(_resume.get("turn_log") or []) if _resume is not None else []
         )
+        # Bound the ledger like the direct lane (``_LEDGER_MAX_DEEDS``): the chat
+        # session doc accumulates every turn under Cosmos' 2 MB item limit, so an
+        # unbounded plan ledger could make the final ``add_message`` fail and lose
+        # the whole result. Count the surplus instead of growing without limit.
+        from v4.api.router import _LEDGER_MAX_DEEDS
+
+        plan_turn_log_dropped: int = (
+            int(_resume.get("turn_log_dropped") or 0) if _resume is not None else 0
+        )
+
+        def _extend_turn_log(deeds: list[dict]) -> None:
+            nonlocal plan_turn_log_dropped
+            for deed in deeds:
+                if len(plan_turn_log) < _LEDGER_MAX_DEEDS:
+                    plan_turn_log.append(deed)
+                else:
+                    plan_turn_log_dropped += 1
 
         try:
             # Execute workflow using run() with stream=True
@@ -1652,18 +1672,20 @@ class OrchestrationManager:
                                     # después la respuesta del participante.
                                     from v4.api.router import _make_deed
 
-                                    plan_turn_log.extend(
+                                    _extend_turn_log(
                                         agent_tool_logs.pop(agent_name, [])
                                     )
-                                    plan_turn_log.append(
-                                        _make_deed(
-                                            "magentic",
-                                            agent_name,
-                                            {"round": agent_rounds.get(agent_name)},
-                                            "success",
-                                            cleaned,
-                                            agent_name,
-                                        )
+                                    _extend_turn_log(
+                                        [
+                                            _make_deed(
+                                                "magentic",
+                                                agent_name,
+                                                {"round": agent_rounds.get(agent_name)},
+                                                "success",
+                                                cleaned,
+                                                agent_name,
+                                            )
+                                        ]
                                     )
 
                     # Handle executor completed - just log, don't send to UI
@@ -1810,6 +1832,7 @@ class OrchestrationManager:
                     plan_id=plan_id,
                     workspace_id=workspace_id,
                     turn_log=plan_turn_log,
+                    turn_log_dropped=plan_turn_log_dropped,
                 )
                 return
 
@@ -1870,6 +1893,7 @@ class OrchestrationManager:
                             "type": "plan_result",
                             "plan_id": plan_id,
                             "turn_log": plan_turn_log,
+                            "turn_log_dropped": plan_turn_log_dropped,
                         },
                     )
                     self.logger.info(
