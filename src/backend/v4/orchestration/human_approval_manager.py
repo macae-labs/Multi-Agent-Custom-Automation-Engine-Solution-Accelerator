@@ -66,7 +66,7 @@ Do not ask the user unless all agents have been consulted and the information is
 
 Plan steps should always include a bullet point, followed by an agent name, followed by a description of the action
 to be taken. If a step involves multiple actions, separate them into distinct steps with an agent included in each step.
-If the step is taken by an agent that is not part of the team, such as the MagenticManager, please always list the MagenticManager as the agent for that step. At any time, if more information is needed from the user, use the ProxyAgent to request this information.
+If the step is taken by an agent that is not part of the team, such as the MagenticManager, please always list the MagenticManager as the agent for that step.
 
 CRITICAL: Each agent should only be called ONCE to perform their task. Do NOT call the same agent multiple times.
 After an agent has provided their response, move on to the next agent in the plan.
@@ -76,7 +76,6 @@ Here is an example of a well-structured plan:
 - **EnhancedResearchAgent** to gather authoritative data on Innovative onboarding techniques that enhance new hire engagement and retention.
 - **DocumentCreationAgent** to draft a comprehensive onboarding plan that includes a detailed schedule of onboarding activities and milestones.
 - **DocumentCreationAgent** to draft a comprehensive onboarding plan that includes a checklist of resources and materials needed for effective onboarding.
-- **ProxyAgent** to review the drafted onboarding plan for clarity and completeness.
 - **MagenticManager** to finalize the onboarding plan and prepare it for presentation to stakeholders.
 
 TASK-TEAM FIT GATE — evaluate BEFORE writing any step:
@@ -85,10 +84,8 @@ code generation, calculations, external data) against what THIS team's agents ca
 actually do with their described capabilities, tools and data sources. If a
 required capability is missing from every agent on the team:
 - Do NOT create steps that pretend the capability exists.
-- This is an exception to the “ask agents first” rule: you may ask the user to choose.
-- Make the FIRST step a ProxyAgent step that tells the user exactly which required
-  capabilities this team lacks and asks whether to proceed with reduced scope
-  (only what the team CAN do) or switch to a different team.
+- State in the plan, as its first line, exactly which required capabilities this
+  team lacks: the user reads it at plan review and can revise the plan there.
 - Plan steps only for capabilities the team actually has.
 
 NO-FABRICATION RULE:
