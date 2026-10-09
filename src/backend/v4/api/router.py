@@ -810,12 +810,20 @@ async def _create_plan_and_start(
         team: TeamConfiguration | None = None
         if composed_agents:
             try:
+                # Magentic oficial: participantes = agentes con modelo; la única
+                # compuerta humana es la revisión del plan (plan_review). Sin
+                # ProxyAgent en el equipo compuesto: un participante sin modelo
+                # convierte cada paso que le toca en una pregunta al usuario y
+                # el plan se vuelve una cadena de aclaraciones (medido 2026-10-07
+                # plan 36572ea2 y 2026-10-09 plan 4c47f2ea: dos rondas, dos
+                # aclaraciones, cero especialistas).
                 team = await _team_from_router_roster(
                     composed_agents,
                     description,
                     user_id,
                     memory_store,
                     workspace_id,
+                    with_proxy=False,
                 )
             except Exception as compose_err:
                 raise HTTPException(
