@@ -94,7 +94,7 @@ def wait_for(pred, limit, label):
     while time.monotonic() - t < limit:
         if pred():
             return True
-        time.sleep(2)
+        pg.wait_for_timeout(2_000)
     log(f"TIMEOUT {label} ({limit}s)")
     return False
 
