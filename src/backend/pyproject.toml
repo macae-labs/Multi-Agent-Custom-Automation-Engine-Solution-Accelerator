@@ -34,7 +34,7 @@ dependencies = [
     "pylint-pydantic>=0.3.5,<1",
     "pexpect>=4.9.0,<5",
     "mcp>=1.28.1,<2",
-    "werkzeug>=3.1.6,<4",
+    "werkzeug>=3.1.9,<4",
     "azure-core>=1.38.0,<2",
     # agent-framework: el código está escrito contra la línea rc6; la migración
     # a 1.x es manual por rama (API distinta: Message, AzureOpenAIChatClient…).
