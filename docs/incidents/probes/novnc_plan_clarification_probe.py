@@ -170,7 +170,7 @@ with sync_playwright() as p:
             socks_before = len(sockets)
             pg.reload(wait_until="domcontentloaded")
             log("pagina recargada")
-            time.sleep(12)
+            pg.wait_for_timeout(12_000)
             new_socks = sockets[socks_before:]
             re_sent = [f for f in ws_frames[frames_before:] if f["type"] == "user_clarification_request"]
             log(f"tras recarga: sockets nuevos={new_socks} reenvio_aclaracion={len(re_sent)} input={input_state(pg)}")
