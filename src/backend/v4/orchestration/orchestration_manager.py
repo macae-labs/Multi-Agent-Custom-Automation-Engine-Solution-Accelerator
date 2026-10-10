@@ -1464,6 +1464,10 @@ class OrchestrationManager:
         agent_tool_pending: dict[str, dict[str, tuple[int, str, str, Any]]] = {}
         agent_rounds: dict[str, int] = {}
         plan_turn_log: list[dict] = []
+        # Deeds beyond _LEDGER_MAX_DEEDS are dropped (bounded like the
+        # direct-chat ledger) and only their count is persisted, keeping the
+        # chat session item under the 2 MB Cosmos limit.
+        plan_turn_log_dropped: int = 0
 
         try:
             # Execute workflow using run() with stream=True
@@ -1597,12 +1601,13 @@ class OrchestrationManager:
                                     )
                                     # Ronda al turn_log: primero sus herramientas,
                                     # después la respuesta del participante.
-                                    from v4.api.router import _make_deed
-
-                                    plan_turn_log.extend(
-                                        agent_tool_logs.pop(agent_name, [])
+                                    from v4.api.router import (
+                                        _LEDGER_MAX_DEEDS,
+                                        _make_deed,
                                     )
-                                    plan_turn_log.append(
+
+                                    _round_deeds = agent_tool_logs.pop(agent_name, [])
+                                    _round_deeds.append(
                                         _make_deed(
                                             "magentic",
                                             agent_name,
@@ -1612,6 +1617,11 @@ class OrchestrationManager:
                                             agent_name,
                                         )
                                     )
+                                    for _deed in _round_deeds:
+                                        if len(plan_turn_log) < _LEDGER_MAX_DEEDS:
+                                            plan_turn_log.append(_deed)
+                                        else:
+                                            plan_turn_log_dropped += 1
 
                     # Handle executor completed - just log, don't send to UI
                     elif event_type == "executor_completed":
@@ -1805,18 +1815,21 @@ class OrchestrationManager:
                         get_chat_cosmos_service,
                     )
 
+                    _wb_metadata: dict[str, Any] = {
+                        "intent": "task",
+                        "type": "plan_result",
+                        "plan_id": plan_id,
+                        "turn_log": plan_turn_log,
+                    }
+                    if plan_turn_log_dropped:
+                        _wb_metadata["turn_log_dropped"] = plan_turn_log_dropped
                     _chat_svc_wb = await get_chat_cosmos_service()
                     await _chat_svc_wb.add_message(
                         session_id=session_id,
                         user_id=user_id,
                         content=final_text,
                         role="assistant",
-                        metadata={
-                            "intent": "task",
-                            "type": "plan_result",
-                            "plan_id": plan_id,
-                            "turn_log": plan_turn_log,
-                        },
+                        metadata=_wb_metadata,
                     )
                     self.logger.info(
                         "Plan result written back to chat session %s (%d chars)",

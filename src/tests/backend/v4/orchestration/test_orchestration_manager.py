@@ -599,6 +599,86 @@ class TestOrchestrationManager(IsolatedAsyncioTestCase):
         self.assertIn("plan_store", order[:final_idx])
         self.assertIn("chat_session", order[:final_idx])
 
+    async def test_turn_log_is_capped_and_overflow_count_persisted(self):
+        """A plan that produces more deeds than ``_LEDGER_MAX_DEEDS`` must cap
+        ``turn_log`` and persist the exact overflow count in ``turn_log_dropped``
+        so the chat session item stays under the 2 MB Cosmos limit (regression
+        guard against unbounded appends)."""
+        from v4.api.router import _LEDGER_MAX_DEEDS
+
+        overflow = 4
+        total_rounds = _LEDGER_MAX_DEEDS + overflow
+
+        # Each round contributes exactly one deed: a request-sent opens the
+        # response window, a streamed chunk fills the buffer, and a
+        # response-received flushes it into the turn_log.
+        events: list = []
+        for round_index in range(1, total_rounds + 1):
+            events.append(
+                Mock(
+                    type="group_chat",
+                    data=GroupChatRequestSentEvent(
+                        round_index=round_index, participant_name="agent_1"
+                    ),
+                )
+            )
+            events.append(
+                Mock(
+                    type="output",
+                    executor_id="agent_1",
+                    data=AgentResponseUpdate(
+                        contents=[Content.from_text(f"response {round_index}")]
+                    ),
+                )
+            )
+            events.append(
+                Mock(
+                    type="group_chat",
+                    data=GroupChatResponseReceivedEvent(
+                        round_index=round_index, participant_name="agent_1"
+                    ),
+                )
+            )
+        events.append(
+            Mock(
+                type="output",
+                executor_id=None,
+                data=Message(role="assistant", text="Final result"),
+            )
+        )
+
+        mock_workflow = Mock()
+        mock_workflow.run = AsyncGeneratorMock(events)
+        mock_workflow.executors = {}
+        orchestration_config.get_current_orchestration.return_value = mock_workflow
+
+        captured_metadata: dict = {}
+        chat_svc = Mock()
+
+        async def _add_message(**kwargs):
+            captured_metadata.update(kwargs.get("metadata") or {})
+
+        chat_svc.add_message = _add_message
+        self.orchestration_manager._persist_agent_message = AsyncMock()
+
+        input_task = Mock()
+        input_task.description = "Test overflow"
+        input_task.context = ""
+
+        with patch(
+            "common.services.chat_cosmos_service.get_chat_cosmos_service",
+            AsyncMock(return_value=chat_svc),
+        ):
+            await self.orchestration_manager.run_orchestration(
+                user_id=self.test_user_id,
+                session_id=self.test_session_id,
+                input_task=input_task,
+                plan_id="plan-overflow",
+            )
+
+        self.assertEqual(len(captured_metadata["turn_log"]), _LEDGER_MAX_DEEDS)
+        self.assertEqual(captured_metadata["turn_log_dropped"], overflow)
+
     async def test_run_orchestration_no_workflow(self):
         """Test run_orchestration when no workflow exists."""
         orchestration_config.get_current_orchestration.return_value = None
