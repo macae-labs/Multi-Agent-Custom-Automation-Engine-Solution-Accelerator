@@ -134,4 +134,8 @@ export interface ParsedUserClarification {
     type: WebsocketMessageType.USER_CLARIFICATION_REQUEST;
     question: string;
     request_id: string;
+    approval?: {
+        tool: string;
+        arguments?: string;
+    } | null;
 }

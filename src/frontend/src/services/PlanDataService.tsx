@@ -775,6 +775,7 @@ export class PlanDataService {
             type: WebsocketMessageType.USER_CLARIFICATION_REQUEST,
             question: val.question.trim(),
             request_id: val.request_id,
+            approval: val.approval ?? null,
           };
         }
         if (val.data !== undefined) return extractDirect(val.data, depth + 1);
