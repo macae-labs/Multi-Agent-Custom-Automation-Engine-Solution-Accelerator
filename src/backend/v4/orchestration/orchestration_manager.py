@@ -211,20 +211,9 @@ def _record_tool_contents(
 
     for c in contents or []:
         ct = getattr(c, "type", "") or ""
-        if ct in (
-            "function_call",
-            "mcp_server_tool_call",
-            "code_interpreter_tool_call",
-        ):
+        if ct in ("function_call", "mcp_server_tool_call"):
             call_id = str(getattr(c, "call_id", ""))
-            if ct == "code_interpreter_tool_call":
-                fragment = (
-                    getattr(c, "input", None)
-                    or getattr(c, "text", None)
-                    or getattr(c, "arguments", None)
-                )
-            else:
-                fragment = getattr(c, "arguments", None)
+            fragment = getattr(c, "arguments", None)
             hit = pending.get(call_id)
             if hit is not None:
                 # En streaming la llamada llega por trozos con el mismo call_id:
@@ -237,61 +226,31 @@ def _record_tool_contents(
                 pending[call_id] = (idx, server, tool, args)
                 log[idx] = _make_deed(server, tool, args, "called", None, agent)
                 continue
-            if ct == "code_interpreter_tool_call":
-                tool = "code_interpreter"
-                server = "code_interpreter"
-            else:
-                tool = (
-                    getattr(c, "name", None)
-                    or getattr(c, "tool_name", None)
-                    or "unknown"
-                )
-                server = getattr(c, "server_name", None) or (
-                    "mcp" if ct.startswith("mcp") else "function"
-                )
+            tool = (
+                getattr(c, "name", None) or getattr(c, "tool_name", None) or "unknown"
+            )
+            server = getattr(c, "server_name", None) or (
+                "mcp" if ct.startswith("mcp") else "function"
+            )
             log.append(_make_deed(server, tool, fragment, "called", None, agent))
             pending[call_id] = (len(log) - 1, server, tool, fragment)
-        elif ct in (
-            "function_result",
-            "mcp_server_tool_result",
-            "code_interpreter_tool_result",
-        ):
-            if ct == "code_interpreter_tool_result":
-                stderr = getattr(c, "stderr", None)
-                result = str(
-                    stderr
+        elif ct in ("function_result", "mcp_server_tool_result"):
+            exc = getattr(c, "exception", None)
+            result = (
+                str(exc)
+                if exc
+                else (
+                    getattr(c, "result", None)
                     or getattr(c, "output", None)
-                    or getattr(c, "stdout", None)
                     or getattr(c, "text", None)
-                    or "\n".join(
-                        str(
-                            getattr(part, "text", None)
-                            or getattr(part, "output", None)
-                            or ""
-                        )
-                        for part in (getattr(c, "outputs", None) or [])
-                    )
                 )
-                status = "error" if stderr else "success"
-            else:
-                exc = getattr(c, "exception", None)
-                result = (
-                    str(exc)
-                    if exc
-                    else (
-                        getattr(c, "result", None)
-                        or getattr(c, "output", None)
-                        or getattr(c, "text", None)
-                    )
-                )
-                status = "error" if exc else "success"
+            )
+            status = "error" if exc else "success"
             hit = pending.pop(str(getattr(c, "call_id", "")), None)
             if hit is None:
-                if ct == "code_interpreter_tool_result":
-                    server, tool = "code_interpreter", "code_interpreter"
-                else:
-                    server, tool = "function", "unknown"
-                log.append(_make_deed(server, tool, None, status, result, agent))
+                log.append(
+                    _make_deed("function", "unknown", None, status, result, agent)
+                )
             else:
                 idx, server, tool, args = hit
                 log[idx] = _make_deed(server, tool, args, status, result, agent)
