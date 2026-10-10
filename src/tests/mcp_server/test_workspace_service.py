@@ -5,6 +5,7 @@ Tests for workspace MCP service behaviors.
 import json
 from json import JSONDecodeError, loads
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -68,7 +69,10 @@ class TestWorkspaceToolService:
 
         def mock_git(_ws, *args, trust=()):
             # La materialización del sandbox también pasa por _git; sólo el
-            # `status` de la tool tiene que fallar.
+            # `status` de la tool tiene que fallar. Un clone real deja el
+            # repositorio en el destino (el último argumento).
+            if args and args[0] == "clone":
+                (Path(args[-1]) / ".git").mkdir(parents=True, exist_ok=True)
             if args[:2] == ("status", "--short"):
                 return subprocess.CompletedProcess(
                     ["git", *args], 128, stdout=b"", stderr=b"fatal: not a git repository"

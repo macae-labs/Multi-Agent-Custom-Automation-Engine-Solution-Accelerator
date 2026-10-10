@@ -53,6 +53,7 @@ el sandbox se clona desde ese target igual que desde el share.
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -184,6 +185,15 @@ def _sandbox_lock(key: str) -> threading.Lock:
         return _SANDBOX_LOCKS.setdefault(key, threading.Lock())
 
 
+def _is_interrupted_clone(sandbox: Path) -> bool:
+    """``git clone`` escribe ``HEAD -> refs/heads/.invalid`` al crear el repo y
+    lo reemplaza al terminar: encontrarlo es la firma de un clone cortado."""
+    try:
+        return (sandbox / ".git" / "HEAD").read_text(encoding="utf-8").strip() == "ref: refs/heads/.invalid"
+    except OSError:
+        return False
+
+
 def _sandbox_path(user_id: str, workspace_id: str) -> Path:
     """Ruta LOCAL del sandbox, con la misma contención que el share."""
     joined = os.path.normpath(os.path.join(str(SANDBOX_ROOT), user_id, workspace_id))
@@ -253,23 +263,44 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
         # El share acepta pushes sobre su rama actual actualizando su árbol si
         # está limpio: así lo publicado aparece en el frontend sin más pasos.
         _git(share, "config", "receive.denyCurrentBranch", "updateInstead")
+        # El resto de un clone que no terminó lleva la marca que git pone hasta
+        # el final: ``HEAD -> refs/heads/.invalid``. No es un sandbox: se
+        # descarta; no se reutiliza ni se "repara".
+        if _is_interrupted_clone(sandbox):
+            shutil.rmtree(sandbox, ignore_errors=True)
         if not (sandbox / ".git").is_dir():
             sandbox.parent.mkdir(parents=True, exist_ok=True)
-            # En la rama DECLARADA al montar, no en la que el share tenga checkout.
-            done = _git(
-                sandbox.parent,
-                "clone",
-                "-q",
-                *(["--branch", branch] if branch else []),
-                "--",
-                str(share),
-                str(sandbox),
-                trust=(*share_trust, sandbox),
-            )
-            if done.returncode != 0:
-                raise WorkspaceAccessError(
-                    "Could not materialize the workspace: " + done.stderr.decode("utf-8", errors="replace").strip()
+            # Materialización TRANSACCIONAL: se clona en un temporal al lado, se
+            # verifica HEAD y recién entonces se renombra al lugar (atómico). Lo
+            # que falle o se interrumpa se borra; nunca queda a medias con el
+            # nombre del sandbox. ``--shared``: el sandbox toma los objetos del
+            # share en vez de copiarlos (medido 2026-10-10: 3 s vs 26 s y 272 KB
+            # vs 195 MB). El share es el origen durable; el sandbox, efímero.
+            staging = sandbox.parent / f".materializing-{sandbox.name}-{os.getpid()}"
+            shutil.rmtree(staging, ignore_errors=True)
+            try:
+                # En la rama DECLARADA al montar, no en la que el share tenga checkout.
+                done = _git(
+                    sandbox.parent,
+                    "clone",
+                    "-q",
+                    "--shared",
+                    *(["--branch", branch] if branch else []),
+                    "--",
+                    str(share),
+                    str(staging),
+                    trust=(*share_trust, staging),
                 )
+                if done.returncode != 0:
+                    raise WorkspaceAccessError(
+                        "Could not materialize the workspace: " + done.stderr.decode("utf-8", errors="replace").strip()
+                    )
+                # El clone terminó (un share vacío, sin commits, también es
+                # válido): recién ahora ocupa el nombre del sandbox.
+                staging.rename(sandbox)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
             _git(sandbox, "config", "user.name", _GIT_IDENTITY[0])
             _git(sandbox, "config", "user.email", _GIT_IDENTITY[1])
             # ``upstream`` es el repositorio que el usuario DECLARÓ al montar
