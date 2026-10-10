@@ -575,6 +575,7 @@ async def process_request(
         persist_user_task=True,
         composed_agents=roster,
         workspace_id=input_task.workspace_id,
+        known_indexes=composer._index_names,
     )
     return {
         "status": "Request started successfully",
@@ -597,6 +598,7 @@ async def _team_from_router_roster(
     workspace_id: str | None = None,
     with_proxy: bool = True,
     persist: bool = True,
+    known_indexes: list[str] | None = None,
 ) -> TeamConfiguration:
     """Turn the Model Router's ``run_plan`` roster into a persisted team.
 
@@ -624,6 +626,17 @@ async def _team_from_router_roster(
     deployment = config.AZURE_OPENAI_DEPLOYMENT_NAME
     if supported and deployment not in supported:
         deployment = str(supported[0])
+
+    # Los únicos índices reales son los descubiertos en AI Search al componer
+    # (``_load_knowledge_indexes``). El roster del Router puede nombrar uno
+    # alucinado o caduco; dejarlo pasar hace fallar la creación del agente de
+    # Azure Search y aborta la run compuesta. Si hay un conjunto conocido, se
+    # valida la membresía y, ante un nombre desconocido, se desactiva RAG.
+    allowed_indexes: set[str] | None = (
+        {n.strip() for n in known_indexes if n and n.strip()}
+        if known_indexes is not None
+        else None
+    )
 
     agents: list[dict] = []
     seen: set[str] = set()
@@ -658,6 +671,22 @@ async def _team_from_router_roster(
         # paso viaja por-run (``run_pattern(steps=...)`` / executor context),
         # jamás en la definición.
         system_message = str(raw.get("system_message") or "").strip()
+        index_name = str(raw.get("index_name") or "").strip()
+        use_rag = bool(raw.get("use_rag")) and bool(index_name)
+        # Valida la membresía en el conjunto de índices descubierto: un nombre
+        # fuera de él (alucinado o caduco) desactiva RAG en vez de romper la run.
+        if (
+            use_rag
+            and allowed_indexes is not None
+            and index_name not in allowed_indexes
+        ):
+            logger.warning(
+                "Router nombró un índice desconocido '%s' para %s; RAG desactivado",
+                index_name,
+                name,
+            )
+            use_rag = False
+            index_name = ""
         agents.append(
             {
                 "input_key": "",
@@ -674,11 +703,11 @@ async def _team_from_router_roster(
                 # La configuración del agente es la de la composición, como en
                 # los JSON de equipo: índice de AI Search si lo nombra, MCP si
                 # lo pide (el code interpreter es server-side y no lleva MCP).
-                "use_rag": bool(raw.get("use_rag")) and bool(raw.get("index_name")),
+                "use_rag": use_rag,
                 "use_mcp": bool(raw.get("use_mcp")) and not coding_tools,
                 "use_bing": use_bing,
                 "use_reasoning": use_reasoning,
-                "index_name": str(raw.get("index_name") or "").strip(),
+                "index_name": index_name,
                 "coding_tools": coding_tools,
                 "use_image_generation": bool(raw.get("use_image_generation")),
             }
@@ -792,6 +821,7 @@ async def _create_plan_and_start(
     persist_user_task: bool = False,
     composed_agents: list | None = None,
     workspace_id: str | None = None,
+    known_indexes: list[str] | None = None,
 ) -> str:
     """Create a Plan and kick off the Magentic orchestration as a BackgroundTask.
 
@@ -827,6 +857,7 @@ async def _create_plan_and_start(
                     memory_store,
                     workspace_id,
                     with_proxy=False,
+                    known_indexes=known_indexes,
                 )
             except Exception as compose_err:
                 raise HTTPException(
@@ -3690,6 +3721,7 @@ class _RouterChatClient:
             self._workspace_id,
             with_proxy=False,
             persist=False,
+            known_indexes=self._index_names,
         )
         agents = await MagenticAgentFactory().get_agents(
             self._user_id,
@@ -4846,6 +4878,7 @@ async def chat_message_stream(
                         # roster falls back to the user's selected team.
                         composed_agents=_participants or None,
                         workspace_id=chat_request.workspace_id,
+                        known_indexes=agent._index_names,
                     )
                     yield _sse_event(
                         {
