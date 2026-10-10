@@ -349,6 +349,34 @@ class TestSandboxArchitecture:
         assert not stale.exists()
         assert not list(sandbox.parent.glob(f".materializing-{wid}-*"))
 
+    def test_a_live_materializers_clone_in_progress_is_not_removed_by_cleanup(
+        self, workspace_tools, workspace_root
+    ):
+        """Medido 2026-10-10: con ``SANDBOX_ROOT`` compartido dos procesos pueden
+        materializar a la vez. El que entra a limpiar restos no debe borrar el
+        clone en curso de otro proceso vivo; sólo descarta los huérfanos."""
+        tools, _ = workspace_tools
+        share, uid, wid = self._share(workspace_root)
+        sandbox = workspace_service._sandbox_path(uid, wid)
+        sandbox.parent.mkdir(parents=True, exist_ok=True)
+        alive = subprocess.Popen(["sleep", "30"])
+        try:
+            in_progress = sandbox.parent / f".materializing-{wid}-{alive.pid}"
+            in_progress.mkdir(parents=True)
+            (in_progress / "clone-en-curso").write_text("otro proceso vivo\n")
+            orphan = sandbox.parent / f".materializing-{wid}-999999"
+            orphan.mkdir(parents=True)
+
+            out = loads(tools["workspace_list_entries"](uid, wid))
+
+            assert out["status"] != "error", out
+            assert in_progress.exists(), "no se borra el clone de un proceso vivo"
+            assert (in_progress / "clone-en-curso").read_text() == "otro proceso vivo\n"
+            assert not orphan.exists(), "los temporales huérfanos sí se descartan"
+        finally:
+            alive.terminate()
+            alive.wait()
+
     def test_a_failed_clone_leaves_neither_sandbox_nor_staging(
         self, workspace_tools, workspace_root, monkeypatch
     ):

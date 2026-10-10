@@ -185,6 +185,23 @@ def _sandbox_lock(key: str) -> threading.Lock:
         return _SANDBOX_LOCKS.setdefault(key, threading.Lock())
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Un temporal ``.materializing-…-<pid>`` sólo es basura si su dueño ya no
+    corre: preguntarle al SO evita borrar el clone en curso de otro proceso que
+    comparte ``SANDBOX_ROOT``."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def _is_interrupted_clone(sandbox: Path) -> bool:
     """``git clone`` escribe ``HEAD -> refs/heads/.invalid`` al crear el repo y
     lo reemplaza al terminar: encontrarlo es la firma de un clone cortado."""
@@ -277,9 +294,14 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
             # share en vez de copiarlos (medido 2026-10-10: 3 s vs 26 s y 272 KB
             # vs 195 MB). El share es el origen durable; el sandbox, efímero.
             # Restos de materializaciones de otros procesos (caídos a mitad):
-            # bajo el lock sólo este proceso puede estar materializando, así
-            # que cualquier otro temporal con este nombre es basura.
+            # ``SANDBOX_ROOT`` puede estar compartido y ``_sandbox_lock`` sólo
+            # excluye a hilos de este proceso, así que un temporal cuyo dueño
+            # sigue vivo es el clone EN CURSO de otro proceso, no basura: sólo
+            # se descartan los huérfanos (su PID ya no corre).
             for stale in sandbox.parent.glob(f".materializing-{sandbox.name}-*"):
+                owner = stale.name.rsplit("-", 1)[-1]
+                if owner.isdigit() and _pid_is_alive(int(owner)):
+                    continue
                 shutil.rmtree(stale, ignore_errors=True)
             staging = sandbox.parent / f".materializing-{sandbox.name}-{os.getpid()}"
             try:
