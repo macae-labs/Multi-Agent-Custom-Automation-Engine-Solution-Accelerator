@@ -1815,7 +1815,7 @@ class OrchestrationManager:
                         get_chat_cosmos_service,
                     )
 
-                    _wb_metadata = {
+                    _wb_metadata: dict[str, Any] = {
                         "intent": "task",
                         "type": "plan_result",
                         "plan_id": plan_id,
