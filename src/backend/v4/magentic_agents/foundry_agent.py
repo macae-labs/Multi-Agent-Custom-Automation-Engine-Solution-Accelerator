@@ -433,7 +433,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                 else:
                     tools = []
 
-                if self.enable_code_interpreter:
+                if self.enable_code_interpreter and not tools:
                     # Code Interpreter is server-side in Foundry portal.
                     # Must use AzureAIClient to access it — ResponsesClient
                     # cannot reach server-side tools configured in the portal.
@@ -465,13 +465,27 @@ class FoundryAgentTemplate(AzureAgentBase):
                 elif tools:
                     # Runtime MCP tools present → AzureOpenAIResponsesClient
                     # supports dynamic MCP tools passed at runtime.
+                    responses_client = self.get_responses_client()
+                    if self.enable_code_interpreter:
+                        # Runtime MCP (the mounted workspace) and Code
+                        # Interpreter must coexist: neither is sacrificed for
+                        # the other. AzureAIClient cannot carry runtime tools,
+                        # so the interpreter rides here as the Responses
+                        # API's hosted tool, next to MCP.
+                        tools = [
+                            *tools,
+                            responses_client.get_code_interpreter_tool(),
+                        ]
                     self.logger.info(
-                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools).",
+                        "Using AzureOpenAIResponsesClient for '%s' (runtime tools%s).",
                         self.agent_name,
+                        " + hosted Code Interpreter"
+                        if self.enable_code_interpreter
+                        else "",
                     )
                     self._agent = Agent(
                         id=self.get_agent_id(),
-                        client=self.get_responses_client(),
+                        client=responses_client,
                         instructions=self.agent_instructions,
                         name=self.agent_name,
                         description=self.agent_description,
@@ -509,7 +523,7 @@ class FoundryAgentTemplate(AzureAgentBase):
                         ),
                     )
 
-                if tools and not self._ephemeral and not self.enable_code_interpreter:
+                if tools and not self._ephemeral:
                     await self._register_in_foundry()
 
             self.logger.info("Initialized Agent '%s'", self.agent_name)

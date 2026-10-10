@@ -76,6 +76,16 @@ def by_name(team):
 
 
 @pytest.mark.asyncio
+async def test_a_roster_composed_for_a_workspace_can_read_it():
+    """Todo especialista ve el workspace, incluido el que lleva coding_tools:
+    el workspace no se sacrifica por el code interpreter; ambos conviven."""
+    agents = by_name(await compose(ROSTER, WS))
+
+    assert all(agents[a["name"]].use_mcp for a in ROSTER)
+    assert agents["ValidationAgent"].coding_tools is True
+
+
+@pytest.mark.asyncio
 async def test_the_clarification_channel_stays_a_channel():
     """ProxyAgent es el canal humano; darle herramientas lo vuelve un agente."""
     team = await compose(ROSTER, WS)

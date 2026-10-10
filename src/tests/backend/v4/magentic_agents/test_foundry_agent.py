@@ -1135,6 +1135,47 @@ class TestFoundryAgentTemplate:
         agent._register_in_foundry.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("v4.magentic_agents.foundry_agent.Agent")
+    @patch("v4.magentic_agents.foundry_agent.agent_registry")
+    @patch("v4.magentic_agents.foundry_agent.config")
+    @patch("v4.magentic_agents.foundry_agent.logging.getLogger")
+    async def test_code_interpreter_keeps_the_runtime_mcp_tools(
+        self, mock_get_logger, mock_config, mock_registry, mock_agent_cls
+    ):
+        """Code Interpreter must not blind an agent to its runtime MCP tools
+        (the mounted workspace): both ride the Responses client together."""
+        mock_get_logger.return_value = Mock()
+        mock_config.get_ai_project_client.return_value = AsyncMock()
+
+        agent = FoundryAgentTemplate(
+            agent_name="ValidationAgent",
+            agent_description="Runs validations",
+            agent_instructions="Run tests",
+            use_reasoning=False,
+            model_deployment_name="test-model",
+            project_endpoint="https://test.project.azure.com/",
+            enable_code_interpreter=True,
+        )
+
+        mcp_tool = Mock()
+        hosted_ci = {"type": "code_interpreter", "container": {"type": "auto"}}
+        responses_client = Mock()
+        responses_client.get_code_interpreter_tool.return_value = hosted_ci
+        agent._collect_tools = AsyncMock(return_value=[mcp_tool])
+        agent.get_agent_id = Mock(return_value="agent-id")
+        agent.get_responses_client = Mock(return_value=responses_client)
+        agent.get_chat_client = Mock(return_value=Mock())
+        agent._register_in_foundry = AsyncMock()
+
+        await agent._after_open()
+
+        agent.get_chat_client.assert_not_called()
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["client"] is responses_client
+        assert kwargs["tools"] == [mcp_tool, hosted_ci]
+        agent._register_in_foundry.assert_called_once()
+
+    @pytest.mark.asyncio
     @patch("v4.magentic_agents.foundry_agent.agent_registry")
     @patch("v4.magentic_agents.foundry_agent.config")
     @patch("v4.magentic_agents.foundry_agent.logging.getLogger")

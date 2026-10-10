@@ -702,9 +702,10 @@ async def _team_from_router_roster(
                 "description": str(raw.get("description") or "").strip(),
                 # La configuración del agente es la de la composición, como en
                 # los JSON de equipo: índice de AI Search si lo nombra, MCP si
-                # lo pide (el code interpreter es server-side y no lleva MCP).
+                # lo pide. MCP y code interpreter conviven: la plantilla los
+                # sirve juntos por el cliente de Responses (ninguno se pierde).
                 "use_rag": use_rag,
-                "use_mcp": bool(raw.get("use_mcp")) and not coding_tools,
+                "use_mcp": bool(raw.get("use_mcp")),
                 "use_bing": use_bing,
                 "use_reasoning": use_reasoning,
                 "index_name": index_name,
@@ -730,14 +731,13 @@ async def _team_from_router_roster(
     # el manager Magentic reparte los pasos por nombre y descripción, sin saber
     # quién tiene herramientas, y al agente ciego que le toque mirar el árbol le
     # queda responder de memoria. Sólo añade capacidad; nunca quita la que el
-    # Router pidió.
+    # Router pidió. Tampoco se exceptúa a quien lleva ``coding_tools``: el
+    # workspace no se sacrifica frente a una herramienta incompatible en el
+    # cliente; la plantilla sirve MCP + code interpreter juntos.
     if workspace_id:
-        blind = [
-            a["name"] for a in agents if not a["use_mcp"] and not a["coding_tools"]
-        ]
+        blind = [a["name"] for a in agents if not a["use_mcp"]]
         for a in agents:
-            if not a["coding_tools"]:
-                a["use_mcp"] = True
+            a["use_mcp"] = True
         if blind:
             logger.info(
                 "Workspace %s montado; MCP concedido a %s",
@@ -2117,8 +2117,8 @@ _PARTICIPANT_SCHEMA: dict = {
                 "type": "boolean",
                 "description": (
                     "The MCP server's tools: the user's mounted workspace (files, "
-                    "search, exec, git) and registered external systems. Not with "
-                    "coding_tools (an isolated sandbox)."
+                    "search, exec, git) and registered external systems. "
+                    "Combinable with coding_tools."
                 ),
             },
             "use_rag": {
