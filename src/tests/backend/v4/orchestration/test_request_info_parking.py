@@ -51,15 +51,20 @@ async def test_park_persists_waiting_for_and_notifies_the_ui(parked):
     await OrchestrationManager()._park_on_request_info(
         workflow=SimpleNamespace(name="wf-1"), event=_event(), user_id="u1", session_id="s1", plan_id="p1", workspace_id="ws-1"
     )
-    assert parked.plan.waiting_for == {
+    # Clarifications have no approval, whether omitted or explicitly null.
+    assert {"approval": None, **parked.plan.waiting_for} == {
         "kind": "clarification", "request_id": "req-1", "checkpoint_id": "cp-9", "workflow_name": "wf-1",
         "question": "¿Cuál?", "content_id": "c-1", "workspace_id": "ws-1", "team_id": "t1",
-        "team_capabilities": {},
+        "team_capabilities": {}, "approval": None,
     }
     assert parked.store.updates == [parked.plan.waiting_for]
     # Addressed to the plan's socket, never to "the user's socket".
+    message = parked.sender.send_status_update_async.await_args.args[0]
+    assert {"approval": None, **message} == {
+        "question": "¿Cuál?", "request_id": "req-1", "approval": None,
+    }
     parked.sender.send_status_update_async.assert_awaited_once_with(
-        {"question": "¿Cuál?", "request_id": "req-1"},
+        message,
         user_id="u1",
         message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
         process_id="p1",
