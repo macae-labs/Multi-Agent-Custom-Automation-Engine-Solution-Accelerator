@@ -311,9 +311,7 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
                     configured = _git(staging, *command)
                     if configured.returncode != 0:
                         detail = configured.stderr.decode("utf-8", errors="replace").strip()
-                        raise WorkspaceAccessError(
-                            "Could not configure the workspace sandbox: " + detail
-                        )
+                        raise WorkspaceAccessError("Could not configure the workspace sandbox: " + detail)
                 # El clone terminó y el repo está configurado (un share vacío,
                 # sin commits, también es válido): recién ahora ocupa el nombre
                 # del sandbox, de forma atómica.
