@@ -254,15 +254,17 @@ export class PlanDataService {
     request_id,
     answer,
     plan_id,
-    m_plan_id
+    m_plan_id,
+    decision
   }: {
     request_id: string;
     answer: string;
     plan_id: string;
     m_plan_id: string;
+    decision?: string;
   }) {
     try {
-      return apiService.submitClarification(request_id, answer, plan_id, m_plan_id);
+      return apiService.submitClarification(request_id, answer, plan_id, m_plan_id, decision || '');
     } catch (error) {
       console.log("Failed to submit clarification:", error);
       throw error;
@@ -773,6 +775,7 @@ export class PlanDataService {
             type: WebsocketMessageType.USER_CLARIFICATION_REQUEST,
             question: val.question.trim(),
             request_id: val.request_id,
+            approval: val.approval ?? null,
           };
         }
         if (val.data !== undefined) return extractDirect(val.data, depth + 1);

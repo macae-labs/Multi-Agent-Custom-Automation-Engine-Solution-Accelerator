@@ -29,6 +29,8 @@ export interface HumanClarification {
     answer: string;
     plan_id: string;
     m_plan_id: string;
+    /** Decisión sobre una tool aparcada: 'approved' | 'rejected'. */
+    decision?: string;
 }
 
 /**
@@ -132,4 +134,8 @@ export interface ParsedUserClarification {
     type: WebsocketMessageType.USER_CLARIFICATION_REQUEST;
     question: string;
     request_id: string;
+    approval?: {
+        tool: string;
+        arguments?: string;
+    } | null;
 }

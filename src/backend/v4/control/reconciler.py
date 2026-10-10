@@ -94,6 +94,10 @@ async def find_parked_plan(
 
 
 def _response_for(kind: str, payload: dict[str, Any]) -> Any:
+    if kind == "function_approval_request":
+        # La respuesta se tipa contra la solicitud restaurada (necesita su
+        # function_call): la construye resume_orchestration con la decisión.
+        return None
     if kind == "clarification":
         return Content.from_text(text=str(payload.get("answer") or ""))
     decision = payload["decision"]
@@ -169,6 +173,8 @@ async def apply_event(
             plan.plan_id,
             request_id,
             _response_for(kind, payload),
+            answer=str(payload.get("answer") or ""),
+            decision=str(payload.get("decision") or ""),
         )
     finally:
         orchestration_config.clear_run_active(session_id)

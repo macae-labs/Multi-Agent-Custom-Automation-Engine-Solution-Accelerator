@@ -575,6 +575,7 @@ async def process_request(
         persist_user_task=True,
         composed_agents=roster,
         workspace_id=input_task.workspace_id,
+        known_indexes=composer._index_names,
     )
     return {
         "status": "Request started successfully",
@@ -597,6 +598,7 @@ async def _team_from_router_roster(
     workspace_id: str | None = None,
     with_proxy: bool = True,
     persist: bool = True,
+    known_indexes: list[str] | None = None,
 ) -> TeamConfiguration:
     """Turn the Model Router's ``run_plan`` roster into a persisted team.
 
@@ -624,6 +626,17 @@ async def _team_from_router_roster(
     deployment = config.AZURE_OPENAI_DEPLOYMENT_NAME
     if supported and deployment not in supported:
         deployment = str(supported[0])
+
+    # Los únicos índices reales son los descubiertos en AI Search al componer
+    # (``_load_knowledge_indexes``). El roster del Router puede nombrar uno
+    # alucinado o caduco; dejarlo pasar hace fallar la creación del agente de
+    # Azure Search y aborta la run compuesta. Si hay un conjunto conocido, se
+    # valida la membresía y, ante un nombre desconocido, se desactiva RAG.
+    allowed_indexes: set[str] | None = (
+        {n.strip() for n in known_indexes if n and n.strip()}
+        if known_indexes is not None
+        else None
+    )
 
     agents: list[dict] = []
     seen: set[str] = set()
@@ -658,6 +671,22 @@ async def _team_from_router_roster(
         # paso viaja por-run (``run_pattern(steps=...)`` / executor context),
         # jamás en la definición.
         system_message = str(raw.get("system_message") or "").strip()
+        index_name = str(raw.get("index_name") or "").strip()
+        use_rag = bool(raw.get("use_rag")) and bool(index_name)
+        # Valida la membresía en el conjunto de índices descubierto: un nombre
+        # fuera de él (alucinado o caduco) desactiva RAG en vez de romper la run.
+        if (
+            use_rag
+            and allowed_indexes is not None
+            and index_name not in allowed_indexes
+        ):
+            logger.warning(
+                "Router nombró un índice desconocido '%s' para %s; RAG desactivado",
+                index_name,
+                name,
+            )
+            use_rag = False
+            index_name = ""
         agents.append(
             {
                 "input_key": "",
@@ -671,14 +700,15 @@ async def _team_from_router_roster(
                 "icon": "",
                 "system_message": system_message,
                 "description": str(raw.get("description") or "").strip(),
-                # No composed team has a Search index; use_rag without
-                # index_name yields SearchConfig=None in the factory — an agent
-                # that believes it has a knowledge base and does not.
-                "use_rag": False,
+                # La configuración del agente es la de la composición, como en
+                # los JSON de equipo: índice de AI Search si lo nombra, MCP si
+                # lo pide. MCP y code interpreter conviven: la plantilla los
+                # sirve juntos por el cliente de Responses (ninguno se pierde).
+                "use_rag": use_rag,
                 "use_mcp": bool(raw.get("use_mcp")),
                 "use_bing": use_bing,
                 "use_reasoning": use_reasoning,
-                "index_name": "",
+                "index_name": index_name,
                 "coding_tools": coding_tools,
                 "use_image_generation": bool(raw.get("use_image_generation")),
             }
@@ -701,7 +731,9 @@ async def _team_from_router_roster(
     # el manager Magentic reparte los pasos por nombre y descripción, sin saber
     # quién tiene herramientas, y al agente ciego que le toque mirar el árbol le
     # queda responder de memoria. Sólo añade capacidad; nunca quita la que el
-    # Router pidió.
+    # Router pidió. Tampoco se exceptúa a quien lleva ``coding_tools``: el
+    # workspace no se sacrifica frente a una herramienta incompatible en el
+    # cliente; la plantilla sirve MCP + code interpreter juntos.
     if workspace_id:
         blind = [a["name"] for a in agents if not a["use_mcp"]]
         for a in agents:
@@ -789,6 +821,7 @@ async def _create_plan_and_start(
     persist_user_task: bool = False,
     composed_agents: list | None = None,
     workspace_id: str | None = None,
+    known_indexes: list[str] | None = None,
 ) -> str:
     """Create a Plan and kick off the Magentic orchestration as a BackgroundTask.
 
@@ -824,6 +857,7 @@ async def _create_plan_and_start(
                     memory_store,
                     workspace_id,
                     with_proxy=False,
+                    known_indexes=known_indexes,
                 )
             except Exception as compose_err:
                 raise HTTPException(
@@ -2081,7 +2115,22 @@ _PARTICIPANT_SCHEMA: dict = {
             },
             "use_mcp": {
                 "type": "boolean",
-                "description": "true ONLY if it needs external systems or live data.",
+                "description": (
+                    "The MCP server's tools: the user's mounted workspace (files, "
+                    "search, exec, git) and registered external systems. "
+                    "Combinable with coding_tools."
+                ),
+            },
+            "use_rag": {
+                "type": "boolean",
+                "description": (
+                    "The specialist searches a knowledge index (Azure AI Search). "
+                    "Requires index_name."
+                ),
+            },
+            "index_name": {
+                "type": "string",
+                "description": "Name of the existing Azure AI Search index to search.",
             },
             "use_bing": {
                 "type": "boolean",
@@ -2308,6 +2357,8 @@ class _RouterChatClient:
     _session_id: str = ""
     _user_id: str = ""
     _workspace_id: str | None = None
+    # Índices existentes en AI Search al componer (``_load_knowledge_indexes``).
+    _index_names: list[str] = []
     _ledger_unavailable: bool = False
     """Front door of the chat lane: gpt-5.4-mini on the direct Responses API.
 
@@ -2559,16 +2610,33 @@ class _RouterChatClient:
         """The composer's instructions plus the facts of this conversation it
         cannot infer: when a workspace is mounted this turn gets its workspace
         tools attached directly and must use them instead of narrating."""
-        if not self._workspace_id:
-            return _COMPOSER_INSTRUCTIONS
-        return (
-            f"{_COMPOSER_INSTRUCTIONS}\n\nWORKSPACE: the user's project workspace "
-            f"'{self._workspace_id}' is mounted for this conversation. Use the "
-            "attached workspace tools directly to inspect it: "
-            "workspace_list_entries, workspace_read_file, "
-            "workspace_search_content and workspace_exec. The specialists you "
-            "compose get the same workspace tools."
-        )
+        text = _COMPOSER_INSTRUCTIONS
+        if self._workspace_id:
+            text += (
+                "\n\nWORKSPACE: the user's project workspace "
+                f"'{self._workspace_id}' is mounted for this conversation. Use the "
+                "attached workspace tools directly to inspect it: "
+                "workspace_list_entries, workspace_read_file, "
+                "workspace_search_content and workspace_exec. A specialist you "
+                "compose reaches this workspace with use_mcp."
+            )
+        if self._index_names:
+            text += (
+                "\n\nKNOWLEDGE INDEXES (Azure AI Search) a specialist can search "
+                "with use_rag and index_name: " + ", ".join(self._index_names)
+            )
+        return text
+
+    async def _load_knowledge_indexes(self) -> None:
+        """Los índices que existen hoy en AI Search, para que la composición
+        los asigne por agente; una lectura por turno."""
+        if self._index_names:
+            return
+        from v4.common.services.team_service import TeamService
+
+        # TeamService lista índices sin memoria (sólo endpoint + credencial).
+        self._index_names = await TeamService(self._memory_store).list_index_names()
+        logger.info("Composer: %d knowledge indexes offered", len(self._index_names))
 
     @staticmethod
     def _composer_input(prompt: str, history: list | None) -> list:
@@ -2592,6 +2660,7 @@ class _RouterChatClient:
         participants. Returns ``(pattern, task, participants)`` with the
         participant schema ``_team_from_router_roster`` materializes.
         """
+        await self._load_knowledge_indexes()
         client = self._responses_client(await self._bearer())
         try:
             response = await client.responses.create(
@@ -3143,6 +3212,8 @@ class _RouterChatClient:
                 # las siguientes ejecutan sin la tool. Medido 2026-10-04: con
                 # la tool siempre ofrecida, el modelo recomponía en cada pasada.
                 composing = not composed
+                if composing:
+                    await self._load_knowledge_indexes()
                 stream = await client.responses.create(
                     model=self._model,
                     instructions=self._instructions(),
@@ -3650,6 +3721,7 @@ class _RouterChatClient:
             self._workspace_id,
             with_proxy=False,
             persist=False,
+            known_indexes=self._index_names,
         )
         agents = await MagenticAgentFactory().get_agents(
             self._user_id,
@@ -4806,6 +4878,7 @@ async def chat_message_stream(
                         # roster falls back to the user's selected team.
                         composed_agents=_participants or None,
                         workspace_id=chat_request.workspace_id,
+                        known_indexes=agent._index_names,
                     )
                     yield _sse_event(
                         {
@@ -5971,14 +6044,37 @@ async def user_clarification(
             if session_id:
                 event_props["session_id"] = session_id
             track_event_if_configured("Human_Clarification_Received", event_props)
-            # The answer resumes the parked workflow from its checkpoint.
+            # The answer resumes the parked workflow from its checkpoint. The
+            # event carries the kind the plan is parked on: a question
+            # (``clarification``) or a tool approval (``function_approval_request``,
+            # answered with ``decision``).
+            parked_kind = "clarification"
+            if human_feedback.plan_id:
+                try:
+                    _parked = await memory_store.get_plan_by_plan_id(
+                        plan_id=human_feedback.plan_id
+                    )
+                    parked_kind = (
+                        (_parked.waiting_for if _parked else None) or {}
+                    ).get("kind") or parked_kind
+                except Exception as _e:
+                    logger.warning(
+                        "Unable to resolve parked kind for plan_id=%s; "
+                        "falling back to default '%s': %s",
+                        human_feedback.plan_id,
+                        parked_kind,
+                        _e,
+                    )
             await _append_event(
-                kind="clarification",
+                kind=parked_kind,
                 request_id=human_feedback.request_id,
                 user_id=user_id,
                 tenant_id=tenant_id,
                 user_access_token=user_access_token,
-                payload={"answer": human_feedback.answer or ""},
+                payload={
+                    "answer": human_feedback.answer or "",
+                    "decision": human_feedback.decision or "",
+                },
             )
             return {
                 "status": "clarification recorded",

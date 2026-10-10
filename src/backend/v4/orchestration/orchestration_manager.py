@@ -1057,8 +1057,15 @@ class OrchestrationManager:
         request_id: str,
         response: Any,
         workspace_id: str | None = None,
+        *,
+        answer: str = "",
+        decision: str = "",
     ) -> None:
         """Deliver the human response to the pending ``request_info`` and continue.
+
+        With ``response=None`` the answer is typed against the restored request
+        itself (``answer``/``decision`` → ``_user_response``): the case of a tool
+        approval, whose response needs the pending ``function_call``.
 
         The plan's ``waiting_for`` (persisted by ``_park_on_request_info`` when the
         workflow went idle) carries the checkpoint to restore. ``response`` is
@@ -1086,10 +1093,18 @@ class OrchestrationManager:
             workspace_id=workspace_id
             if workspace_id is not None
             else waiting_for.get("workspace_id"),
-            _resume={
-                "checkpoint_id": waiting_for["checkpoint_id"],
-                "responses": {request_id: response},
-            },
+            _resume=(
+                {
+                    "checkpoint_id": waiting_for["checkpoint_id"],
+                    "responses": {request_id: response},
+                }
+                if response is not None
+                else {
+                    "checkpoint_id": waiting_for["checkpoint_id"],
+                    "answer": answer,
+                    "decision": decision,
+                }
+            ),
         )
 
     async def cancel_parked(self, user_id: str, plan_id: str, request_id: str) -> None:
@@ -1217,11 +1232,31 @@ class OrchestrationManager:
                 f"(workflow {workflow.name})"
             )
         data = event.data
-        is_clarification = isinstance(data, Content) and bool(data.user_input_request)
+        # Una tool que pide autorización humana también viaja como
+        # ``user_input_request``: es una aprobación (tool + argumentos), no una
+        # pregunta; la UI muestra Aprobar/Rechazar y la decisión vuelve como
+        # ``to_function_approval_response`` (``_user_response``).
+        is_approval = (
+            isinstance(data, Content) and data.type == "function_approval_request"
+        )
+        is_clarification = (
+            isinstance(data, Content)
+            and bool(data.user_input_request)
+            and not is_approval
+        )
         is_plan_review = isinstance(data, MagenticPlanReviewRequest)
         question = (data.text or "") if is_clarification else ""
+        approval: dict[str, Any] | None = None
+        if is_approval:
+            call = data.function_call
+            approval = {
+                "tool": str(getattr(call, "name", "") or ""),
+                "arguments": str(getattr(call, "arguments", "") or "")[:2000],
+            }
         kind = (
-            "clarification"
+            "function_approval_request"
+            if is_approval
+            else "clarification"
             if is_clarification
             else "plan_review"
             if is_plan_review
@@ -1233,6 +1268,7 @@ class OrchestrationManager:
             "checkpoint_id": latest.checkpoint_id,
             "workflow_name": workflow.name,
             "question": question,
+            "approval": approval,
             "content_id": getattr(data, "id", None),
             "workspace_id": workspace_id,
         }
@@ -1292,14 +1328,18 @@ class OrchestrationManager:
                 message_type=WebsocketMessageType.PLAN_APPROVAL_REQUEST,
                 process_id=plan_id,
             )
-        if is_clarification:
+        if is_clarification or is_approval:
             await connection_config.send_status_update_async(
-                {"question": question, "request_id": event.request_id},
+                {
+                    "question": question,
+                    "request_id": event.request_id,
+                    "approval": approval,
+                },
                 user_id=user_id,
                 message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
                 process_id=plan_id,
             )
-            if session_id:
+            if session_id and question:
                 try:
                     from common.services.chat_cosmos_service import (
                         get_chat_cosmos_service,
@@ -1480,11 +1520,39 @@ class OrchestrationManager:
 
             if _resume is None:
                 event_stream = workflow.run(task_text, stream=True)
-            else:
+            elif "responses" in _resume:
                 event_stream = workflow.run(
                     checkpoint_id=_resume["checkpoint_id"],
                     checkpoint_storage=get_checkpoint_storage(),
                     responses=_resume["responses"],
+                    stream=True,
+                )
+            else:
+                # Dos pasos (doc, igual que ``run_pattern``): restaurar el
+                # checkpoint recarga la solicitud pendiente con su dato, y la
+                # respuesta se construye en el tipo que esa solicitud espera
+                # (``_user_response``: aprobación de tool, handoff o texto).
+                restored: list[Any] = []
+                async for ev in workflow.run(
+                    checkpoint_id=_resume["checkpoint_id"],
+                    checkpoint_storage=get_checkpoint_storage(),
+                    stream=True,
+                ):
+                    if getattr(ev, "type", None) == "request_info":
+                        restored.append(ev)
+                if not restored:
+                    raise RuntimeError(
+                        f"checkpoint {_resume['checkpoint_id']} sin solicitud pendiente"
+                    )
+                event_stream = workflow.run(
+                    responses={
+                        req.request_id: _user_response(
+                            req.data,
+                            str(_resume.get("answer") or ""),
+                            str(_resume.get("decision") or ""),
+                        )
+                        for req in restored
+                    },
                     stream=True,
                 )
 

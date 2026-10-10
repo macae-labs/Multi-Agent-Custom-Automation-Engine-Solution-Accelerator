@@ -141,7 +141,7 @@ def _git(ws: Path, *args: str, trust: tuple[Path, ...] = ()) -> "subprocess.Comp
             ["git", *safe, *args],
             cwd=ws,
             capture_output=True,
-            timeout=15,
+            timeout=30,
         )
     except FileNotFoundError as exc:
         raise WorkspaceAccessError("git is not available in this environment.") from exc
