@@ -276,8 +276,12 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
             # nombre del sandbox. ``--shared``: el sandbox toma los objetos del
             # share en vez de copiarlos (medido 2026-10-10: 3 s vs 26 s y 272 KB
             # vs 195 MB). El share es el origen durable; el sandbox, efímero.
+            # Restos de materializaciones de otros procesos (caídos a mitad):
+            # bajo el lock sólo este proceso puede estar materializando, así
+            # que cualquier otro temporal con este nombre es basura.
+            for stale in sandbox.parent.glob(f".materializing-{sandbox.name}-*"):
+                shutil.rmtree(stale, ignore_errors=True)
             staging = sandbox.parent / f".materializing-{sandbox.name}-{os.getpid()}"
-            shutil.rmtree(staging, ignore_errors=True)
             try:
                 # En la rama DECLARADA al montar, no en la que el share tenga checkout.
                 done = _git(
@@ -295,21 +299,24 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
                     raise WorkspaceAccessError(
                         "Could not materialize the workspace: " + done.stderr.decode("utf-8", errors="replace").strip()
                     )
-                # El clone terminó (un share vacío, sin commits, también es
-                # válido): recién ahora ocupa el nombre del sandbox.
+                # El repositorio se termina de configurar ANTES de ocupar el
+                # nombre del sandbox: lo que se promueve ya está completo.
+                _git(staging, "config", "user.name", _GIT_IDENTITY[0])
+                _git(staging, "config", "user.email", _GIT_IDENTITY[1])
+                # ``upstream`` es el repositorio que el usuario DECLARÓ al montar
+                # (meta.repo_url), nunca el ``origin`` que el share tenga: un share
+                # enlazado puede apuntar a otro remoto (p.ej. microsoft/…) que no
+                # es el que originó este workspace. Sin repo declarado no hay
+                # upstream: nacido vacío, nada que adelantar.
+                if upstream:
+                    _git(staging, "remote", "add", "upstream", upstream)
+                # El clone terminó y el repo está configurado (un share vacío,
+                # sin commits, también es válido): recién ahora ocupa el nombre
+                # del sandbox, de forma atómica.
                 staging.rename(sandbox)
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
-            _git(sandbox, "config", "user.name", _GIT_IDENTITY[0])
-            _git(sandbox, "config", "user.email", _GIT_IDENTITY[1])
-            # ``upstream`` es el repositorio que el usuario DECLARÓ al montar
-            # (meta.repo_url), nunca el ``origin`` que el share tenga: un share
-            # enlazado puede apuntar a otro remoto (p.ej. microsoft/…) que no
-            # es el que originó este workspace. Sin repo declarado no hay
-            # upstream: nacido vacío, nada que adelantar.
-            if upstream:
-                _git(sandbox, "remote", "add", "upstream", upstream)
         elif _sandbox_is_clean(sandbox):
             _git(sandbox, "fetch", "-q", "origin", trust=share_trust)
             _git(sandbox, "merge", "-q", "--ff-only", "@{u}")

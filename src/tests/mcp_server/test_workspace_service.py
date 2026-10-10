@@ -3,8 +3,8 @@ Tests for workspace MCP service behaviors.
 """
 
 import json
-from json import JSONDecodeError, loads
 import subprocess
+from json import JSONDecodeError, loads
 from pathlib import Path
 
 import pytest
@@ -324,6 +324,53 @@ class TestSandboxArchitecture:
         assert pub["details"]["published"] is True
         assert (share / "generado.txt").read_text() == "hola\n"
         assert _git_out(share, "log", "-1", "--pretty=%s") == "guardar lo generado"
+
+    def test_an_interrupted_clone_is_discarded_and_the_sandbox_rematerialized(
+        self, workspace_tools, workspace_root
+    ):
+        """Medido 2026-10-10: un clone cortado deja ``.git`` con
+        ``HEAD -> refs/heads/.invalid`` y el sandbox quedaba vacío para siempre.
+        Un resto así se descarta, lo mismo que un temporal de otro proceso, y
+        lo que se promueve ya viene configurado (identidad antes del rename)."""
+        tools, _ = workspace_tools
+        share, uid, wid = self._share(workspace_root)
+        sandbox = workspace_service._sandbox_path(uid, wid)
+        (sandbox / ".git").mkdir(parents=True)
+        (sandbox / ".git" / "HEAD").write_text("ref: refs/heads/.invalid\n")
+        stale = sandbox.parent / f".materializing-{wid}-999999"
+        stale.mkdir(parents=True)
+
+        out = loads(tools["workspace_list_entries"](uid, wid))
+
+        names = [e["name"] for e in out["details"]["entries"]]
+        assert "README.md" in names, out
+        assert _git_out(sandbox, "rev-parse", "--verify", "HEAD")
+        assert _git_out(sandbox, "config", "user.name") == workspace_service._GIT_IDENTITY[0]
+        assert not stale.exists()
+        assert not list(sandbox.parent.glob(f".materializing-{wid}-*"))
+
+    def test_a_failed_clone_leaves_neither_sandbox_nor_staging(
+        self, workspace_tools, workspace_root, monkeypatch
+    ):
+        tools, _ = workspace_tools
+        _, uid, wid = self._share(workspace_root)
+        sandbox = workspace_service._sandbox_path(uid, wid)
+        real_git = workspace_service._git
+
+        def failing_clone(ws, *args, **kw):
+            if args and args[0] == "clone":
+                return subprocess.CompletedProcess(
+                    ["git", *args], 128, stdout=b"", stderr=b"fatal: clone cortado"
+                )
+            return real_git(ws, *args, **kw)
+
+        monkeypatch.setattr(workspace_service, "_git", failing_clone)
+
+        out = loads(tools["workspace_list_entries"](uid, wid))
+
+        assert out["status"] == "error" and "clone cortado" in out["summary"]
+        assert not sandbox.exists()
+        assert not list(sandbox.parent.glob(f".materializing-{wid}-*"))
 
     def test_write_tools_publish_and_the_user_sees_it_in_the_durable_tree(
         self, workspace_tools, workspace_root
