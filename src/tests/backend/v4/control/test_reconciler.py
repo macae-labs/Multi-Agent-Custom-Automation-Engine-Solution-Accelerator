@@ -191,7 +191,7 @@ async def test_failed_transition_is_marked_failed_and_does_not_block_others(
     manager.plans.append(_plan(request_id="good"))
     manager.plans[1].plan_id = "p2"
 
-    async def _resume(user_id, session_id, plan_id, request_id, response):
+    async def _resume(user_id, session_id, plan_id, request_id, response, **_kw):
         if request_id == "bad":
             raise RuntimeError("boom")
         for p in manager.plans:

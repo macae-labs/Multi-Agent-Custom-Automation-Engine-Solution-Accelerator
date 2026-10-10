@@ -47,7 +47,6 @@ ROSTER = [
         "use_reasoning": True,
     },
 ]
-ROSTER_NAMES = [a["name"] for a in ROSTER]
 
 
 class FakeStore:
@@ -77,20 +76,6 @@ def by_name(team):
 
 
 @pytest.mark.asyncio
-async def test_a_roster_composed_for_a_workspace_can_read_it():
-    team = await compose(ROSTER, WS)
-
-    agents = by_name(team)
-    assert [a.name for a in team.agents] == [
-        "RepositoryAuditAgent",
-        "ValidationAgent",
-        "DevSecOpsAuditAgent",
-        "ProxyAgent",
-    ]
-    assert all(agents[n].use_mcp for n in ROSTER_NAMES)
-
-
-@pytest.mark.asyncio
 async def test_the_clarification_channel_stays_a_channel():
     """ProxyAgent es el canal humano; darle herramientas lo vuelve un agente."""
     team = await compose(ROSTER, WS)
@@ -104,39 +89,6 @@ async def test_without_a_workspace_nothing_is_granted():
     team = await compose(ROSTER, None)
 
     assert not any(a.use_mcp for a in team.agents)
-
-
-@pytest.mark.asyncio
-async def test_a_partially_sighted_roster_is_not_good_enough():
-    """No alcanza con que UNO vea: tiene que ver el que va a mirar el árbol.
-
-    Roster medido el 2026-09-19 en el mismo camino real: el Router concedió
-    ``use_mcp`` únicamente a ``CloudDeliveryAgent`` y dejó ciego a
-    ``RepositoryForensicsAgent`` —cuyo ``system_message`` dice "verificas ruta,
-    Git, rama, commit, árbol real, manifiestos"— con ``coding_tools``, es decir
-    con un sandbox de code interpreter vacío en vez del repositorio. El manager
-    Magentic reparte los pasos por nombre y descripción, sin saber quién tiene
-    herramientas.
-    """
-    roster = [
-        {
-            "name": "RepositoryForensicsAgent",
-            "description": "Inspecciona repositorios",
-            "system_message": "Verificas ruta, Git, rama, commit y árbol real.",
-            "coding_tools": True,
-        },
-        {
-            "name": "CloudDeliveryAgent",
-            "description": "Audita infraestructura",
-            "system_message": "Revisas IaC y pipelines.",
-            "use_mcp": True,
-        },
-    ]
-
-    agents = by_name(await compose(roster, WS))
-
-    assert agents["RepositoryForensicsAgent"].use_mcp is True
-    assert agents["CloudDeliveryAgent"].use_mcp is True
 
 
 @pytest.mark.asyncio

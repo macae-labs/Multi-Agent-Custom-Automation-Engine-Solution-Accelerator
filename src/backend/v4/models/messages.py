@@ -140,6 +140,8 @@ class UserClarificationResponse:
     answer: str = ""
     plan_id: str = ""
     m_plan_id: str = ""
+    # Decisión humana sobre una tool aparcada (``approved`` | ``rejected``).
+    decision: str = ""
 
 
 @dataclass(slots=True)

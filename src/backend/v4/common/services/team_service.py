@@ -549,6 +549,20 @@ class TeamService:
                     return True
         return False
 
+    async def list_index_names(self) -> list[str]:
+        """Los índices que existen hoy en AI Search (vacío sin endpoint o si
+        falla): la composición asigna ``index_name`` por agente entre ellos."""
+        if not self.search_endpoint:
+            return []
+        try:
+            index_client = SearchIndexClient(
+                endpoint=self.search_endpoint, credential=self.search_credential
+            )
+            return sorted(str(name) for name in index_client.list_index_names())
+        except Exception as exc:
+            self.logger.warning("Could not list search indexes: %s", exc)
+            return []
+
     async def validate_single_index(self, index_name: str) -> tuple[bool, str]:
         """Validate that a single search index exists and is accessible."""
         try:

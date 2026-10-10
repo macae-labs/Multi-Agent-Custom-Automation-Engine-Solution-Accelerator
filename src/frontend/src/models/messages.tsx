@@ -29,6 +29,8 @@ export interface HumanClarification {
     answer: string;
     plan_id: string;
     m_plan_id: string;
+    /** Decisión sobre una tool aparcada: 'approved' | 'rejected'. */
+    decision?: string;
 }
 
 /**

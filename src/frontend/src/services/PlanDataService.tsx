@@ -254,15 +254,17 @@ export class PlanDataService {
     request_id,
     answer,
     plan_id,
-    m_plan_id
+    m_plan_id,
+    decision
   }: {
     request_id: string;
     answer: string;
     plan_id: string;
     m_plan_id: string;
+    decision?: string;
   }) {
     try {
-      return apiService.submitClarification(request_id, answer, plan_id, m_plan_id);
+      return apiService.submitClarification(request_id, answer, plan_id, m_plan_id, decision || '');
     } catch (error) {
       console.log("Failed to submit clarification:", error);
       throw error;

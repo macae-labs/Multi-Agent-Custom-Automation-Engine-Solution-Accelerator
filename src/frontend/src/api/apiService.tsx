@@ -230,13 +230,15 @@ export class APIService {
     request_id: string = '',
     answer: string = '',
     plan_id: string = '',
-    m_plan_id: string = ''
+    m_plan_id: string = '',
+    decision: string = ''
   ): Promise<{ status: string; session_id: string }> {
     const clarificationData: HumanClarification = {
       request_id,
       answer,
       plan_id,
       m_plan_id,
+      ...(decision ? { decision } : {}),
     };
 
     const response = await apiClient.post(

@@ -506,6 +506,26 @@ const PlanPage: React.FC = () => {
           );
           return;
         }
+        // Una tool aparcada esperando autorización: la misma tarjeta
+        // Aprobar/Rechazar del chat; la decisión vuelve por /user_clarification.
+        const approval = clarificationMessage.data?.approval;
+        if (approval && approval.tool) {
+          setClarificationMessage(
+            clarificationMessage.data as ParsedUserClarification | null
+          );
+          setPendingApproval({
+            request_id: clarificationMessage.data.request_id || '',
+            action: `${approval.tool} ${approval.arguments || ''}`.trim(),
+            action_class: 'tool',
+            reason:
+              'La tool no está declarada de solo lectura por el servidor MCP: requiere aprobación humana.',
+          });
+          setShowBufferingText(false);
+          setShowProcessingPlanSpinner(false);
+          setSubmittingChatDisableInput(false);
+          scrollToBottom();
+          return;
+        }
         const agentMessageData = {
           agent: AgentType.GROUP_CHAT_MANAGER,
           agent_type: AgentMessageType.AI_AGENT,
@@ -1065,6 +1085,7 @@ const PlanPage: React.FC = () => {
             answer: chatInput,
             plan_id: planData.plan.id,
             m_plan_id: planApprovalRequest?.id || '',
+            decision: approval?.decision,
           });
           dismissToast(toastId);
           showToast('Clarification submitted successfully', 'success');
