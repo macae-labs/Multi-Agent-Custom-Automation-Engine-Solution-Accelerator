@@ -211,20 +211,9 @@ def _record_tool_contents(
 
     for c in contents or []:
         ct = getattr(c, "type", "") or ""
-        if ct in (
-            "function_call",
-            "mcp_server_tool_call",
-            "code_interpreter_tool_call",
-        ):
+        if ct in ("function_call", "mcp_server_tool_call"):
             call_id = str(getattr(c, "call_id", ""))
-            if ct == "code_interpreter_tool_call":
-                fragment = (
-                    getattr(c, "input", None)
-                    or getattr(c, "text", None)
-                    or getattr(c, "arguments", None)
-                )
-            else:
-                fragment = getattr(c, "arguments", None)
+            fragment = getattr(c, "arguments", None)
             hit = pending.get(call_id)
             if hit is not None:
                 # En streaming la llamada llega por trozos con el mismo call_id:
@@ -237,62 +226,31 @@ def _record_tool_contents(
                 pending[call_id] = (idx, server, tool, args)
                 log[idx] = _make_deed(server, tool, args, "called", None, agent)
                 continue
-            if ct == "code_interpreter_tool_call":
-                tool = "code_interpreter"
-                server = "code_interpreter"
-            else:
-                tool = (
-                    getattr(c, "name", None)
-                    or getattr(c, "tool_name", None)
-                    or "unknown"
-                )
-                server = getattr(c, "server_name", None) or (
-                    "mcp" if ct.startswith("mcp") else "function"
-                )
+            tool = (
+                getattr(c, "name", None) or getattr(c, "tool_name", None) or "unknown"
+            )
+            server = getattr(c, "server_name", None) or (
+                "mcp" if ct.startswith("mcp") else "function"
+            )
             log.append(_make_deed(server, tool, fragment, "called", None, agent))
             pending[call_id] = (len(log) - 1, server, tool, fragment)
-        elif ct in (
-            "function_result",
-            "mcp_server_tool_result",
-            "code_interpreter_tool_result",
-        ):
-            result: Any
-            if ct == "code_interpreter_tool_result":
-                stderr = getattr(c, "stderr", None)
-                result = str(
-                    stderr
+        elif ct in ("function_result", "mcp_server_tool_result"):
+            exc = getattr(c, "exception", None)
+            result = (
+                str(exc)
+                if exc
+                else (
+                    getattr(c, "result", None)
                     or getattr(c, "output", None)
-                    or getattr(c, "stdout", None)
                     or getattr(c, "text", None)
-                    or "\n".join(
-                        str(
-                            getattr(part, "text", None)
-                            or getattr(part, "output", None)
-                            or ""
-                        )
-                        for part in (getattr(c, "outputs", None) or [])
-                    )
                 )
-                status = "error" if stderr else "success"
-            else:
-                exc = getattr(c, "exception", None)
-                result = (
-                    str(exc)
-                    if exc
-                    else (
-                        getattr(c, "result", None)
-                        or getattr(c, "output", None)
-                        or getattr(c, "text", None)
-                    )
-                )
-                status = "error" if exc else "success"
+            )
+            status = "error" if exc else "success"
             hit = pending.pop(str(getattr(c, "call_id", "")), None)
             if hit is None:
-                if ct == "code_interpreter_tool_result":
-                    server, tool = "code_interpreter", "code_interpreter"
-                else:
-                    server, tool = "function", "unknown"
-                log.append(_make_deed(server, tool, None, status, result, agent))
+                log.append(
+                    _make_deed("function", "unknown", None, status, result, agent)
+                )
             else:
                 idx, server, tool, args = hit
                 log[idx] = _make_deed(server, tool, args, status, result, agent)
@@ -1131,8 +1089,6 @@ class OrchestrationManager:
             _resume={
                 "checkpoint_id": waiting_for["checkpoint_id"],
                 "responses": {request_id: response},
-                "turn_log": waiting_for.get("turn_log") or [],
-                "turn_log_dropped": waiting_for.get("turn_log_dropped") or 0,
             },
         )
 
@@ -1247,8 +1203,6 @@ class OrchestrationManager:
         session_id: str,
         plan_id: str | None,
         workspace_id: str | None,
-        turn_log: list[dict] | None = None,
-        turn_log_dropped: int = 0,
     ) -> None:
         """The workflow went idle on a ``request_info``: the pending request lives
         in the checkpoint that closed the superstep. Nothing waits in-process:
@@ -1281,10 +1235,6 @@ class OrchestrationManager:
             "question": question,
             "content_id": getattr(data, "id", None),
             "workspace_id": workspace_id,
-            # Deeds accumulated before the park: resume recreates the ledger,
-            # so carry the partial turn_log forward to restore and merge it.
-            "turn_log": list(turn_log or []),
-            "turn_log_dropped": int(turn_log_dropped or 0),
         }
         mplan = None
         if is_plan_review:
@@ -1513,30 +1463,7 @@ class OrchestrationManager:
         agent_tool_logs: dict[str, list[dict]] = {}
         agent_tool_pending: dict[str, dict[str, tuple[int, str, str, Any]]] = {}
         agent_rounds: dict[str, int] = {}
-        # On resume the ledger is recreated, so the deeds recorded before the
-        # approval/clarification park would be lost. ``_park_on_request_info``
-        # persists the partial turn_log on the plan; seed from it here so the
-        # final turn_log spans the whole plan, not just the last superstep.
-        plan_turn_log: list[dict] = (
-            list(_resume.get("turn_log") or []) if _resume is not None else []
-        )
-        # Bound the ledger like the direct lane (``_LEDGER_MAX_DEEDS``): the chat
-        # session doc accumulates every turn under Cosmos' 2 MB item limit, so an
-        # unbounded plan ledger could make the final ``add_message`` fail and lose
-        # the whole result. Count the surplus instead of growing without limit.
-        from v4.api.router import _LEDGER_MAX_DEEDS
-
-        plan_turn_log_dropped: int = (
-            int(_resume.get("turn_log_dropped") or 0) if _resume is not None else 0
-        )
-
-        def _extend_turn_log(deeds: list[dict]) -> None:
-            nonlocal plan_turn_log_dropped
-            for deed in deeds:
-                if len(plan_turn_log) < _LEDGER_MAX_DEEDS:
-                    plan_turn_log.append(deed)
-                else:
-                    plan_turn_log_dropped += 1
+        plan_turn_log: list[dict] = []
 
         try:
             # Execute workflow using run() with stream=True
@@ -1672,20 +1599,18 @@ class OrchestrationManager:
                                     # después la respuesta del participante.
                                     from v4.api.router import _make_deed
 
-                                    _extend_turn_log(
+                                    plan_turn_log.extend(
                                         agent_tool_logs.pop(agent_name, [])
                                     )
-                                    _extend_turn_log(
-                                        [
-                                            _make_deed(
-                                                "magentic",
-                                                agent_name,
-                                                {"round": agent_rounds.get(agent_name)},
-                                                "success",
-                                                cleaned,
-                                                agent_name,
-                                            )
-                                        ]
+                                    plan_turn_log.append(
+                                        _make_deed(
+                                            "magentic",
+                                            agent_name,
+                                            {"round": agent_rounds.get(agent_name)},
+                                            "success",
+                                            cleaned,
+                                            agent_name,
+                                        )
                                     )
 
                     # Handle executor completed - just log, don't send to UI
@@ -1831,8 +1756,6 @@ class OrchestrationManager:
                     session_id=session_id,
                     plan_id=plan_id,
                     workspace_id=workspace_id,
-                    turn_log=plan_turn_log,
-                    turn_log_dropped=plan_turn_log_dropped,
                 )
                 return
 
@@ -1893,7 +1816,6 @@ class OrchestrationManager:
                             "type": "plan_result",
                             "plan_id": plan_id,
                             "turn_log": plan_turn_log,
-                            "turn_log_dropped": plan_turn_log_dropped,
                         },
                     )
                     self.logger.info(
