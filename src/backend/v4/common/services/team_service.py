@@ -9,6 +9,9 @@ from azure.core.exceptions import (
     ResourceNotFoundError,
 )
 from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.aio import (
+    SearchIndexClient as AsyncSearchIndexClient,
+)
 
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
@@ -555,10 +558,13 @@ class TeamService:
         if not self.search_endpoint:
             return []
         try:
-            index_client = SearchIndexClient(
-                endpoint=self.search_endpoint, credential=self.search_credential
-            )
-            return sorted(str(name) for name in index_client.list_index_names())
+            async with AsyncSearchIndexClient(
+                endpoint=self.search_endpoint,
+                credential=config.get_shared_async_credential(),
+            ) as index_client:
+                return sorted(
+                    [str(name) async for name in index_client.list_index_names()]
+                )
         except Exception as exc:
             self.logger.warning("Could not list search indexes: %s", exc)
             return []
