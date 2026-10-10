@@ -117,6 +117,17 @@ The catalog separates two concepts (`src/backend/v4/common/models/mcp_connection
 
 ## CI/CD (GitHub Actions, desde 2026-08)
 
+- **Validación previa al commit, OBLIGATORIA, desde noVNC** (`:6080`,
+  `DISPLAY=:99`, `./scripts/start_vnc.sh`): todo cambio que toque el flujo de
+  orquestación se prueba antes de commitear con una corrida real por la UI
+  (`localhost:3001`), con los tres servicios locales arriba. La corrida es
+  simple: se coloca el request tal cual, condicionando SOLO el patrón (el
+  selector Chat/Plan). Nada más se fuerza: ni agentes, ni tools, ni pasos, ni
+  texto que empuje al modelo. Cómo corre la orquestación según el patrón lo
+  decide el request, no parámetros puestos como condiciones. Lo que se mide es
+  el flujo completo (composición, agentes, tools, aprobaciones, final) y lo
+  persistido (`GET /plan`, `GET /chat/sessions/{id}`, Cosmos), no un test
+  unitario verde. Sin esa corrida, no hay commit.
 - **Flujo**: push a `stable/v4-baseline` → PR a `main` → required checks
   (`test`, `Backend (ruff + mypy)`, `MCP server (ruff)`, `Frontend (ESLint + build)`;
   `main` protegida) → **squash-merge** → `cd.yml` construye SOLO los componentes
