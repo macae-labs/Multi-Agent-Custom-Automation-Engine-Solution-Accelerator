@@ -54,7 +54,7 @@ async def test_park_persists_waiting_for_and_notifies_the_ui(parked):
     assert parked.plan.waiting_for == {
         "kind": "clarification", "request_id": "req-1", "checkpoint_id": "cp-9", "workflow_name": "wf-1",
         "question": "¿Cuál?", "content_id": "c-1", "workspace_id": "ws-1", "team_id": "t1",
-        "team_capabilities": {}, "turn_log": [], "turn_log_dropped": 0,
+        "team_capabilities": {}, "turn_log": [],
     }
     assert parked.store.updates == [parked.plan.waiting_for]
     # Addressed to the plan's socket, never to "the user's socket".
@@ -85,30 +85,8 @@ async def test_resume_restores_the_checkpoint_with_the_answer_and_clears_waiting
     assert parked.plan.waiting_for is None and parked.store.updates[-1] == {}
     kwargs = run.await_args.kwargs
     assert kwargs["workspace_id"] == "ws-1" and kwargs["_resume"]["checkpoint_id"] == "cp-9"
-    assert kwargs["_resume"]["turn_log"] == []
-    assert kwargs["_resume"]["turn_log_dropped"] == 0
     [(request_id, content)] = kwargs["_resume"]["responses"].items()
     assert request_id == "req-1" and content.type == "text" and content.text == "42"
-
-
-@pytest.mark.asyncio
-async def test_park_and_resume_preserve_the_partial_turn_log_and_dropped_count(parked, monkeypatch):
-    manager = OrchestrationManager()
-    turn_log = [{"kind": "magentic", "agent": "research", "output": "partial result"}]
-    await manager._park_on_request_info(
-        workflow=SimpleNamespace(name="wf-1"), event=_event(), user_id="u1", session_id="s1", plan_id="p1", workspace_id="ws-1",
-        turn_log=turn_log, turn_log_dropped=3,
-    )
-    assert parked.plan.waiting_for["turn_log"] == turn_log
-    assert parked.plan.waiting_for["turn_log"] is not turn_log
-    assert parked.plan.waiting_for["turn_log_dropped"] == 3
-    assert parked.store.updates == [parked.plan.waiting_for]
-    run = AsyncMock()
-    monkeypatch.setattr(manager, "run_orchestration", run)
-    await manager.resume_orchestration("u1", "s1", "p1", "req-1", Content.from_text("42"))
-    assert run.await_args.kwargs["_resume"]["turn_log"] == turn_log
-    assert run.await_args.kwargs["_resume"]["turn_log_dropped"] == 3
-    assert parked.plan.waiting_for is None and parked.store.updates[-1] == {}
 
 
 @pytest.mark.asyncio
