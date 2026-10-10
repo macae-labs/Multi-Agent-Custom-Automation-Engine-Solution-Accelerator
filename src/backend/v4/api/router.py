@@ -6024,8 +6024,14 @@ async def user_clarification(
                     parked_kind = (
                         (_parked.waiting_for if _parked else None) or {}
                     ).get("kind") or parked_kind
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning(
+                        "Unable to resolve parked kind for plan_id=%s; "
+                        "falling back to default '%s': %s",
+                        human_feedback.plan_id,
+                        parked_kind,
+                        _e,
+                    )
             await _append_event(
                 kind=parked_kind,
                 request_id=human_feedback.request_id,
