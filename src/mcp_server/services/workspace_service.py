@@ -301,15 +301,19 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
                     )
                 # El repositorio se termina de configurar ANTES de ocupar el
                 # nombre del sandbox: lo que se promueve ya está completo.
-                _git(staging, "config", "user.name", _GIT_IDENTITY[0])
-                _git(staging, "config", "user.email", _GIT_IDENTITY[1])
-                # ``upstream`` es el repositorio que el usuario DECLARÓ al montar
-                # (meta.repo_url), nunca el ``origin`` que el share tenga: un share
-                # enlazado puede apuntar a otro remoto (p.ej. microsoft/…) que no
-                # es el que originó este workspace. Sin repo declarado no hay
-                # upstream: nacido vacío, nada que adelantar.
+                setup_commands = [
+                    ("config", "user.name", _GIT_IDENTITY[0]),
+                    ("config", "user.email", _GIT_IDENTITY[1]),
+                ]
                 if upstream:
-                    _git(staging, "remote", "add", "upstream", upstream)
+                    setup_commands.append(("remote", "add", "upstream", upstream))
+                for command in setup_commands:
+                    configured = _git(staging, *command)
+                    if configured.returncode != 0:
+                        detail = configured.stderr.decode("utf-8", errors="replace").strip()
+                        raise WorkspaceAccessError(
+                            "Could not configure the workspace sandbox: " + detail
+                        )
                 # El clone terminó y el repo está configurado (un share vacío,
                 # sin commits, también es válido): recién ahora ocupa el nombre
                 # del sandbox, de forma atómica.
