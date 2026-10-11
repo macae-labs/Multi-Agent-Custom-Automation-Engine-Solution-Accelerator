@@ -198,20 +198,20 @@ def _validated_resource_metadata_url(
     try:
         candidate = urlparse(resource_metadata_url)
         mcp = urlparse(mcp_endpoint)
-    except Exception:
-        return None
 
-    if candidate.scheme != "https":
-        return None
-    if not candidate.netloc:
-        return None
-    if candidate.username or candidate.password:
-        return None
-    if candidate.hostname != mcp.hostname:
-        return None
-    if (candidate.port or (443 if candidate.scheme == "https" else None)) != (
-        mcp.port or (443 if mcp.scheme == "https" else None)
-    ):
+        if candidate.scheme != "https":
+            return None
+        if not candidate.netloc:
+            return None
+        if candidate.username or candidate.password:
+            return None
+        if candidate.hostname != mcp.hostname:
+            return None
+        if (candidate.port or 443) != (
+            mcp.port or (443 if mcp.scheme == "https" else None)
+        ):
+            return None
+    except (ValueError, UnicodeError):
         return None
 
     return resource_metadata_url
