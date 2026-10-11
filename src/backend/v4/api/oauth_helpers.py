@@ -258,7 +258,7 @@ async def discover_oauth_metadata(
     safe_resource_metadata_url = _validated_resource_metadata_url(
         mcp_endpoint, resource_metadata_url
     )
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
         prm: dict | None = None
         prm_candidates = [u for u in [safe_resource_metadata_url] if u]
         if path:
