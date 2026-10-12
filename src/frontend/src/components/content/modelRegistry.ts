@@ -82,11 +82,9 @@ const MAX_BYTES_PER_PACKAGE = 1 * 1024 * 1024; // csstype (895 KB) cabe; 2 no
  *   - `GET /search?q=tsconfig.json` (git ls-files): TODOS los tsconfig en una
  *     llamada → el más cercano al archivo abierto es el proyecto, y de ahí
  *     sale el `node_modules` que se consulta primero.
- *   - `GET /stat/{path}`: el tipo y tamaño exactos de UNA ruta (un solo stat,
- *     cacheado por ruta) deciden qué extensión existe; nunca se lista un
- *     directorio, así que la resolución no depende de cuántos archivos tiene
- *     (el `/entries` corta en MAX_LIST_ENTRIES y un nombre omitido se leería
- *     como ausente).
+ *   - `GET /entries?path=dir`: el listado del directorio (una lectura por
+ *     directorio, cacheada) decide qué extensión existe; sólo se lee lo que
+ *     está en el listado.
  *   - `package.json` se lee por ruta exacta: un 404 ahí significa "no está
  *     instalado en esa raíz", una vez por paquete y raíz. */
 
@@ -121,11 +119,8 @@ interface Registry {
   packageEntries: Map<string, Promise<string | null>>;
   /** Paquete → raíz (`node_modules/x` o `node_modules/@types/x`). */
   packageRoots: Map<string, string>;
-  /** path → stat exacto (tipo y tamaño), o `null` si no existe. Una consulta
-   *  por ruta: la resolución nunca depende de cuántos archivos tiene un
-   *  directorio (el listado de `/entries` corta en MAX_LIST_ENTRIES y un
-   *  nombre omitido se leería como ausente). */
-  stats: Map<string, Promise<DirEntryInfo | null>>;
+  /** dir → listado (nombre → tipo y tamaño). Una lectura por directorio. */
+  dirListings: Map<string, Promise<Map<string, DirEntryInfo>>>;
   tsconfigApplied: boolean;
   tsconfigPaths: Record<string, string[]> | null;
   tsconfigBaseDir: string;
@@ -290,37 +285,39 @@ async function readFile(
   }
 }
 
-/** Stat exacto de UN path (tipo y tamaño), cacheado por ruta. Nunca lista un
- *  directorio: la resolución no depende de cuántos archivos tiene (el contrato
- *  de `/entries` corta en MAX_LIST_ENTRIES y un nombre omitido se leería como
- *  ausente, dejando un import válido en `null` para siempre). Un path que no
- *  existe (404) se recuerda como `null`. */
-function statEntry(
+/** Listado de UN directorio (nombre → tipo y tamaño), una lectura por
+ *  directorio. Un directorio inexistente (400) se recuerda como vacío. */
+function listDir(
   reg: Registry,
-  path: string
-): Promise<DirEntryInfo | null> {
-  const cached = reg.stats.get(path);
+  dir: string
+): Promise<Map<string, DirEntryInfo>> {
+  const cached = reg.dirListings.get(dir);
   if (cached) return cached;
   const p = (async () => {
+    const out = new Map<string, DirEntryInfo>();
     try {
-      const encoded = path.split('/').map(encodeURIComponent).join('/');
-      const r: { type?: DirKind; size?: number | null } = await throttled(() =>
+      const r: {
+        entries?: Array<{ name: string; type: DirKind; size?: number | null }>;
+      } = await throttled(() =>
         apiClient.get(
-          `/v4/workspace/${encodeURIComponent(reg.workspaceId)}/stat/${encoded}`
+          `/v4/workspace/${encodeURIComponent(reg.workspaceId)}/entries`,
+          { params: dir ? { path: dir } : undefined }
         )
       );
-      return r.type ? { type: r.type, size: r.size ?? null } : null;
+      for (const e of r.entries ?? []) {
+        out.set(e.name, { type: e.type, size: e.size ?? null });
+      }
     } catch {
-      // 404/400: no existe o no autorizado.
-      return null;
+      /* no existe o no autorizado: vacío */
     }
+    return out;
   })();
-  reg.stats.set(path, p);
+  reg.dirListings.set(dir, p);
   return p;
 }
 
-/** Un path base → el archivo que EXISTE, decidido con stats exactos por
- *  candidato: `base.ext` para cada extensión en orden, y si `base` es un
+/** Un path base → el archivo que EXISTE, decidido con el listado de su
+ *  directorio: `base.ext` para cada extensión en orden, y si `base` es un
  *  directorio, `base/index.ext`. Con extensión explícita sólo se comprueba.
  *  `./foo.js` en un .d.ts ESM apunta a `./foo.d.ts`. */
 async function resolveBase(
@@ -333,17 +330,19 @@ async function resolveBase(
   // un `./x.js` (ESM) nombra al `.d.ts`/`.ts` de `x`, nunca al JS en sí
   // (medido: se leían los .js de monaco-editor como si fueran tipos).
   if (/\.(d\.[mc]?ts|[mc]ts|tsx?|json)$/i.test(base)) {
-    return (await statEntry(reg, base))?.type === 'file' ? base : null;
+    const names = await listDir(reg, dirname(base));
+    return names.get(basename(base))?.type === 'file' ? base : null;
   }
   const stripped = base.replace(/\.(m|c)?jsx?$/i, '');
+  const name = basename(stripped);
+  const siblings = await listDir(reg, dirname(stripped));
   for (const e of exts) {
-    if ((await statEntry(reg, `${stripped}${e}`))?.type === 'file') {
-      return `${stripped}${e}`;
-    }
+    if (siblings.get(`${name}${e}`)?.type === 'file') return `${stripped}${e}`;
   }
-  if ((await statEntry(reg, stripped))?.type === 'directory') {
+  if (siblings.get(name)?.type === 'directory') {
+    const inside = await listDir(reg, stripped);
     for (const e of exts) {
-      if ((await statEntry(reg, `${stripped}/index${e}`))?.type === 'file') {
+      if (inside.get(`index${e}`)?.type === 'file') {
         return `${stripped}/index${e}`;
       }
     }
@@ -572,10 +571,10 @@ async function materialize(
       reg.models.set(path, existing);
       return existing;
     }
-    // Presupuesto ANTES de descargar: el stat exacto (cacheado) trae el
-    // tamaño; lo que no cabe no se pide (medido: cada chunk-N.d.ts de
+    // Presupuesto ANTES de descargar: el listado del directorio (cacheado)
+    // trae el tamaño; lo que no cabe no se pide (medido: cada chunk-N.d.ts de
     // react-icons se bajaba entero para rechazarse después).
-    const info = await statEntry(reg, path);
+    const info = (await listDir(reg, dirname(path))).get(basename(path));
     if (info?.type !== 'file') {
       reg.models.set(path, null);
       return null;
@@ -610,8 +609,8 @@ async function materialize(
 }
 
 /** Para un especificador en `fromPath`, el archivo del workspace que lo
- *  satisface, o `null`. Cada decisión sale de un stat exacto por candidato o
- *  de un `package.json` leído por ruta exacta. */
+ *  satisface, o `null`. Cada decisión sale de un listado o de un
+ *  `package.json` leído por ruta exacta; nunca de probar rutas. */
 async function resolveSpec(
   reg: Registry,
   fromPath: string,
@@ -739,7 +738,7 @@ export function prepareModelsFor(workspaceId: string, path: string): void {
       visited: new Set(),
       packageEntries: new Map(),
       packageRoots: new Map(),
-      stats: new Map(),
+      dirListings: new Map(),
       tsconfigApplied: false,
       tsconfigPaths: null,
       projectRoot: '',
