@@ -403,7 +403,7 @@ function aliasBases(reg: Registry, spec: string): string[] {
     }
     if (rest === null) continue;
     for (const t of targets) {
-      out.push(normalize(`${reg.tsconfigBaseDir}/${t.replace('*', rest)}`));
+      out.push(normalize(`${reg.tsconfigBaseDir}/${t.replace(/\*/g, rest)}`));
     }
   }
   return out;
