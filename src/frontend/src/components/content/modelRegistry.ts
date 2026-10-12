@@ -50,8 +50,19 @@
 import { apiClient } from '../../api/apiClient';
 import { monaco } from './monacoSetup';
 
-const TS_EXTS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.json'];
-const DTS_EXTS = ['.d.ts', '.ts'];
+const TS_EXTS = [
+  '.ts',
+  '.tsx',
+  '.d.ts',
+  '.mts',
+  '.cts',
+  '.d.mts',
+  '.d.cts',
+  '.js',
+  '.jsx',
+  '.json',
+];
+const DTS_EXTS = ['.d.ts', '.d.mts', '.d.cts', '.ts', '.mts', '.cts'];
 
 /** `jsxImportSource` del compilador (default de TypeScript): de aquí sale el
  *  import implícito `<source>/jsx-runtime` de todo .tsx/.jsx. */
@@ -310,10 +321,11 @@ async function resolveBase(
   base: string,
   exts: string[]
 ): Promise<string | null> {
-  // Sólo .ts/.tsx/.d.ts/.json son explícitas. `.js`/`.mjs`/`.cjs`/`.jsx` NO:
+  // Sólo .ts/.tsx/.mts/.cts/.d.ts/.d.mts/.d.cts/.json son explícitas.
+  // `.js`/`.mjs`/`.cjs`/`.jsx` NO:
   // un `./x.js` (ESM) nombra al `.d.ts`/`.ts` de `x`, nunca al JS en sí
   // (medido: se leían los .js de monaco-editor como si fueran tipos).
-  if (/\.(d\.ts|tsx?|json)$/i.test(base)) {
+  if (/\.(d\.[mc]?ts|[mc]ts|tsx?|json)$/i.test(base)) {
     const names = await listDir(reg, dirname(base));
     return names.get(basename(base))?.type === 'file' ? base : null;
   }
