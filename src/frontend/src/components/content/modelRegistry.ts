@@ -107,6 +107,10 @@ interface Budget {
 
 interface Registry {
   workspaceId: string;
+  /** Archivos abiertos en el editor desde los que se armó el grafo. Son las
+   *  ENTRADAS activas: la reconciliación con el filesystem (Refresh, foco,
+   *  commit, tools) re-resuelve desde aquí sin recrear sus modelos. */
+  entries: Set<string>;
   /** path → modelo materializado (o `null` si no existe / no cabe). */
   models: Map<string, monaco.editor.ITextModel | null>;
   /** path → fetch en curso: nunca dos lecturas del mismo archivo. */
@@ -729,6 +733,7 @@ export function prepareModelsFor(workspaceId: string, path: string): void {
     disposeRegistry();
     current = {
       workspaceId,
+      entries: new Set(),
       models: new Map(),
       inflight: new Map(),
       visited: new Set(),
@@ -751,6 +756,7 @@ export function prepareModelsFor(workspaceId: string, path: string): void {
   }
   const reg = current;
   const entry = path.replace(/^\/+/, '');
+  reg.entries.add(entry);
   void (async () => {
     await applyTsconfig(reg, entry);
     const before = reg.budget.models;
@@ -783,6 +789,7 @@ export function rescanModelsFor(workspaceId: string, path: string): void {
   }
   const reg = current;
   const entry = path.replace(/^\/+/, '');
+  reg.entries.add(entry);
   reg.visited.delete(entry);
   void (async () => {
     const before = reg.budget.models;
@@ -802,6 +809,53 @@ export function invalidateModels(workspaceId?: string): void {
   if (!current) return;
   if (workspaceId && current.workspaceId !== workspaceId) return;
   disposeRegistry();
+}
+
+/** Reconciliación con el filesystem real SIN recrear los modelos abiertos
+ *  (Refresh, recuperación de foco, commit, reconciliación de tools). Disponer
+ *  el grafo y confiar en que el efecto del editor lo reconstruya NO funciona:
+ *  workspace, path y contenido del archivo abierto no cambian, así que el
+ *  efecto no vuelve a correr y el IntelliSense de proyecto quedaba QUITADO en
+ *  vez de refrescado. Aquí se conservan los modelos ADJUNTOS al editor (sus
+ *  `ITextModel` no se recrean) y se sueltan sólo las dependencias y las cachés
+ *  de resolución, para re-resolver el grafo desde las entradas activas releyendo
+ *  el disco: dependencias cambiadas/añadidas/borradas quedan al día. */
+export function reconcileModels(workspaceId?: string): void {
+  if (!current) return;
+  if (workspaceId && current.workspaceId !== workspaceId) return;
+  const reg = current;
+  // Conservar los modelos abiertos (adjuntos al editor); disponer las
+  // dependencias para que `resolveGraph` las relea del filesystem.
+  const kept = new Map<string, monaco.editor.ITextModel | null>();
+  for (const [path, m] of reg.models) {
+    if (m && m.isAttachedToEditor()) kept.set(path, m);
+    else if (m && !m.isDisposed()) m.dispose();
+  }
+  reg.models = kept;
+  reg.visited = new Set(kept.keys());
+  reg.inflight = new Map();
+  reg.stats = new Map();
+  reg.packageEntries = new Map();
+  reg.packageRoots = new Map();
+  reg.budget = {
+    models: 0,
+    bytes: 0,
+    packages: new Set(),
+    bytesPerPackage: new Map(),
+  };
+  const entries = [...reg.entries];
+  void (async () => {
+    const before = reg.budget.models;
+    for (const entry of entries) {
+      reg.visited.delete(entry);
+      await resolveGraph(reg, entry);
+    }
+    // Mismo motivo que en `prepareModelsFor`: sólo si el grafo añadió modelos,
+    // reconstruir el worker con todos y recalcular diagnósticos.
+    if (reg.budget.models > before) {
+      configureTsDefaults(reg.tsconfigPaths, reg.tsconfigBaseDir);
+    }
+  })();
 }
 
 function disposeRegistry(): void {
