@@ -833,7 +833,7 @@ export function reconcileModels(workspaceId?: string): void {
   reg.models = kept;
   reg.visited = new Set(kept.keys());
   reg.inflight = new Map();
-  reg.stats = new Map();
+  reg.dirListings = new Map();
   reg.packageEntries = new Map();
   reg.packageRoots = new Map();
   reg.budget = {
