@@ -28,6 +28,7 @@
  */
 import { useSyncExternalStore } from 'react';
 import { apiClient } from '../../api/apiClient';
+import { invalidateModels } from '../content/modelRegistry';
 
 export interface DirEntry {
   name: string;
@@ -165,6 +166,9 @@ export const workspaceTree = {
    * actividad de tools y la recuperación de visibilidad.
    */
   invalidateAll(ws: string): void {
+    // Los modelos dependientes que el TS worker ve son una lectura del mismo
+    // filesystem: si el árbol se relee, ellos también quedan obsoletos.
+    invalidateModels(ws);
     const cur = get(ws);
     const keep = new Set<string>(['']);
     cur.expanded.forEach((d) => keep.add(d));
@@ -179,6 +183,7 @@ export const workspaceTree = {
 
   /** Cambio de workspace: descarta el estado de ese ws (raro; explícito). */
   reset(ws: string): void {
+    invalidateModels(ws);
     states.delete(ws);
     readSeq.delete(ws);
     listeners.forEach((l) => l());

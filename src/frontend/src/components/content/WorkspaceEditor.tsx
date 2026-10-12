@@ -34,7 +34,9 @@ import {
   monaco,
   monacoThemeName,
   setupMonaco,
+  snapshotLanguage,
 } from './monacoSetup';
+import { prepareModelsFor } from './modelRegistry';
 
 // Monaco bundleado + workers + temas: una vez por proceso, antes del 1er render.
 setupMonaco();
@@ -384,6 +386,17 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     if (m) attachDiagnostics(m);
   }, [attachDiagnostics]);
 
+  // IntelliSense de PROYECTO: materializar la cadena de imports del archivo
+  // abierto como modelos con URI real para que el TS worker los vea
+  // (registry + resolver + eagerModelSync + compilerOptions: ver modelRegistry).
+  // Fire-and-forget: no bloquea el render ni la apertura del archivo.
+  // Con el contenido ya cargado: al montar, `content` es '' y el registry
+  // adoptaría el modelo vacío del editor (cero imports, entrada visitada).
+  // Medido en noVNC: el grafo moría tras leer el archivo abierto.
+  useEffect(() => {
+    if (workspaceId && content) prepareModelsFor(workspaceId, path);
+  }, [workspaceId, path, content]);
+
   useEffect(() => () => diagDisposer.current?.dispose(), []);
 
   // ── Diff tab state ──
@@ -568,6 +581,7 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
             value={editorValue}
             onChange={handleEditorChange}
             onMount={handleMount}
+            keepCurrentModel
             options={{
               automaticLayout: true,
               readOnly: !base,
@@ -638,8 +652,16 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
                 height="100%"
                 theme={theme}
                 language={language}
+                // Lado modificado = EL modelo del archivo (`file:///{path}`, el
+                // mismo que el tab Code y el registry): un solo modelo por
+                // archivo para el worker, con sus imports resueltos. No se
+                // dispone al cerrar el Diff porque no es de este editor.
+                // Lado original = instantánea HEAD con el mismo tokenizer pero
+                // fuera del compilador (ver snapshotLanguage).
+                originalLanguage={snapshotLanguage(language)}
                 originalModelPath={`git:HEAD/${path}`}
-                modifiedModelPath={`disk/${path}`}
+                modifiedModelPath={path}
+                keepCurrentModifiedModel
                 original={diffData.original}
                 modified={diffData.modified}
                 options={{
