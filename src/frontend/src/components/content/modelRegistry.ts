@@ -756,6 +756,32 @@ export function prepareModelsFor(workspaceId: string, path: string): void {
   })();
 }
 
+/** El editor cambió `path`: su contenido pudo ganar imports nuevos. Re-escanea
+ *  SÓLO esa entrada —la saca de `visited` para que `resolveGraph` relea el texto
+ *  ya editado— y materializa las dependencias añadidas mientras se edita, sin
+ *  tirar el grafo ya cargado. Idempotente: con `debounce` en el editor. Si no
+ *  hay grafo todavía (archivo que nació vacío) o es de otro workspace, delega en
+ *  `prepareModelsFor` para construirlo desde cero. */
+export function rescanModelsFor(workspaceId: string, path: string): void {
+  if (!isTsLike(path)) return;
+  if (!current || current.workspaceId !== workspaceId) {
+    prepareModelsFor(workspaceId, path);
+    return;
+  }
+  const reg = current;
+  const entry = path.replace(/^\/+/, '');
+  reg.visited.delete(entry);
+  void (async () => {
+    const before = reg.budget.models;
+    await resolveGraph(reg, entry);
+    // Mismo motivo que en `prepareModelsFor`: sólo si el grafo añadió modelos,
+    // reconstruir el worker con todos y recalcular diagnósticos.
+    if (reg.budget.models > before) {
+      configureTsDefaults(reg.tsconfigPaths, reg.tsconfigBaseDir);
+    }
+  })();
+}
+
 /** El workspace cambió fuera del editor (otro tab, agente, commit): tirar el
  *  grafo para que el próximo `prepareModelsFor` relea. No toca el modelo que
  *  el editor tiene abierto (ese lo gobierna @monaco-editor/react). */

@@ -36,7 +36,7 @@ import {
   setupMonaco,
   snapshotLanguage,
 } from './monacoSetup';
-import { prepareModelsFor } from './modelRegistry';
+import { prepareModelsFor, rescanModelsFor } from './modelRegistry';
 
 // Monaco bundleado + workers + temas: una vez por proceso, antes del 1er render.
 setupMonaco();
@@ -267,6 +267,8 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   // versión, y los markers publicados siempre corresponden al texto visible.
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const diagDisposer = useRef<monaco.IDisposable | null>(null);
+  const rescanDisposer = useRef<monaco.IDisposable | null>(null);
+  const rescanKey = useRef<string>('');
   // Identidad del provider vigente: (modelo, base, path, language). Atar es
   // idempotente por esa clave: al cambiar de archivo con el editor montado,
   // onDidChangeModel y el efecto de identidad piden el MISMO provider para el
@@ -372,11 +374,17 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
   const handleMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
     const m = editor.getModel();
-    if (m) attachRef.current(m);
+    if (m) {
+      attachRef.current(m);
+      attachRescanRef.current(m);
+    }
     // El modelo cambia al abrir otro archivo: re-atar al nuevo.
     editor.onDidChangeModel(() => {
       const nm = editor.getModel();
-      if (nm) attachRef.current(nm);
+      if (nm) {
+        attachRef.current(nm);
+        attachRescanRef.current(nm);
+      }
     });
   }, []);
 
@@ -397,7 +405,46 @@ export const WorkspaceEditor: React.FC<WorkspaceEditorProps> = ({
     if (workspaceId && content) prepareModelsFor(workspaceId, path);
   }, [workspaceId, path, content]);
 
+  // El grafo se arma una vez desde `content`; `resolveGraph` marca el archivo
+  // como visitado y no vuelve a leerlo. Un import añadido EN el editor (o un
+  // archivo que nació vacío y nunca inicializó el registry) quedaría sin
+  // materializar hasta un refresh o cambio de archivo. Suscribirse al modelo y
+  // re-escanear SÓLO esa entrada (con debounce) materializa esos imports en
+  // caliente. Atado al MODELO y re-atado en onDidChangeModel, igual que los
+  // diagnósticos: así sigue al archivo vigente y no queda en un closure viejo.
+  const attachRescan = useCallback(
+    (model: monaco.editor.ITextModel) => {
+      const key = `${model.id}|${workspaceId ?? ''}|${path}`;
+      if (rescanDisposer.current && rescanKey.current === key) return;
+      rescanDisposer.current?.dispose();
+      rescanDisposer.current = null;
+      rescanKey.current = key;
+      if (!workspaceId) return;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const sub = model.onDidChangeContent(() => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => rescanModelsFor(workspaceId, path), 600);
+      });
+      rescanDisposer.current = {
+        dispose: () => {
+          if (timer) clearTimeout(timer);
+          sub.dispose();
+        },
+      };
+    },
+    [workspaceId, path]
+  );
+  const attachRescanRef = useRef(attachRescan);
+  attachRescanRef.current = attachRescan;
+
+  // workspaceId/path cambian → re-atar el rescan al modelo vigente.
+  useEffect(() => {
+    const m = editorRef.current?.getModel();
+    if (m) attachRescan(m);
+  }, [attachRescan]);
+
   useEffect(() => () => diagDisposer.current?.dispose(), []);
+  useEffect(() => () => rescanDisposer.current?.dispose(), []);
 
   // ── Diff tab state ──
   const [diffData, setDiffData] = useState<{
