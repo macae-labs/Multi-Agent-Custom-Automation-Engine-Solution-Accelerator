@@ -413,6 +413,10 @@ const IMAGE_EXT = /\.(png|jpe?g|webp|gif|svg)$/i;
 const PANEL_DEFAULT_WIDTH = 520;
 const PANEL_MIN_WIDTH = 280;
 const PANEL_MAX_WIDTH = 1200;
+// El contenedor `Content` (el workspace principal) no puede bajar de 320px y
+// `CoralShellRow` oculta el overflow, así que el panel no debe ensancharse más
+// allá del espacio realmente disponible o recortaría el workspace.
+const CONTENT_MIN_WIDTH = 320;
 
 /** Right-slot shell: resizable width, fills the parent's height (never
  *  `100vh`, which ignores the shell header and overflows below the fold). */
@@ -421,6 +425,31 @@ const ResizableRightPanel: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
   const [hovered, setHovered] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Ancho máximo real: lo que ocupan el panel y el contenido hermano, menos el
+  // mínimo que `Content` necesita. Se mide en vivo, así que respeta el panel
+  // izquierdo y se recalcula cuando cambia el tamaño de la ventana.
+  const computeMaxWidth = useCallback(() => {
+    const panelEl = panelRef.current;
+    const contentEl = panelEl?.previousElementSibling as HTMLElement | null;
+    if (!panelEl || !contentEl) return PANEL_MAX_WIDTH;
+    const available =
+      panelEl.offsetWidth + contentEl.offsetWidth - CONTENT_MIN_WIDTH;
+    return Math.max(
+      PANEL_MIN_WIDTH,
+      Math.min(PANEL_MAX_WIDTH, available)
+    );
+  }, []);
+
+  // Al encoger la ventana el panel podría dejar de caber: reajústalo al máximo
+  // disponible para no recortar el workspace.
+  useEffect(() => {
+    const onResize = () =>
+      setWidth((w) => Math.min(w, computeMaxWidth()));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [computeMaxWidth]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -429,7 +458,7 @@ const ResizableRightPanel: React.FC<{ children: React.ReactNode }> = ({
     const onMouseMove = (ev: MouseEvent) => {
       // Panel a la derecha: mover el ratón a la izquierda (dx<0) ensancha.
       const next = startWidth - (ev.clientX - startX);
-      setWidth(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, next)));
+      setWidth(Math.min(computeMaxWidth(), Math.max(PANEL_MIN_WIDTH, next)));
     };
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove);
@@ -445,6 +474,7 @@ const ResizableRightPanel: React.FC<{ children: React.ReactNode }> = ({
 
   return (
     <div
+      ref={panelRef}
       style={{
         width: `${width}px`,
         flexShrink: 0,
