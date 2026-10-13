@@ -207,7 +207,7 @@ export function getUserId(): string {
   if (!USER_ID) {
     USER_ID = getUserInfoGlobal()?.user_id || null;
   }
-  const userId = USER_ID ?? '00000000-0000-0000-0000-000000000000';
+  const userId = USER_ID ?? 'd1f2b268-d4a3-4db9-972b-bb7445ba2508';
   return userId;
 }
 

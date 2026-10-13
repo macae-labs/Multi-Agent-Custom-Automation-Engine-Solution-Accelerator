@@ -267,7 +267,7 @@ async def start_comms(
     # Always accept the WebSocket connection first
     await websocket.accept()
 
-    user_id = user_id or "00000000-0000-0000-0000-000000000000"
+    user_id = user_id or "d1f2b268-d4a3-4db9-972b-bb7445ba2508"
 
     # Manually create a span for WebSocket since excluded_urls suppresses auto-instrumentation.
     # Without this, all track_event_if_configured calls inside WebSocket would get operation_Id = 0.
