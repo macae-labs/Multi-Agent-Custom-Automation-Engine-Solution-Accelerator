@@ -227,10 +227,10 @@ def git_files(ws: Path) -> list[str]:
     an ``os.walk``: the tree can hold ``node_modules`` and no constant may cut
     a listing (a silent cap read a present file as absent, measured)."""
     names: set[str] = set()
-    for extra in ((), ("--others", "--exclude-standard")):
+    for extra in (("-z",), ("--others", "--exclude-standard", "-z")):
         result = _git(ws, "ls-files", *extra)
         if result.returncode == 0:
-            names.update(result.stdout.decode("utf-8", errors="replace").splitlines())
+            names.update(os.fsdecode(n) for n in result.stdout.split(b"\0") if n)
     names.discard(_META_FILE)
     return sorted(n for n in names if n)
 
