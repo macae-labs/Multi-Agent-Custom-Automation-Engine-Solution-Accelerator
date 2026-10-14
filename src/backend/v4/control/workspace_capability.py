@@ -193,7 +193,7 @@ class WorkspaceCapability:
                 "if ! git symbolic-ref -q HEAD >/dev/null && "
                 '[ -n "$(git rev-list -n 1 HEAD --not --branches --remotes)" ]; then '
                 "echo 'sandbox con commits sueltos sin publicar: no se adelanta'; exit 0; fi; "
-                'git checkout --quiet -B "$b" "origin/$b" && '
+                'git checkout --quiet "$b" && '
                 "git fetch --quiet upstream && "
                 'if ! git rev-parse --verify --quiet "refs/remotes/upstream/$b" >/dev/null; then '
                 'echo "upstream no tiene la rama $b: nada que adelantar"; exit 0; fi; '
