@@ -129,6 +129,17 @@ def _resolve_in(ws: Path, raw: str) -> Path:
     return resolved
 
 
+def _pack_trust(share: Path, pack: str) -> str:
+    """``--upload-pack``/``--receive-pack`` para fetch/push contra el share por
+    ruta local. Git arranca ese pack como proceso aparte sobre el share y NO
+    hereda el ``-c safe.directory`` del cliente; sobre Azure Files el dueño es
+    otro uid y responde "dubious ownership" → "Could not read from remote
+    repository" (INC-2026-013; medido de nuevo en prod 2026-10-15 21:45:
+    ``committed: true, published: false``). La confianza viaja dentro del
+    comando del pack, acotada al share."""
+    return f"--{pack}=git -c safe.directory={share} -c safe.directory={share / '.git'} {pack}"
+
+
 def _git(ws: Path, *args: str, trust: tuple[Path, ...] = ()) -> "subprocess.CompletedProcess[bytes]":
     # ``safe.directory`` acotado a ESTE árbol (y a los ``trust`` que una
     # operación de dos repos necesite, como clone o push contra el share):
@@ -181,7 +192,7 @@ def _catch_up(sandbox: Path, share: Path) -> tuple[bool, str]:
     """
     branch = _declared_branch(share)
     trust = (share, share / ".git")
-    fetched = _git(sandbox, "fetch", "-q", "origin", trust=trust)
+    fetched = _git(sandbox, "fetch", "-q", _pack_trust(share, "upload-pack"), "origin", trust=trust)
     if fetched.returncode != 0:
         return False, fetched.stderr.decode("utf-8", errors="replace").strip()[-400:]
     if _git(sandbox, "rev-parse", "--verify", "-q", f"origin/{branch}").returncode != 0:
@@ -372,7 +383,7 @@ def _sandbox(user_id: str, workspace_id: str) -> Path:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
         elif _sandbox_is_clean(sandbox):
-            _git(sandbox, "fetch", "-q", "origin", trust=share_trust)
+            _git(sandbox, "fetch", "-q", _pack_trust(share, "upload-pack"), "origin", trust=share_trust)
             _git(sandbox, "merge", "-q", "--ff-only", "@{u}")
     return sandbox
 
@@ -385,7 +396,15 @@ def _publish(sandbox: Path, share: Path) -> tuple[bool, str]:
     acuerdo no se resuelven a ciegas. Se reporta y se deja al humano.
     """
     branch = _declared_branch(share)
-    done = _git(sandbox, "push", "-q", "origin", f"HEAD:refs/heads/{branch}", trust=(share, share / ".git"))
+    done = _git(
+        sandbox,
+        "push",
+        "-q",
+        _pack_trust(share, "receive-pack"),
+        "origin",
+        f"HEAD:refs/heads/{branch}",
+        trust=(share, share / ".git"),
+    )
     if done.returncode == 0:
         return True, f"published to '{branch}'"
     return False, done.stderr.decode("utf-8", errors="replace").strip()[-400:]
