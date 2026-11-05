@@ -214,7 +214,7 @@ nltk==3.10.4
     #   backend
 numpy==2.3.4
     # via pandas
-oauthlib==4.0.0
+oauthlib==4.0.1
     # via requests-oauthlib
 openai==2.16.0
     # via
