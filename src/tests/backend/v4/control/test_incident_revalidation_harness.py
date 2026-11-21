@@ -2,10 +2,9 @@
 
 Clases reales: ``EventStore`` sobre el contenedor doble del conftest (409/412/404
 del SDK), ``Reconciler`` y ``incident_revalidation``. El registro es una entrada
-REAL de ``docs/incidents`` con la fecha vencida y la sonda sustituida por un
-comando de shell; la capacidad de ejecución es un shell local, que en producción
-es ``workspace_exec`` de ca-mcp. Sin reloj: el vencimiento es el valor de la
-fecha comparado con un ``now`` fijo.
+sintética conforme al esquema, con una sonda de shell; la capacidad de ejecución
+es un shell local, que en producción es ``workspace_exec`` de ca-mcp. Sin reloj:
+el vencimiento es el valor de la fecha comparado con un ``now`` fijo.
 """
 
 import asyncio
@@ -14,6 +13,7 @@ import pathlib
 from datetime import UTC, datetime
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from common.services.event_store import (
     STATUS_APPLIED,
@@ -25,19 +25,71 @@ from v4.control import incident_revalidation as ir
 from v4.control.reconciler import Reconciler
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
-ENTRY = ROOT / "docs/incidents/INC-2026-007.store-singleton-first-caller-identity.json"
+SCHEMA = ROOT / "docs/incidents/schema/incident.v1.schema.json"
 NOW = datetime(2026, 12, 31, tzinfo=UTC)
 
 
 def incident(
     *, command="echo sano", probe_class="read-only", expires="2026-12-01T00:00:00Z"
 ):
-    doc = json.loads(ENTRY.read_text())
-    doc["learn"]["expires_if_not_reverified_by"] = expires
-    doc["learn"]["executable_probe"].update(
-        {"command_or_test": command, "cwd": ".", "class": probe_class}
-    )
-    return doc
+    probe = {
+        "command_or_test": command,
+        "cwd": ".",
+        "class": probe_class,
+        "expected_signal_when_failing": "nonzero exit",
+        "expected_signal_when_healthy": "zero exit",
+    }
+    return {
+        "schema_version": "1",
+        "incident_id": "INC-2026-007",
+        "domain": "tests",
+        "status": "open",
+        "invariant": {"id": "INV-TEST", "statement": "The probe succeeds."},
+        "signature": {
+            "family": "gate_failure",
+            "id": "SIG-test",
+            "structural_match": {"trigger": "test", "observed": "failure"},
+        },
+        "env_fingerprint": {
+            "where": "ci",
+            "env_names_present": [],
+            "credential_mode": "none",
+            "dotenv_present": False,
+            "network_scope": "loopback_only",
+        },
+        "authority_ceiling": {
+            "fixed_before_diagnose": True,
+            "max_level": "patch_and_pr",
+            "max_action_class_without_human": "write-scratch",
+        },
+        "actions": [],
+        "probe_budget": {"max_probes": 1, "used": 0},
+        "diagnose": {
+            "symptom": "failure",
+            "candidate_causes": ["first", "second"],
+            "discriminating_probe": dict(probe),
+            "confirmed_cause": {
+                "statement": "first",
+                "confirmed_by_signal": True,
+                "evidence_ref": "test",
+            },
+            "false_leads": [],
+        },
+        "lanes_not_covered": [],
+        "residual_risk": [],
+        "learn": {
+            "retrieval_keys": ["test"],
+            "executable_probe": probe,
+            "last_verified": "2026-11-01T00:00:00Z",
+            "expires_if_not_reverified_by": expires,
+            "operational": True,
+        },
+    }
+
+
+def test_synthetic_incident_matches_registry_schema():
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator(schema).validate(incident())
 
 
 def local_shell(root: pathlib.Path) -> ir.Executor:
