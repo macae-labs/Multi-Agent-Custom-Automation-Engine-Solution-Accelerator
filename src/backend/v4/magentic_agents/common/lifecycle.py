@@ -418,7 +418,7 @@ class MCPEnabledBase:
     async def _register_in_foundry(self) -> None:
         """Persist agent definition in Azure AI Foundry via create_version.
 
-        Assembles the tool list from the agent’s own config so the published
+        Assembles the tool list from the agents own config so the published
         definition carries exactly the tools the factory declared:
 
           * ``enable_code_interpreter`` → ``CodeInterpreterTool()``
@@ -806,7 +806,6 @@ class MCPEnabledBase:
                 # truncates. Passing our own client made us responsible for this.
                 http_client = httpx.AsyncClient(
                     headers={"Authorization": f"Bearer {self.user_access_token}"},
-                    verify=getattr(config, "HTTPS_VERIFY", True),
                     timeout=httpx.Timeout(30.0, read=300.0),
                 )
                 self.logger.info(

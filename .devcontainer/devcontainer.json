@@ -95,7 +95,8 @@
         "vscjava.migrate-java-to-azure",
         "ms-vscode.vscode-speech",
         "WolfiesHorizon.python-auto-venv",
-        "ms-vscode.powershell"
+        "ms-vscode.powershell",
+        "42Crunch.vscode-openapi"
       ]
     }
   },
